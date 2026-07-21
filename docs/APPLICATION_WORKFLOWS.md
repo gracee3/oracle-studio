@@ -6,6 +6,11 @@ read files, retain passwords, or bypass optimistic storage revisions. The CLI
 loads an authenticated revision, applies exactly one transformation, previews
 guided readings, and saves only after confirmation.
 
+The current CLI walkthrough and exact command reference are in
+[CLI testing guide](CLI_TESTING.md). It uses an original metadata-only fixture
+and a throwaway encrypted vault so the complete first tarot workflow can be
+tested without artwork or personal data.
+
 ## Engine boundaries
 
 - Deck import accepts a Sibylla deck envelope or raw manifest and stores the
@@ -18,6 +23,11 @@ guided readings, and saves only after confirmation.
   recalculates or repairs it.
 - Engine artifacts are immutable. Later annotations and outcomes are separate
   source-linked journal entries.
+- Person and session commands may create or edit composition records, while
+  `deck-list`, `person-list`, and `session-list` provide the IDs needed by the
+  guided workflows.
+- Backup export and import copy authenticated encrypted envelope bytes; they do
+  not create a plaintext export format.
 
 ## Search and confidentiality
 

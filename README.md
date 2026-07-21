@@ -16,22 +16,33 @@ account system, AI layer, or camera recognition yet.
 
 ## CLI
 
-Build with `cargo build --locked --bin oracle-studio`. Every command requires an
-explicit `--vault` path. Passwords are hidden terminal prompts by default; for
-automation, `--password-file` accepts an owner-only file and never places the
-password in arguments or environment variables.
+The CLI is the current offline interface. Build and run it from this repository:
 
-```text
-oracle-studio --vault ./private/journal.vault init
-oracle-studio --vault ./private/journal.vault person-add "Client Name" --professional-client
-oracle-studio --vault ./private/journal.vault deck-import ./deck-manifest.json
-oracle-studio --vault ./private/journal.vault reading-new --deck RECORD_ID --method manual
-oracle-studio --vault ./private/journal.vault search "theme"
+```bash
+cargo build --locked --bin oracle-studio
+./target/debug/oracle-studio --help
 ```
 
-`reading-new` is a guided one-card, three-card, or freeform workflow. Manual
-mode records confirmed physical cards and orientations; software mode always
-uses Sibylla's operating-system-random production shuffle.
+Every command needs an explicit `--vault` path. Passwords are hidden terminal
+prompts by default. For non-interactive local testing, `--password-file` reads
+an owner-only file; on Unix, files readable by group or others are rejected.
+Passwords are never accepted as arguments or environment variables.
+
+The core workflow is:
+
+1. `init` an encrypted vault.
+2. Add a person or professional client and an optional session.
+3. Import a Sibylla deck manifest (raw manifest or deck artifact envelope).
+4. Run `reading-new` with `--method manual` for physical cards or `--method software` for an OS-random shuffle.
+5. Add annotations or outcomes, search the unlocked vault, and export an encrypted backup.
+
+`reading-new` guides one-card, three-card, and freeform spreads. Manual mode
+records confirmed deck-card IDs and upright, reversed, or unspecified
+orientation. Software mode always uses Sibylla's operating-system-random
+production shuffle; it has no deterministic production switch.
+
+For a copy/paste walkthrough, minimal deck manifest, prompts, backup recovery,
+and command reference, see [CLI testing guide](docs/CLI_TESTING.md).
 
 See the [Phase 5 plan](docs/PHASE_5_PLAN.md),
 [composition model](docs/COMPOSITION_MODEL.md), and
