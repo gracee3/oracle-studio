@@ -24,13 +24,31 @@ attacker who has both the file and password.
 Passwords are never stored. Derived key buffers are zeroized on drop. Callers
 remain responsible for protecting and zeroizing their password input.
 
-## Storage and deletion boundary
+## Durable filesystem repository
 
-Phase 5A produces and consumes authenticated bytes; it does not claim durable
-filesystem semantics. Phase 5B will add atomic replacement, file permissions,
-locking, backup, and crash recovery.
+Phase 5B stores only authenticated envelope bytes. Writers take a nonblocking
+advisory lock, compare the caller's expected encrypted revision, write a
+randomly named same-directory temporary file, flush it, atomically rename it,
+and sync the parent directory. A stale caller receives a conflict instead of
+silently replacing newer data. Readers take a shared lock and authenticate the
+envelope before returning a document.
+
+On Unix, application-created directories are mode `0700`; an existing directory
+is rejected if group or other permission bits are set. Vault, lock, temporary,
+and backup files are mode `0600`. Symbolic-link storage targets are rejected.
+Other platforms use their native permission model and require a platform-specific
+review before production release.
+
+Backups contain the exact encrypted envelope and are authenticated before
+export or import. Import uses the same optimistic revision check and atomic
+replacement path as a normal save. Filesystem revision IDs hash encrypted bytes
+for concurrency control; they are distinct from engine artifact content IDs.
+
+## Deletion boundary
 
 Deleting a file cannot guarantee physical erasure on SSDs, snapshots, or cloud
 backups. Permanent deletion therefore means removing all live records and
-backups under application control and, where possible, destroying the unique
-vault key. The UI must describe this limit honestly.
+explicitly selected backups under application control. The storage API reports
+that physical erasure is not guaranteed. Password-derived vault v1 has no
+separate unique data key to destroy; key-wrapping and rotation remain a future
+format version and must not be implied by the UI.

@@ -12,10 +12,13 @@ authenticated, reopened offline, and rejected on tampering or a wrong password.
 
 ## Phase 5B: durable local repository
 
+Status: implemented.
+
 - Add atomic writes, fsync strategy, lock handling, and crash recovery.
 - Add encrypted backup/export and transactional import with conflict reporting.
-- Add explicit logical deletion and cryptographic-erasure/key-rotation workflow.
-- Add journal indexing that never writes plaintext indexes outside the vault.
+- Add explicit deletion reporting without claiming physical media erasure.
+- Keep all records inside the encrypted document; no plaintext index is
+  written in this phase.
 
 Exit: a vault survives process interruption and supports tested backup,
 recovery, import, export, and deletion behavior.

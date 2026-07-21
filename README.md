@@ -9,9 +9,10 @@ not recalculate astrology or reinterpret tarot domain records.
 
 ## Status
 
-Phase 5A foundation: validated composition records and a versioned encrypted
-vault envelope. There is no UI, synchronization, account system, AI layer, or
-camera recognition yet.
+Phase 5B durable local repository: validated composition records, a versioned
+encrypted vault envelope, locked atomic persistence, optimistic conflict
+detection, and authenticated backup/import. There is no UI, synchronization,
+account system, AI layer, or camera recognition yet.
 
 See the [Phase 5 plan](docs/PHASE_5_PLAN.md),
 [composition model](docs/COMPOSITION_MODEL.md), and
