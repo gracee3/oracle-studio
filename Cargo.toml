@@ -1,6 +1,8 @@
 [workspace]
 members = [
     "crates/oracle-studio-core",
+    "crates/oracle-studio-app",
+    "crates/oracle-studio-cli",
     "crates/oracle-studio-storage",
     "crates/oracle-studio-vault",
 ]
@@ -15,11 +17,13 @@ rust-version = "1.97"
 [workspace.dependencies]
 argon2 = "0.5.3"
 chacha20poly1305 = "0.10.1"
-chrono = { version = "0.4.41", default-features = false, features = ["serde", "std"] }
+chrono = { version = "0.4.41", default-features = false, features = ["clock", "serde", "std"] }
+clap = { version = "4.5.41", features = ["derive"] }
 getrandom = "0.3.3"
 fs2 = "0.4.3"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "=1.0.151"
 sha2 = "0.10.9"
 thiserror = "2.0.12"
+uuid = { version = "1.18.1", features = ["v7"] }
 zeroize = "1.8.1"

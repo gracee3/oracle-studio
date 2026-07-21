@@ -45,7 +45,7 @@ fn document(name: &str) -> VaultDocument {
         None,
     )
     .unwrap();
-    VaultDocument::new(vec![profile], vec![], vec![]).unwrap()
+    VaultDocument::new(vec![profile], vec![], vec![], vec![]).unwrap()
 }
 
 #[test]

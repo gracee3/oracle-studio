@@ -1,6 +1,6 @@
 use oracle_studio_core::{
-    ArtifactKind, ArtifactRecord, ModelError, PersonKind, PersonProfile, Session, StableId,
-    VaultDocument,
+    ArtifactKind, ArtifactRecord, JournalEntry, JournalEntryKind, ModelError, PersonKind,
+    PersonProfile, Session, StableId, VaultDocument,
 };
 
 const SIBYLLA_DECK_ARTIFACT: &str = r#"{
@@ -51,7 +51,7 @@ fn fictional_composition_document_round_trips() {
         "2026-07-21T14:30:00Z",
     )
     .unwrap();
-    let document = VaultDocument::new(vec![person], vec![session], vec![]).unwrap();
+    let document = VaultDocument::new(vec![person], vec![session], vec![], vec![]).unwrap();
     let reopened = VaultDocument::from_json(&document.to_json().unwrap()).unwrap();
     assert_eq!(reopened, document);
     assert!(document.to_json().unwrap().contains("2026-07-21T14:00:00Z"));
@@ -91,7 +91,7 @@ fn identifiers_text_timeline_and_references_are_validated() {
     )
     .unwrap();
     assert!(matches!(
-        VaultDocument::new(vec![], vec![session], vec![]),
+        VaultDocument::new(vec![], vec![session], vec![], vec![]),
         Err(ModelError::DanglingReference("session.person_id"))
     ));
 }
@@ -100,13 +100,13 @@ fn identifiers_text_timeline_and_references_are_validated() {
 fn deserialization_rejects_unknown_fields_and_bad_versions() {
     let json = VaultDocument::empty().to_json().unwrap();
     assert!(matches!(
-        VaultDocument::from_json(&json.replacen("\"schema_version\":1", "\"schema_version\":2", 1)),
-        Err(ModelError::UnsupportedSchema(2))
+        VaultDocument::from_json(&json.replacen("\"schema_version\":2", "\"schema_version\":3", 1)),
+        Err(ModelError::UnsupportedSchema(3))
     ));
     assert!(matches!(
         VaultDocument::from_json(&json.replacen(
-            "\"schema_version\":1",
-            "\"schema_version\":1,\"unexpected\":true",
+            "\"schema_version\":2",
+            "\"schema_version\":2,\"unexpected\":true",
             1
         )),
         Err(ModelError::Json(_))
@@ -141,7 +141,7 @@ fn artifact_metadata_is_revalidated_when_a_document_reopens() {
         SIBYLLA_DECK_ARTIFACT,
     )
     .unwrap();
-    let document = VaultDocument::new(vec![], vec![], vec![record]).unwrap();
+    let document = VaultDocument::new(vec![], vec![], vec![record], vec![]).unwrap();
     let mut value: serde_json::Value = serde_json::from_str(&document.to_json().unwrap()).unwrap();
     value["artifacts"][0]["content_id"] =
         "sha256:0000000000000000000000000000000000000000000000000000000000000000".into();
@@ -149,5 +149,59 @@ fn artifact_metadata_is_revalidated_when_a_document_reopens() {
     assert!(matches!(
         VaultDocument::from_json(&serde_json::to_string(&value).unwrap()),
         Err(ModelError::ArtifactMetadataMismatch)
+    ));
+}
+
+#[test]
+fn schema_one_documents_migrate_to_schema_two_with_an_empty_journal() {
+    let current = VaultDocument::empty().to_json().unwrap();
+    let mut value: serde_json::Value = serde_json::from_str(&current).unwrap();
+    value["schema_version"] = 1.into();
+    value.as_object_mut().unwrap().remove("journal_entries");
+
+    let migrated = VaultDocument::from_json(&serde_json::to_string(&value).unwrap()).unwrap();
+    assert!(migrated.journal_entries().is_empty());
+    assert!(
+        migrated
+            .to_json()
+            .unwrap()
+            .starts_with("{\"schema_version\":2,")
+    );
+}
+
+#[test]
+fn journal_entries_are_source_linked_and_strictly_validated() {
+    let person = profile();
+    let entry = JournalEntry::new(
+        StableId::new("journal_entry.id", "fictional_annotation").unwrap(),
+        Some(person.id().clone()),
+        None,
+        None,
+        JournalEntryKind::Annotation,
+        "A fictional source-linked observation.",
+        "2026-07-21T10:00:00-04:00",
+    )
+    .unwrap();
+    let document = VaultDocument::new(vec![person], vec![], vec![], vec![entry]).unwrap();
+    let reopened = VaultDocument::from_json(&document.to_json().unwrap()).unwrap();
+    assert_eq!(reopened, document);
+    assert_eq!(
+        reopened.journal_entries()[0].created_at(),
+        "2026-07-21T14:00:00Z"
+    );
+
+    let dangling = JournalEntry::new(
+        StableId::new("journal_entry.id", "dangling").unwrap(),
+        None,
+        None,
+        Some(StableId::new("artifact.id", "missing").unwrap()),
+        JournalEntryKind::Outcome,
+        "Fictional outcome.",
+        "2026-07-21T14:00:00Z",
+    )
+    .unwrap();
+    assert!(matches!(
+        VaultDocument::new(vec![], vec![], vec![], vec![dangling]),
+        Err(ModelError::DanglingReference("journal_entry.artifact_id"))
     ));
 }

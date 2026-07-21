@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use sibylla_artifacts::{Artifact as SibyllaArtifact, ArtifactKind as SibyllaKind};
 use thiserror::Error;
 
-pub const VAULT_DOCUMENT_SCHEMA_VERSION: u32 = 1;
+pub const VAULT_DOCUMENT_SCHEMA_VERSION: u32 = 2;
 pub const ASTRAEUS_REVISION: &str = "952a143b700ea5cad960498e7d8916a49ebb3691";
 pub const SIBYLLA_REVISION: &str = "a154c32b83b110d2568a9ab10828b4f8b3dba7c7";
 
@@ -130,6 +130,15 @@ impl Session {
     pub fn title(&self) -> &str {
         &self.title
     }
+    pub fn context(&self) -> Option<&str> {
+        self.context.as_deref()
+    }
+    pub fn created_at(&self) -> &str {
+        &self.created_at
+    }
+    pub fn modified_at(&self) -> &str {
+        &self.modified_at
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -226,11 +235,77 @@ impl ArtifactRecord {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum JournalEntryKind {
+    Annotation,
+    Outcome,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct JournalEntry {
+    id: StableId,
+    person_id: Option<StableId>,
+    session_id: Option<StableId>,
+    artifact_id: Option<StableId>,
+    kind: JournalEntryKind,
+    content: String,
+    created_at: String,
+}
+
+impl JournalEntry {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        id: StableId,
+        person_id: Option<StableId>,
+        session_id: Option<StableId>,
+        artifact_id: Option<StableId>,
+        kind: JournalEntryKind,
+        content: impl Into<String>,
+        created_at: impl Into<String>,
+    ) -> Result<Self, ModelError> {
+        let content = content.into();
+        validate_text("journal_entry.content", &content)?;
+        Ok(Self {
+            id,
+            person_id,
+            session_id,
+            artifact_id,
+            kind,
+            content,
+            created_at: normalize_timestamp("journal_entry.created_at", created_at.into())?,
+        })
+    }
+
+    pub fn id(&self) -> &StableId {
+        &self.id
+    }
+    pub fn person_id(&self) -> Option<&StableId> {
+        self.person_id.as_ref()
+    }
+    pub fn session_id(&self) -> Option<&StableId> {
+        self.session_id.as_ref()
+    }
+    pub fn artifact_id(&self) -> Option<&StableId> {
+        self.artifact_id.as_ref()
+    }
+    pub const fn kind(&self) -> JournalEntryKind {
+        self.kind
+    }
+    pub fn content(&self) -> &str {
+        &self.content
+    }
+    pub fn created_at(&self) -> &str {
+        &self.created_at
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VaultDocument {
     people: Vec<PersonProfile>,
     sessions: Vec<Session>,
     artifacts: Vec<ArtifactRecord>,
+    journal_entries: Vec<JournalEntry>,
 }
 
 #[derive(Serialize)]
@@ -239,6 +314,7 @@ struct VaultDocumentRef<'a> {
     people: &'a [PersonProfile],
     sessions: &'a [Session],
     artifacts: &'a [ArtifactRecord],
+    journal_entries: &'a [JournalEntry],
 }
 
 #[derive(Deserialize)]
@@ -248,6 +324,7 @@ struct VaultDocumentWire {
     people: Vec<PersonWire>,
     sessions: Vec<SessionWire>,
     artifacts: Vec<ArtifactWire>,
+    journal_entries: Option<Vec<JournalEntryWire>>,
 }
 
 #[derive(Deserialize)]
@@ -282,17 +359,35 @@ struct ArtifactWire {
     canonical_json: String,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct JournalEntryWire {
+    id: String,
+    person_id: Option<String>,
+    session_id: Option<String>,
+    artifact_id: Option<String>,
+    kind: JournalEntryKind,
+    content: String,
+    created_at: String,
+}
+
 impl VaultDocument {
     pub fn new(
         people: Vec<PersonProfile>,
         sessions: Vec<Session>,
         artifacts: Vec<ArtifactRecord>,
+        journal_entries: Vec<JournalEntry>,
     ) -> Result<Self, ModelError> {
         validate_unique(people.iter().map(PersonProfile::id), "person")?;
         validate_unique(sessions.iter().map(Session::id), "session")?;
         validate_unique(artifacts.iter().map(ArtifactRecord::id), "artifact")?;
+        validate_unique(
+            journal_entries.iter().map(JournalEntry::id),
+            "journal entry",
+        )?;
         let person_ids: BTreeSet<_> = people.iter().map(PersonProfile::id).collect();
         let session_ids: BTreeSet<_> = sessions.iter().map(Session::id).collect();
+        let artifact_ids: BTreeSet<_> = artifacts.iter().map(ArtifactRecord::id).collect();
         for session in &sessions {
             if session
                 .person_id()
@@ -326,10 +421,61 @@ impl VaultDocument {
                 }
             }
         }
+        for entry in &journal_entries {
+            if entry.person_id().is_some_and(|id| !person_ids.contains(id)) {
+                return Err(ModelError::DanglingReference("journal_entry.person_id"));
+            }
+            if entry
+                .session_id()
+                .is_some_and(|id| !session_ids.contains(id))
+            {
+                return Err(ModelError::DanglingReference("journal_entry.session_id"));
+            }
+            if entry
+                .artifact_id()
+                .is_some_and(|id| !artifact_ids.contains(id))
+            {
+                return Err(ModelError::DanglingReference("journal_entry.artifact_id"));
+            }
+            if let Some(session_id) = entry.session_id() {
+                let session = sessions
+                    .iter()
+                    .find(|session| session.id() == session_id)
+                    .expect("session reference was validated above");
+                if entry
+                    .person_id()
+                    .zip(session.person_id())
+                    .is_some_and(|(entry, session)| entry != session)
+                {
+                    return Err(ModelError::JournalSourceMismatch);
+                }
+                if entry.created_at() < session.created_at() {
+                    return Err(ModelError::JournalTimestampBeforeSession);
+                }
+            }
+            if let Some(artifact_id) = entry.artifact_id() {
+                let artifact = artifacts
+                    .iter()
+                    .find(|artifact| artifact.id() == artifact_id)
+                    .expect("artifact reference was validated above");
+                if entry
+                    .person_id()
+                    .zip(artifact.person_id())
+                    .is_some_and(|(entry, artifact)| entry != artifact)
+                    || entry
+                        .session_id()
+                        .zip(artifact.session_id())
+                        .is_some_and(|(entry, artifact)| entry != artifact)
+                {
+                    return Err(ModelError::JournalSourceMismatch);
+                }
+            }
+        }
         Ok(Self {
             people,
             sessions,
             artifacts,
+            journal_entries,
         })
     }
 
@@ -338,6 +484,7 @@ impl VaultDocument {
             people: Vec::new(),
             sessions: Vec::new(),
             artifacts: Vec::new(),
+            journal_entries: Vec::new(),
         }
     }
 
@@ -350,6 +497,9 @@ impl VaultDocument {
     pub fn artifacts(&self) -> &[ArtifactRecord] {
         &self.artifacts
     }
+    pub fn journal_entries(&self) -> &[JournalEntry] {
+        &self.journal_entries
+    }
 
     pub fn to_json(&self) -> Result<String, ModelError> {
         Ok(serde_json::to_string(&VaultDocumentRef {
@@ -357,14 +507,21 @@ impl VaultDocument {
             people: &self.people,
             sessions: &self.sessions,
             artifacts: &self.artifacts,
+            journal_entries: &self.journal_entries,
         })?)
     }
 
     pub fn from_json(input: &str) -> Result<Self, ModelError> {
         let wire: VaultDocumentWire = serde_json::from_str(input)?;
-        if wire.schema_version != VAULT_DOCUMENT_SCHEMA_VERSION {
-            return Err(ModelError::UnsupportedSchema(wire.schema_version));
-        }
+        let journal_entries = match (wire.schema_version, wire.journal_entries) {
+            (1, None) => Vec::new(),
+            (2, Some(entries)) => entries
+                .into_iter()
+                .map(JournalEntryWire::into_model)
+                .collect::<Result<_, _>>()?,
+            (1 | 2, _) => return Err(ModelError::InvalidSchemaShape(wire.schema_version)),
+            (version, _) => return Err(ModelError::UnsupportedSchema(version)),
+        };
         let people = wire
             .people
             .into_iter()
@@ -380,7 +537,7 @@ impl VaultDocument {
             .into_iter()
             .map(ArtifactWire::into_model)
             .collect::<Result<_, _>>()?;
-        Self::new(people, sessions, artifacts)
+        Self::new(people, sessions, artifacts, journal_entries)
     }
 }
 
@@ -442,6 +599,26 @@ impl ArtifactWire {
     }
 }
 
+impl JournalEntryWire {
+    fn into_model(self) -> Result<JournalEntry, ModelError> {
+        JournalEntry::new(
+            StableId::new("journal_entry.id", self.id)?,
+            self.person_id
+                .map(|id| StableId::new("journal_entry.person_id", id))
+                .transpose()?,
+            self.session_id
+                .map(|id| StableId::new("journal_entry.session_id", id))
+                .transpose()?,
+            self.artifact_id
+                .map(|id| StableId::new("journal_entry.artifact_id", id))
+                .transpose()?,
+            self.kind,
+            self.content,
+            self.created_at,
+        )
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum ModelError {
     #[error("invalid stable ID in {field}")]
@@ -462,8 +639,14 @@ pub enum ModelError {
     ArtifactMetadataMismatch,
     #[error("artifact person does not match its session person")]
     ArtifactPersonSessionMismatch,
+    #[error("journal entry sources refer to inconsistent people or sessions")]
+    JournalSourceMismatch,
+    #[error("journal entry timestamp precedes its source session")]
+    JournalTimestampBeforeSession,
     #[error("unsupported vault document schema version {0}")]
     UnsupportedSchema(u32),
+    #[error("invalid field set for vault document schema version {0}")]
+    InvalidSchemaShape(u32),
     #[error("invalid vault document JSON: {0}")]
     Json(#[from] serde_json::Error),
 }

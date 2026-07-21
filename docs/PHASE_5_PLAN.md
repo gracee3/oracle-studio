@@ -25,6 +25,8 @@ recovery, import, export, and deletion behavior.
 
 ## Phase 5C: application workflow
 
+Status: implemented as an offline CLI checkpoint.
+
 - Add deck management and manual/software reading flows using Sibylla.
 - Add saved-chart ingestion using a selected Astraeus artifact contract.
 - Add people, professional-client, session, annotation, and follow-up screens.

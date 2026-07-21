@@ -87,6 +87,15 @@ fn seal_with_material(
     nonce: [u8; NONCE_LEN],
 ) -> Result<Vec<u8>, VaultError> {
     let plaintext = Zeroizing::new(document.to_json()?.into_bytes());
+    seal_plaintext_with_material(&plaintext, password, salt, nonce)
+}
+
+fn seal_plaintext_with_material(
+    plaintext: &[u8],
+    password: &[u8],
+    salt: [u8; SALT_LEN],
+    nonce: [u8; NONCE_LEN],
+) -> Result<Vec<u8>, VaultError> {
     if plaintext.len() + TAG_LEN > MAX_CIPHERTEXT_LEN {
         return Err(VaultError::TooLarge);
     }
@@ -98,7 +107,7 @@ fn seal_with_material(
         .encrypt(
             XNonce::from_slice(&nonce),
             Payload {
-                msg: &plaintext,
+                msg: plaintext,
                 aad: &header,
             },
         )
@@ -220,7 +229,7 @@ mod tests {
             "2026-07-21T14:00:00Z",
         )
         .unwrap();
-        VaultDocument::new(vec![person], vec![session], vec![]).unwrap()
+        VaultDocument::new(vec![person], vec![session], vec![], vec![]).unwrap()
     }
 
     #[test]
@@ -292,5 +301,20 @@ mod tests {
             open(&envelope, b"password"),
             Err(VaultError::InvalidMagic)
         ));
+    }
+
+    #[test]
+    fn authenticated_schema_one_plaintext_migrates_after_decryption() {
+        let legacy = br#"{"schema_version":1,"people":[],"sessions":[],"artifacts":[]}"#;
+        let envelope =
+            seal_plaintext_with_material(legacy, b"test password", [9; 16], [10; 24]).unwrap();
+        let migrated = open(&envelope, b"test password").unwrap();
+        assert!(migrated.journal_entries().is_empty());
+        assert!(
+            migrated
+                .to_json()
+                .unwrap()
+                .starts_with("{\"schema_version\":2,")
+        );
     }
 }
