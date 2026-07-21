@@ -1,0 +1,17 @@
+[package]
+name = "oracle-studio-core"
+version = "0.1.0"
+description = "Validated composition records for Oracle Studio"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+astraeus-artifacts = { version = "0.1.0", git = "https://github.com/gracee3/astraeus", rev = "952a143b700ea5cad960498e7d8916a49ebb3691" }
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+sibylla-artifacts = { version = "0.1.0", git = "https://github.com/gracee3/sibylla", rev = "a154c32b83b110d2568a9ab10828b4f8b3dba7c7" }
+thiserror.workspace = true
