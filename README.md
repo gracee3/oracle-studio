@@ -34,7 +34,8 @@ The core workflow is:
 1. `init` an encrypted vault.
 2. Add a person or professional client and an optional session.
 3. Import a Sibylla deck manifest (raw manifest or deck artifact envelope).
-4. Optionally verify a local deck-pack sidecar with `deck-pack-verify`.
+4. Generate or verify a local deck-pack sidecar with `deck-pack-generate` and
+   `deck-pack-verify`.
 5. Run `reading-new` with `--method manual` for physical cards or `--method software` for an OS-random shuffle.
 6. Add annotations or outcomes, search the unlocked vault, and export an encrypted backup.
 

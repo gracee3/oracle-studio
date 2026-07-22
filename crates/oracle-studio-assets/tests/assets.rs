@@ -103,9 +103,39 @@ fn pack_belongs_to_the_exact_sibylla_deck_content_id() {
     pack.verify_deck_artifact(&envelope).unwrap();
 }
 
+#[test]
+fn pack_generator_uses_enabled_deck_assets_and_png_dimensions() {
+    let root = tempfile_dir();
+    let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
+    png.extend_from_slice(&500u32.to_be_bytes());
+    png.extend_from_slice(&857u32.to_be_bytes());
+    fs::write(root.join("fool.png"), &png).unwrap();
+    let deck = DeckManifest::from_json(DECK).unwrap();
+    let envelope = DeckArtifact::new(deck).to_json().unwrap();
+    let pack = DeckPackManifest::from_deck_artifact_png(
+        "fictional_generated_pack",
+        &envelope,
+        &root,
+        AssetSource::new(
+            "https://commons.wikimedia.org/wiki/File:The_Fool.png",
+            "https://upload.wikimedia.org/example.png",
+            "Public domain",
+            None,
+        ),
+    )
+    .unwrap();
+    assert_eq!(pack.assets()[0].local_path(), "fool.png");
+    assert_eq!(pack.assets()[0].width_pixels(), 500);
+    assert_eq!(pack.assets()[0].height_pixels(), 857);
+    pack.verify_files(&root).unwrap();
+}
+
 fn tempfile_dir() -> std::path::PathBuf {
-    let path =
-        std::env::temp_dir().join(format!("oracle-studio-assets-test-{}", std::process::id()));
+    let path = std::env::temp_dir().join(format!(
+        "oracle-studio-assets-test-{}-{}",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("test")
+    ));
     let _ = fs::remove_dir_all(&path);
     fs::create_dir(&path).unwrap();
     path

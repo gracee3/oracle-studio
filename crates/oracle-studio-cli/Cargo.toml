@@ -16,6 +16,7 @@ astraeus-core = { version = "0.1.0", git = "https://github.com/gracee3/astraeus"
 chrono.workspace = true
 clap.workspace = true
 oracle-studio-app = { version = "0.1.0", path = "../oracle-studio-app" }
+oracle-studio-assets = { version = "0.1.0", path = "../oracle-studio-assets" }
 oracle-studio-core = { version = "0.1.0", path = "../oracle-studio-core" }
 oracle-studio-storage = { version = "0.1.0", path = "../oracle-studio-storage" }
 rpassword = "7.4.0"

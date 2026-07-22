@@ -8,6 +8,7 @@ use astraeus_core::CalculationRequest;
 use chrono::{SecondsFormat, Utc};
 use clap::{Parser, Subcommand, ValueEnum};
 use oracle_studio_app::{ManualPlacementInput, ReadingRequest, StudioService};
+use oracle_studio_assets::{AssetSource, DeckPackManifest};
 use oracle_studio_core::{
     ArtifactKind, JournalEntry, JournalEntryKind, PersonKind, PersonProfile, Session, StableId,
     VaultDocument,
@@ -83,6 +84,20 @@ enum Command {
         deck: String,
         pack: PathBuf,
         root: PathBuf,
+    },
+    DeckPackGenerate {
+        deck: PathBuf,
+        root: PathBuf,
+        pack_id: String,
+        output: PathBuf,
+        #[arg(long)]
+        file_page: String,
+        #[arg(long)]
+        original_url: String,
+        #[arg(long)]
+        license: String,
+        #[arg(long)]
+        usage_terms: Option<String>,
     },
     ChartImport {
         file: PathBuf,
@@ -326,6 +341,31 @@ fn dispatch(
                 &root,
             )?;
             println!("Verified {} deck assets", verified.len());
+            None
+        }
+        Command::DeckPackGenerate {
+            deck,
+            root,
+            pack_id,
+            output,
+            file_page,
+            original_url,
+            license,
+            usage_terms,
+        } => {
+            let manifest = DeckPackManifest::from_deck_artifact_png(
+                pack_id,
+                &fs::read_to_string(deck)?,
+                &root,
+                AssetSource::new(file_page, original_url, license, usage_terms),
+            )?;
+            fs::write(&output, manifest.to_json()?)?;
+            println!(
+                "Generated deck pack {} with {} assets at {}",
+                manifest.pack_id(),
+                manifest.assets().len(),
+                output.display()
+            );
             None
         }
         Command::ChartImport {
@@ -661,6 +701,8 @@ enum CliError {
     Storage(#[from] StorageError),
     #[error(transparent)]
     App(#[from] oracle_studio_app::AppError),
+    #[error(transparent)]
+    Assets(#[from] oracle_studio_assets::AssetError),
     #[error(transparent)]
     Sibylla(#[from] sibylla_core::ValidationError),
     #[error(transparent)]

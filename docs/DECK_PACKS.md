@@ -38,6 +38,26 @@ match.
 
 ## CLI verification
 
+For a deck whose local files use the conventional `<asset_id>.png` naming,
+Oracle Studio can create the sidecar from the canonical Sibylla deck artifact:
+
+```bash
+cargo run --locked --bin oracle-studio -- \
+  --vault /path/to/private/journal.vault \
+  deck-pack-generate \
+  /path/to/deck.json \
+  /path/to/pack \
+  rider_waite_smith_geldard_pack \
+  /path/to/pack/assets.json \
+  --file-page https://commons.wikimedia.org/wiki/Category:Example \
+  --original-url https://upload.wikimedia.org/example.png \
+  --license "Public domain"
+```
+
+Generation reads enabled card `asset_id` values from the deck, hashes the
+matching PNG files, records their dimensions, and writes only metadata. It
+does not copy images into the vault.
+
 After importing a deck artifact into a vault, verify a pack before rendering or
 recognition:
 

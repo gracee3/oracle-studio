@@ -86,6 +86,10 @@ pub enum AssetError {
     InvalidDimensions(String),
     #[error("deck asset source metadata is invalid for `{0}`")]
     InvalidSource(String),
+    #[error("deck asset file is missing for `{0}`: {1}")]
+    MissingAsset(String, PathBuf),
+    #[error("unsupported PNG asset data for `{0}`")]
+    UnsupportedImage(String),
     #[error("deck asset file is missing: {0}")]
     MissingFile(PathBuf),
     #[error("deck asset path is a symbolic link: {0}")]
@@ -108,6 +112,50 @@ pub enum AssetError {
 }
 
 impl DeckPackManifest {
+    /// Builds a v1 sidecar for decks whose local assets are `<asset_id>.png`.
+    ///
+    /// This intentionally handles only PNG dimensions: it keeps pack creation
+    /// deterministic and avoids making image decoding part of the journal.
+    pub fn from_deck_artifact_png(
+        pack_id: impl Into<String>,
+        deck_json: &str,
+        root: &Path,
+        source: AssetSource,
+    ) -> Result<Self, AssetError> {
+        let deck = sibylla_artifacts::DeckArtifact::from_json(deck_json)?;
+        let deck_content_id = deck.content_id()?.to_string();
+        let mut assets = Vec::new();
+        for card in deck.payload().enabled_cards() {
+            let Some(asset_id) = card.asset_id() else {
+                continue;
+            };
+            let asset_id = asset_id.as_str();
+            let local_path = format!("{asset_id}.png");
+            let path = root.join(&local_path);
+            let bytes = fs::read(&path).map_err(|error| {
+                if error.kind() == std::io::ErrorKind::NotFound {
+                    AssetError::MissingAsset(asset_id.to_owned(), path.clone())
+                } else {
+                    AssetError::ReadFile {
+                        path: path.clone(),
+                        source: error,
+                    }
+                }
+            })?;
+            let (width_pixels, height_pixels) = png_dimensions(asset_id, &bytes)?;
+            assets.push(DeckAsset::new(
+                asset_id,
+                local_path,
+                format!("{:x}", Sha256::digest(bytes)),
+                "image/png",
+                width_pixels,
+                height_pixels,
+                source.clone(),
+            )?);
+        }
+        Self::new(pack_id, deck_content_id, assets)
+    }
+
     pub fn new(
         pack_id: impl Into<String>,
         deck_content_id: impl Into<String>,
@@ -355,4 +403,16 @@ fn validate_content_id(value: &str) -> Result<(), AssetError> {
         return Err(AssetError::InvalidDeckContentId);
     }
     Ok(())
+}
+
+fn png_dimensions(asset_id: &str, bytes: &[u8]) -> Result<(u32, u32), AssetError> {
+    if bytes.len() < 24 || &bytes[..8] != b"\x89PNG\r\n\x1a\n" || &bytes[12..16] != b"IHDR" {
+        return Err(AssetError::UnsupportedImage(asset_id.to_owned()));
+    }
+    let width = u32::from_be_bytes(bytes[16..20].try_into().expect("checked length"));
+    let height = u32::from_be_bytes(bytes[20..24].try_into().expect("checked length"));
+    if width == 0 || height == 0 {
+        return Err(AssetError::UnsupportedImage(asset_id.to_owned()));
+    }
+    Ok((width, height))
 }
