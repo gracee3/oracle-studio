@@ -128,6 +128,7 @@ fn pinned_sibylla_artifacts_are_validated_and_canonicalized() {
         record.producer_revision(),
         oracle_studio_core::SIBYLLA_REVISION
     );
+    assert_eq!(record.artifact_schema_version(), 1);
     assert!(record.content_id().starts_with("sha256:"));
     assert!(!record.canonical_json().contains('\n'));
 }
@@ -145,6 +146,25 @@ fn artifact_metadata_is_revalidated_when_a_document_reopens() {
     let mut value: serde_json::Value = serde_json::from_str(&document.to_json().unwrap()).unwrap();
     value["artifacts"][0]["content_id"] =
         "sha256:0000000000000000000000000000000000000000000000000000000000000000".into();
+
+    assert!(matches!(
+        VaultDocument::from_json(&serde_json::to_string(&value).unwrap()),
+        Err(ModelError::ArtifactMetadataMismatch)
+    ));
+}
+
+#[test]
+fn artifact_schema_lineage_is_revalidated_when_a_document_reopens() {
+    let record = ArtifactRecord::from_sibylla(
+        StableId::new("artifact.id", "deck_record").unwrap(),
+        None,
+        None,
+        SIBYLLA_DECK_ARTIFACT,
+    )
+    .unwrap();
+    let document = VaultDocument::new(vec![], vec![], vec![record], vec![]).unwrap();
+    let mut value: serde_json::Value = serde_json::from_str(&document.to_json().unwrap()).unwrap();
+    value["artifacts"][0]["artifact_schema_version"] = 99.into();
 
     assert!(matches!(
         VaultDocument::from_json(&serde_json::to_string(&value).unwrap()),
