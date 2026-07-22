@@ -5,7 +5,7 @@ use astraeus_core::{
     AngularPosition, CalculationRequest, CelestialObject, ChartAngles, DeterministicMock,
     EphemerisAdapter, GeographicLocation, HouseCusps, HouseSystem, Position, UtcInstant, Zodiac,
 };
-use oracle_studio_chart_view::ChartViewModel;
+use oracle_studio_chart_view::{ChartViewModel, render_svg};
 
 #[test]
 fn view_model_formats_calculated_points_without_recalculation() {
@@ -41,4 +41,8 @@ fn view_model_formats_calculated_points_without_recalculation() {
     assert!(view.points[0].retrograde);
     assert_eq!(view.points[0].sign_index, 9);
     assert_eq!(view.houses.len(), 12);
+    let svg = render_svg(&view);
+    assert!(svg.starts_with("<svg "));
+    assert!(svg.contains("Sun"));
+    assert_eq!(svg, render_svg(&view));
 }

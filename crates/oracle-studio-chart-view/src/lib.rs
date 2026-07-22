@@ -40,6 +40,64 @@ pub struct AnglesView {
     pub vertex_degrees: f64,
 }
 
+/// Render a deterministic, presentation-only SVG wheel.
+///
+/// The output intentionally uses plain SVG primitives so it can be embedded
+/// in a web view, exported, or wrapped by a native client without introducing
+/// a GUI dependency into the domain engine.
+pub fn render_svg(view: &ChartViewModel) -> String {
+    use std::fmt::Write;
+
+    const SIZE: f64 = 600.0;
+    const CENTER: f64 = SIZE / 2.0;
+    const RADIUS: f64 = 220.0;
+    let mut svg = String::new();
+    let _ = write!(
+        svg,
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {SIZE} {SIZE}\" role=\"img\" aria-label=\"Astrology chart\">"
+    );
+    let _ = write!(
+        svg,
+        "<circle cx=\"{CENTER}\" cy=\"{CENTER}\" r=\"{RADIUS}\" fill=\"white\" stroke=\"black\"/>"
+    );
+    for (index, cusp) in view.houses.iter().enumerate() {
+        let (x, y) = polar(*cusp, RADIUS);
+        let _ = write!(
+            svg,
+            "<line x1=\"{CENTER}\" y1=\"{CENTER}\" x2=\"{x:.3}\" y2=\"{y:.3}\" stroke=\"#999\"/><text x=\"{x:.3}\" y=\"{y:.3}\" font-size=\"10\" text-anchor=\"middle\">{}</text>",
+            index + 1
+        );
+    }
+    for point in &view.points {
+        let (x, y) = polar(point.longitude_degrees, RADIUS - 24.0);
+        let label = escape_xml(&point.id);
+        let _ = write!(
+            svg,
+            "<circle cx=\"{x:.3}\" cy=\"{y:.3}\" r=\"4\" fill=\"black\"/><text x=\"{x:.3}\" y=\"{:.3}\" font-size=\"11\" text-anchor=\"middle\">{label}</text>",
+            y - 7.0
+        );
+    }
+    svg.push_str("</svg>");
+    svg
+}
+
+fn polar(longitude: f64, radius: f64) -> (f64, f64) {
+    let radians = (90.0 - longitude).to_radians();
+    (
+        300.0 + radius * radians.cos(),
+        300.0 - radius * radians.sin(),
+    )
+}
+
+fn escape_xml(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
 impl ChartViewModel {
     pub fn from_calculation(artifact: &CalculationArtifact) -> Self {
         let request = artifact.request();
