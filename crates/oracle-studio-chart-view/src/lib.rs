@@ -97,6 +97,43 @@ pub struct ChartExport {
     pub aspects: Vec<AspectRow>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LayerRole {
+    Natal,
+    Transit,
+    Progressed,
+    Synastry,
+    Return,
+    Custom,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ChartLayer {
+    pub id: String,
+    pub role: LayerRole,
+    pub chart: ChartViewModel,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct LayeredWorkspace {
+    pub layers: Vec<ChartLayer>,
+    pub selection: ChartSelection,
+}
+
+impl LayeredWorkspace {
+    pub fn new(layers: Vec<ChartLayer>) -> Self {
+        Self {
+            layers,
+            selection: ChartSelection::default(),
+        }
+    }
+
+    pub fn layer(&self, id: &str) -> Option<&ChartLayer> {
+        self.layers.iter().find(|layer| layer.id == id)
+    }
+}
+
 impl ChartWorkspace {
     pub fn new(chart: ChartViewModel, aspects: Vec<AspectRow>) -> Self {
         let placements = chart.placement_rows();
