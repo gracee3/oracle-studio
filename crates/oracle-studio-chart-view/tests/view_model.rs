@@ -7,8 +7,8 @@ use astraeus_core::{
     HouseSystem, Position, UtcInstant, Zodiac, calculate_aspects,
 };
 use oracle_studio_chart_view::{
-    AspectRow, ChartSelection, ChartViewModel, ChartWorkspace, render_svg,
-    render_svg_with_selection,
+    AspectRow, ChartLayer, ChartSelection, ChartViewModel, ChartWorkspace, LayerRole,
+    LayeredWorkspace, render_svg, render_svg_with_selection,
 };
 
 #[test]
@@ -113,4 +113,28 @@ fn workspace_keeps_wheel_tables_and_selection_together() {
     let export = workspace.export();
     assert!(export.svg.starts_with("<svg "));
     assert!(export.placements.is_empty());
+}
+
+#[test]
+fn layered_workspace_keeps_roles_and_layer_identity_explicit() {
+    let chart = ChartViewModel {
+        schema_version: 1,
+        instant: "2000-01-01T12:00:00Z".into(),
+        zodiac: "Tropical".into(),
+        ayanamsa: None,
+        points: Vec::new(),
+        houses: (0..12).map(|index| f64::from(index) * 30.0).collect(),
+        angles: oracle_studio_chart_view::AnglesView {
+            ascendant_degrees: 0.0,
+            midheaven_degrees: 270.0,
+            vertex_degrees: 180.0,
+        },
+    };
+    let workspace = LayeredWorkspace::new(vec![ChartLayer {
+        id: "natal".into(),
+        role: LayerRole::Natal,
+        chart,
+    }]);
+    assert_eq!(workspace.layer("natal").unwrap().role, LayerRole::Natal);
+    assert!(workspace.layer("transit").is_none());
 }

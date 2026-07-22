@@ -1,7 +1,7 @@
 use std::{fs, path::PathBuf};
 
 use fs2::FileExt;
-use oracle_studio_core::{PersonKind, PersonProfile, StableId, VaultDocument};
+use oracle_studio_core::{ArtifactRecord, PersonKind, PersonProfile, StableId, VaultDocument};
 use oracle_studio_storage::{ExpectedState, FileVault, StorageError};
 
 const PASSWORD: &[u8] = b"fictional test password";
@@ -46,6 +46,23 @@ fn document(name: &str) -> VaultDocument {
     )
     .unwrap();
     VaultDocument::new(vec![profile], vec![], vec![], vec![]).unwrap()
+}
+
+fn pack_document() -> VaultDocument {
+    let mut deck = ArtifactRecord::from_sibylla(
+        StableId::new("artifact.id", "pack_bound_deck").unwrap(),
+        None,
+        None,
+        r#"{"schema_version":1,"artifact_type":"deck","payload":{"schema_version":1,"id":"pack_bound_deck","name":"Pack Bound Deck","attribution":{"author":"Test","artist":null,"publisher":null},"tradition":null,"rights":{"license":"AGPL-3.0-or-later","source":null,"notes":null},"reversal_rate_basis_points":0,"cards":[{"id":"fool","identity":{"kind":"conventional","id":"fool"},"printed_title":"The Fool","printed_number":null,"printed_suit":null,"printed_rank":null,"enabled":true,"asset_id":null,"correspondences":[],"notes":null}]}}"#,
+    )
+    .unwrap();
+    let content_id = deck.content_id().to_owned();
+    deck.bind_deck_pack(
+        StableId::new("deck_pack.id", "pack_bound_assets").unwrap(),
+        content_id,
+    )
+    .unwrap();
+    VaultDocument::new(vec![], vec![], vec![deck], vec![]).unwrap()
 }
 
 #[test]
@@ -133,6 +150,28 @@ fn authenticated_backup_and_transactional_import_preserve_exact_bytes() {
         fs::read(source.path()).unwrap(),
         fs::read(destination.path()).unwrap()
     );
+}
+
+#[test]
+fn backup_round_trip_preserves_verified_deck_pack_lineage() {
+    let directory = TestDirectory::new();
+    let source = FileVault::new(directory.join("source.vault")).unwrap();
+    source
+        .save(&pack_document(), PASSWORD, &ExpectedState::Missing)
+        .unwrap();
+    let backup = directory.join("pack-backup.vault");
+    source.export_backup(&backup, PASSWORD).unwrap();
+
+    let destination = FileVault::new(directory.join("destination.vault")).unwrap();
+    let imported = destination
+        .import_backup(&backup, PASSWORD, &ExpectedState::Missing)
+        .unwrap();
+    let artifact = &imported.document().artifacts()[0];
+    assert_eq!(
+        artifact.deck_pack_id().unwrap().as_str(),
+        "pack_bound_assets"
+    );
+    assert_eq!(artifact.deck_pack_content_id(), Some(artifact.content_id()));
 }
 
 #[test]
