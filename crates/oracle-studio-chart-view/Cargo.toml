@@ -1,0 +1,15 @@
+[package]
+name = "oracle-studio-chart-view"
+version = "0.1.0"
+description = "Renderer-neutral chart view models for Oracle Studio"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+astraeus-artifacts = { version = "0.1.0", git = "https://github.com/gracee3/astraeus", rev = "52d24862b8287b89b0986b7799583d82ecab21e9" }
+astraeus-core = { version = "0.1.0", git = "https://github.com/gracee3/astraeus", rev = "52d24862b8287b89b0986b7799583d82ecab21e9" }
+serde.workspace = true
+
+[dev-dependencies]

@@ -1,0 +1,44 @@
+use std::collections::BTreeMap;
+
+use astraeus_artifacts::CalculationArtifact;
+use astraeus_core::{
+    AngularPosition, CalculationRequest, CelestialObject, ChartAngles, DeterministicMock,
+    EphemerisAdapter, GeographicLocation, HouseCusps, HouseSystem, Position, UtcInstant, Zodiac,
+};
+use oracle_studio_chart_view::ChartViewModel;
+
+#[test]
+fn view_model_formats_calculated_points_without_recalculation() {
+    let request = CalculationRequest::new(
+        UtcInstant::parse_rfc3339("2000-01-01T12:00:00Z").unwrap(),
+        GeographicLocation::new(51.4779, 0.0, 46.0).unwrap(),
+        vec![CelestialObject::Sun],
+        Zodiac::Tropical,
+        None,
+        HouseSystem::Placidus,
+    )
+    .unwrap();
+    let positions = BTreeMap::from([(
+        CelestialObject::Sun,
+        Position::new(280.3689197, 0.0002323, 0.983327645, -0.0194321).unwrap(),
+    )]);
+    let houses = HouseCusps::new(
+        (0..12).map(|index| f64::from(index) * 30.0).collect(),
+        ChartAngles::new(
+            AngularPosition::new(0.0, 360.0).unwrap(),
+            AngularPosition::new(270.0, 360.0).unwrap(),
+            AngularPosition::new(180.0, 360.0).unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let result = DeterministicMock::new(positions, houses)
+        .calculate(&request)
+        .unwrap();
+    let artifact = CalculationArtifact::new(request, result).unwrap();
+    let view = ChartViewModel::from_calculation(&artifact);
+    assert_eq!(view.points.len(), 1);
+    assert!(view.points[0].retrograde);
+    assert_eq!(view.points[0].sign_index, 9);
+    assert_eq!(view.houses.len(), 12);
+}
