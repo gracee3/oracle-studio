@@ -39,9 +39,10 @@ it. The CLI exposes this as `deck-pack-verify`.
 
 Search performs a case-insensitive scan of the already decrypted in-memory
 document and returns bounded snippets. It writes no index, cache, query log, or
-decrypted temporary file. CLI output is intentionally plaintext visible to the
-unlocked user and remains subject to terminal history, screen capture, and the
-host threat model.
+decrypted temporary file. Artifact searches include verified deck pack IDs and
+deck content IDs when present. CLI output is intentionally plaintext visible to
+the unlocked user and remains subject to terminal history, screen capture, and
+the host threat model.
 
 ## Fixture provenance
 
