@@ -399,6 +399,15 @@ fn finish_reading(
     placements: Vec<Placement>,
     provenance: DrawProvenance,
 ) -> Result<VaultDocument, AppError> {
+    let deck_record = document
+        .artifacts()
+        .iter()
+        .find(|record| record.id() == &request.deck_record_id)
+        .ok_or(AppError::NotFound("deck artifact"))?;
+    let pack_snapshot = deck_record
+        .deck_pack_id()
+        .zip(deck_record.deck_pack_content_id())
+        .map(|(id, content_id)| (id.clone(), content_id.to_owned()));
     let reading = TarotReading::new(
         sibylla_core::StableId::new("reading.id", request.reading_id)?,
         request.person_id.as_ref().map(|id| id.as_str().to_owned()),
@@ -416,15 +425,16 @@ fn finish_reading(
         request.timestamp,
     )?;
     let json = ReadingArtifact::new(reading).to_json()?;
-    add_artifact(
-        document,
-        ArtifactRecord::from_sibylla(
-            request.artifact_record_id,
-            request.person_id,
-            request.session_id,
-            &json,
-        )?,
-    )
+    let mut record = ArtifactRecord::from_sibylla(
+        request.artifact_record_id,
+        request.person_id,
+        request.session_id,
+        &json,
+    )?;
+    if let Some((pack_id, content_id)) = pack_snapshot {
+        record.snapshot_deck_pack(pack_id, content_id)?;
+    }
+    add_artifact(document, record)
 }
 
 fn deck_for(document: &VaultDocument, id: &StableId) -> Result<DeckManifest, AppError> {

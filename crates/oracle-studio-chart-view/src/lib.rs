@@ -82,6 +82,26 @@ pub struct ChartSelection {
     selected_ids: BTreeSet<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ChartWorkspace {
+    pub chart: ChartViewModel,
+    pub placements: Vec<PlacementRow>,
+    pub aspects: Vec<AspectRow>,
+    pub selection: ChartSelection,
+}
+
+impl ChartWorkspace {
+    pub fn new(chart: ChartViewModel, aspects: Vec<AspectRow>) -> Self {
+        let placements = chart.placement_rows();
+        Self {
+            chart,
+            placements,
+            aspects,
+            selection: ChartSelection::default(),
+        }
+    }
+}
+
 impl ChartSelection {
     pub fn select(&mut self, id: impl Into<String>) {
         self.selected_ids.insert(id.into());

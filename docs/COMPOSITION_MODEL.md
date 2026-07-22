@@ -22,6 +22,7 @@ ArtifactRecord
 - artifact kind, engine artifact schema version, and producing Git revision
 - engine content ID
 - exact canonical artifact JSON
+- optional verified deck-pack ID and deck content ID snapshot
 
 DeckPackManifest
 - application-owned pack ID
