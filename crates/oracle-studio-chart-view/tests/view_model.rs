@@ -41,6 +41,7 @@ fn view_model_formats_calculated_points_without_recalculation() {
     assert!(view.points[0].retrograde);
     assert_eq!(view.points[0].sign_index, 9);
     assert_eq!(view.houses.len(), 12);
+    assert_eq!(view.placement_rows()[0].house, 10);
     let svg = render_svg(&view);
     assert!(svg.starts_with("<svg "));
     assert!(svg.contains("Sun"));

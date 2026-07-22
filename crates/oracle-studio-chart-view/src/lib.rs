@@ -34,6 +34,16 @@ pub struct PointView {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct PlacementRow {
+    pub id: String,
+    pub sign_index: u8,
+    pub degree_within_sign: f64,
+    pub house: u8,
+    pub longitude_speed_degrees_per_day: f64,
+    pub retrograde: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct AnglesView {
     pub ascendant_degrees: f64,
     pub midheaven_degrees: f64,
@@ -134,4 +144,34 @@ impl ChartViewModel {
             },
         }
     }
+
+    /// Produce an accessible table representation from this same view model.
+    pub fn placement_rows(&self) -> Vec<PlacementRow> {
+        self.points
+            .iter()
+            .map(|point| PlacementRow {
+                id: point.id.clone(),
+                sign_index: point.sign_index,
+                degree_within_sign: point.degree_within_sign,
+                house: house_for_view_longitude(point.longitude_degrees, &self.houses),
+                longitude_speed_degrees_per_day: point.longitude_speed_degrees_per_day,
+                retrograde: point.retrograde,
+            })
+            .collect()
+    }
+}
+
+fn house_for_view_longitude(longitude: f64, cusps: &[f64]) -> u8 {
+    if cusps.len() != 12 {
+        return 0;
+    }
+    for (index, start) in cusps.iter().copied().enumerate() {
+        let end = cusps[(index + 1) % 12];
+        let arc = (end - start).rem_euclid(360.0);
+        let offset = (longitude - start).rem_euclid(360.0);
+        if offset < arc {
+            return index as u8 + 1;
+        }
+    }
+    0
 }
