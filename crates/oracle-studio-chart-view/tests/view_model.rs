@@ -110,4 +110,7 @@ fn workspace_keeps_wheel_tables_and_selection_together() {
     assert!(workspace.placements.is_empty());
     assert!(workspace.aspects.is_empty());
     assert!(workspace.selection.is_selected("sun"));
+    let export = workspace.export();
+    assert!(export.svg.starts_with("<svg "));
+    assert!(export.placements.is_empty());
 }
