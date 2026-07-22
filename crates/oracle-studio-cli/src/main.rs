@@ -4,6 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use astraeus_core::CalculationRequest;
 use chrono::{SecondsFormat, Utc};
 use clap::{Parser, Subcommand, ValueEnum};
 use oracle_studio_app::{ManualPlacementInput, ReadingRequest, StudioService};
@@ -85,6 +86,15 @@ enum Command {
     },
     ChartImport {
         file: PathBuf,
+        #[arg(long)]
+        id: Option<String>,
+        #[arg(long)]
+        person: Option<String>,
+        #[arg(long)]
+        session: Option<String>,
+    },
+    ChartCast {
+        request: PathBuf,
         #[arg(long)]
         id: Option<String>,
         #[arg(long)]
@@ -330,6 +340,21 @@ fn dispatch(
             optional_id("artifact.session_id", session)?,
             &fs::read_to_string(file)?,
         )?),
+        Command::ChartCast {
+            request,
+            id,
+            person,
+            session,
+        } => {
+            let request: CalculationRequest = serde_json::from_str(&fs::read_to_string(request)?)?;
+            Some(StudioService::calculate_chart(
+                document,
+                app_id("artifact.id", id)?,
+                optional_id("artifact.person_id", person)?,
+                optional_id("artifact.session_id", session)?,
+                request,
+            )?)
+        }
         Command::ReadingNew {
             deck,
             person,
@@ -640,4 +665,6 @@ enum CliError {
     Sibylla(#[from] sibylla_core::ValidationError),
     #[error(transparent)]
     Artifact(#[from] sibylla_artifacts::ArtifactError),
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
 }

@@ -583,6 +583,7 @@ dependencies = [
 name = "oracle-studio-cli"
 version = "0.1.0"
 dependencies = [
+ "astraeus-core 0.1.0 (git+https://github.com/gracee3/astraeus?rev=52d24862b8287b89b0986b7799583d82ecab21e9)",
  "chrono",
  "clap",
  "getrandom 0.3.4",
@@ -590,6 +591,7 @@ dependencies = [
  "oracle-studio-core",
  "oracle-studio-storage",
  "rpassword",
+ "serde_json",
  "sibylla-artifacts",
  "sibylla-core",
  "thiserror",
