@@ -84,6 +84,12 @@ enum Command {
         pack: PathBuf,
         root: PathBuf,
     },
+    DeckPackBind {
+        #[arg(long)]
+        deck: String,
+        pack: PathBuf,
+        root: PathBuf,
+    },
     ChartImport {
         file: PathBuf,
         #[arg(long)]
@@ -327,6 +333,15 @@ fn dispatch(
             )?;
             println!("Verified {} deck assets", verified.len());
             None
+        }
+        Command::DeckPackBind { deck, pack, root } => {
+            let deck_id = StableId::new("deck_record_id", deck)?;
+            Some(StudioService::bind_verified_deck_pack(
+                document,
+                &deck_id,
+                &fs::read_to_string(pack)?,
+                &root,
+            )?)
         }
         Command::ChartImport {
             file,

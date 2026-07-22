@@ -85,6 +85,41 @@ impl StudioService {
         Ok(pack.verify_files(asset_root)?)
     }
 
+    pub fn bind_verified_deck_pack(
+        document: &VaultDocument,
+        deck_record_id: &StableId,
+        pack_json: &str,
+        asset_root: &std::path::Path,
+    ) -> Result<VaultDocument, AppError> {
+        let pack = DeckPackManifest::from_json(pack_json)?;
+        let record = document
+            .artifacts()
+            .iter()
+            .find(|record| record.id() == deck_record_id)
+            .ok_or(AppError::NotFound("deck artifact"))?;
+        if record.kind() != ArtifactKind::SibyllaDeck {
+            return Err(AppError::ExpectedDeck);
+        }
+        pack.verify_deck_artifact(record.canonical_json())?;
+        pack.verify_files(asset_root)?;
+        let mut artifacts = document.artifacts().to_vec();
+        let record = artifacts
+            .iter_mut()
+            .find(|record| record.id() == deck_record_id)
+            .ok_or(AppError::NotFound("deck artifact"))?;
+        record.bind_deck_pack(
+            StableId::new("deck_pack.id", pack.pack_id())?,
+            pack.deck_content_id(),
+        )?;
+        rebuild(
+            document,
+            document.people().to_vec(),
+            document.sessions().to_vec(),
+            artifacts,
+            document.journal_entries().to_vec(),
+        )
+    }
+
     pub fn deck_manifest(
         document: &VaultDocument,
         id: &StableId,
