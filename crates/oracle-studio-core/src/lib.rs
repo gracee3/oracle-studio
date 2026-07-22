@@ -9,7 +9,7 @@ use sibylla_artifacts::{Artifact as SibyllaArtifact, ArtifactKind as SibyllaKind
 use thiserror::Error;
 
 pub const VAULT_DOCUMENT_SCHEMA_VERSION: u32 = 2;
-pub const ASTRAEUS_REVISION: &str = "952a143b700ea5cad960498e7d8916a49ebb3691";
+pub const ASTRAEUS_REVISION: &str = "eb9a756d0d2814f55fcb6f29bdc99c8bb28df85a";
 pub const SIBYLLA_REVISION: &str = "a154c32b83b110d2568a9ab10828b4f8b3dba7c7";
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
