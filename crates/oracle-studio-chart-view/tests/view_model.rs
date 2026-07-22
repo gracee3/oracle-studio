@@ -6,7 +6,9 @@ use astraeus_core::{
     ChartAngles, ChartPointId, DeterministicMock, EphemerisAdapter, GeographicLocation, HouseCusps,
     HouseSystem, Position, UtcInstant, Zodiac, calculate_aspects,
 };
-use oracle_studio_chart_view::{AspectRow, ChartSelection, ChartViewModel, render_svg};
+use oracle_studio_chart_view::{
+    AspectRow, ChartSelection, ChartViewModel, ChartWorkspace, render_svg,
+};
 
 #[test]
 fn view_model_formats_calculated_points_without_recalculation() {
@@ -82,4 +84,26 @@ fn aspect_rows_preserve_engine_results_for_tables() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].kind, format!("{:?}", AspectKind::Square));
     assert_eq!(rows[0].orb_degrees, 0.0);
+}
+
+#[test]
+fn workspace_keeps_wheel_tables_and_selection_together() {
+    let chart = ChartViewModel {
+        schema_version: 1,
+        instant: "2000-01-01T12:00:00Z".into(),
+        zodiac: "Tropical".into(),
+        ayanamsa: None,
+        points: Vec::new(),
+        houses: (0..12).map(|index| f64::from(index) * 30.0).collect(),
+        angles: oracle_studio_chart_view::AnglesView {
+            ascendant_degrees: 0.0,
+            midheaven_degrees: 270.0,
+            vertex_degrees: 180.0,
+        },
+    };
+    let mut workspace = ChartWorkspace::new(chart, Vec::new());
+    workspace.selection.select("sun");
+    assert!(workspace.placements.is_empty());
+    assert!(workspace.aspects.is_empty());
+    assert!(workspace.selection.is_selected("sun"));
 }
