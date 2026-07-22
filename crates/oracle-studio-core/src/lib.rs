@@ -268,6 +268,21 @@ impl ArtifactRecord {
         self.deck_pack_content_id = Some(deck_content_id);
         Ok(())
     }
+
+    pub fn snapshot_deck_pack(
+        &mut self,
+        pack_id: StableId,
+        deck_content_id: impl Into<String>,
+    ) -> Result<(), ModelError> {
+        let deck_content_id = deck_content_id.into();
+        if self.kind != ArtifactKind::SibyllaReading {
+            return Err(ModelError::InvalidDeckPackBinding);
+        }
+        validate_content_id(&deck_content_id)?;
+        self.deck_pack_id = Some(pack_id);
+        self.deck_pack_content_id = Some(deck_content_id);
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -634,10 +649,14 @@ impl ArtifactWire {
             self.deck_pack_id.as_ref(),
             self.deck_pack_content_id.as_ref(),
         ) {
-            (Some(pack_id), Some(content_id)) => rebuilt.bind_deck_pack(
-                StableId::new("artifact.deck_pack_id", pack_id.clone())?,
-                content_id.clone(),
-            )?,
+            (Some(pack_id), Some(content_id)) => {
+                let pack_id = StableId::new("artifact.deck_pack_id", pack_id.clone())?;
+                if self.kind == ArtifactKind::SibyllaDeck {
+                    rebuilt.bind_deck_pack(pack_id, content_id.clone())?;
+                } else {
+                    rebuilt.snapshot_deck_pack(pack_id, content_id.clone())?;
+                }
+            }
             (None, None) => {}
             _ => return Err(ModelError::InvalidDeckPackBinding),
         }
@@ -725,6 +744,16 @@ fn validate_text(field: &'static str, value: &str) -> Result<(), ModelError> {
 
 fn validate_optional_text(field: &'static str, value: Option<&str>) -> Result<(), ModelError> {
     value.map_or(Ok(()), |value| validate_text(field, value))
+}
+
+fn validate_content_id(value: &str) -> Result<(), ModelError> {
+    let Some(hash) = value.strip_prefix("sha256:") else {
+        return Err(ModelError::InvalidDeckPackBinding);
+    };
+    if hash.len() != 64 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(ModelError::InvalidDeckPackBinding);
+    }
+    Ok(())
 }
 
 fn normalize_timestamp(field: &'static str, value: String) -> Result<String, ModelError> {
