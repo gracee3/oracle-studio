@@ -5,7 +5,7 @@ use astraeus_core::{
     AngularPosition, CalculationRequest, CelestialObject, ChartAngles, DeterministicMock,
     EphemerisAdapter, GeographicLocation, HouseCusps, HouseSystem, Position, UtcInstant, Zodiac,
 };
-use oracle_studio_chart_view::{ChartViewModel, render_svg};
+use oracle_studio_chart_view::{ChartSelection, ChartViewModel, render_svg};
 
 #[test]
 fn view_model_formats_calculated_points_without_recalculation() {
@@ -46,4 +46,20 @@ fn view_model_formats_calculated_points_without_recalculation() {
     assert!(svg.starts_with("<svg "));
     assert!(svg.contains("Sun"));
     assert_eq!(svg, render_svg(&view));
+}
+
+#[test]
+fn selection_state_is_shared_by_wheel_and_table_clients() {
+    let mut selection = ChartSelection::default();
+    selection.select("sun");
+    selection.select("moon");
+    selection.select("sun");
+    assert!(selection.is_selected("sun"));
+    assert_eq!(
+        selection.selected_ids().collect::<Vec<_>>(),
+        vec!["moon", "sun"]
+    );
+    selection.deselect("moon");
+    selection.clear();
+    assert!(!selection.is_selected("sun"));
 }
