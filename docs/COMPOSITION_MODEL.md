@@ -19,7 +19,7 @@ ArtifactRecord
 - stable application ID
 - optional person and session IDs
 - engine: astraeus | sibylla
-- artifact kind, schema version, and producing Git revision
+- artifact kind, engine artifact schema version, and producing Git revision
 - engine content ID
 - exact canonical artifact JSON
 

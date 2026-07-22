@@ -11,6 +11,7 @@ use thiserror::Error;
 pub const VAULT_DOCUMENT_SCHEMA_VERSION: u32 = 2;
 pub const ASTRAEUS_REVISION: &str = "eb9a756d0d2814f55fcb6f29bdc99c8bb28df85a";
 pub const SIBYLLA_REVISION: &str = "a154c32b83b110d2568a9ab10828b4f8b3dba7c7";
+pub const ENGINE_ARTIFACT_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(transparent)]
@@ -155,6 +156,7 @@ pub struct ArtifactRecord {
     person_id: Option<StableId>,
     session_id: Option<StableId>,
     kind: ArtifactKind,
+    artifact_schema_version: u32,
     producer_revision: String,
     content_id: String,
     canonical_json: String,
@@ -174,6 +176,7 @@ impl ArtifactRecord {
             person_id,
             session_id,
             kind: ArtifactKind::AstraeusCalculation,
+            artifact_schema_version: ENGINE_ARTIFACT_SCHEMA_VERSION,
             producer_revision: ASTRAEUS_REVISION.into(),
             content_id: artifact
                 .content_id()
@@ -201,6 +204,7 @@ impl ArtifactRecord {
             person_id,
             session_id,
             kind,
+            artifact_schema_version: ENGINE_ARTIFACT_SCHEMA_VERSION,
             producer_revision: SIBYLLA_REVISION.into(),
             content_id: artifact
                 .content_id()
@@ -223,6 +227,9 @@ impl ArtifactRecord {
     }
     pub const fn kind(&self) -> ArtifactKind {
         self.kind
+    }
+    pub const fn artifact_schema_version(&self) -> u32 {
+        self.artifact_schema_version
     }
     pub fn producer_revision(&self) -> &str {
         &self.producer_revision
@@ -354,6 +361,7 @@ struct ArtifactWire {
     person_id: Option<String>,
     session_id: Option<String>,
     kind: ArtifactKind,
+    artifact_schema_version: Option<u32>,
     producer_revision: String,
     content_id: String,
     canonical_json: String,
@@ -590,6 +598,10 @@ impl ArtifactWire {
             }
         };
         if rebuilt.kind != self.kind
+            || self
+                .artifact_schema_version
+                .unwrap_or(ENGINE_ARTIFACT_SCHEMA_VERSION)
+                != rebuilt.artifact_schema_version
             || rebuilt.producer_revision != self.producer_revision
             || rebuilt.content_id != self.content_id
         {
