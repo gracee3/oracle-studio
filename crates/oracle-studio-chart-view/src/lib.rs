@@ -130,6 +130,11 @@ impl ChartSelection {
 /// in a web view, exported, or wrapped by a native client without introducing
 /// a GUI dependency into the domain engine.
 pub fn render_svg(view: &ChartViewModel) -> String {
+    render_svg_with_selection(view, &ChartSelection::default())
+}
+
+/// Render an SVG wheel with selected points visually emphasized.
+pub fn render_svg_with_selection(view: &ChartViewModel, selection: &ChartSelection) -> String {
     use std::fmt::Write;
 
     const SIZE: f64 = 600.0;
@@ -155,10 +160,20 @@ pub fn render_svg(view: &ChartViewModel) -> String {
     for point in &view.points {
         let (x, y) = polar(point.longitude_degrees, RADIUS - 24.0);
         let label = escape_xml(&point.id);
+        let fill = if selection.is_selected(&point.id) {
+            "#c62828"
+        } else {
+            "black"
+        };
+        let marker_radius = if selection.is_selected(&point.id) {
+            6
+        } else {
+            4
+        };
         let _ = write!(
             svg,
-            "<circle cx=\"{x:.3}\" cy=\"{y:.3}\" r=\"4\" fill=\"black\"/><text x=\"{x:.3}\" y=\"{:.3}\" font-size=\"11\" text-anchor=\"middle\">{label}</text>",
-            y - 7.0
+            "<circle cx=\"{x:.3}\" cy=\"{y:.3}\" r=\"{marker_radius}\" fill=\"{fill}\"/><text x=\"{x:.3}\" y=\"{:.3}\" font-size=\"11\" text-anchor=\"middle\">{label}</text>",
+            y - 7.0,
         );
     }
     svg.push_str("</svg>");

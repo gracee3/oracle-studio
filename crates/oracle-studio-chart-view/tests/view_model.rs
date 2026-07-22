@@ -8,6 +8,7 @@ use astraeus_core::{
 };
 use oracle_studio_chart_view::{
     AspectRow, ChartSelection, ChartViewModel, ChartWorkspace, render_svg,
+    render_svg_with_selection,
 };
 
 #[test]
@@ -49,6 +50,9 @@ fn view_model_formats_calculated_points_without_recalculation() {
     assert!(svg.starts_with("<svg "));
     assert!(svg.contains("Sun"));
     assert_eq!(svg, render_svg(&view));
+    let mut selection = ChartSelection::default();
+    selection.select("Sun");
+    assert!(render_svg_with_selection(&view, &selection).contains("#c62828"));
 }
 
 #[test]
