@@ -90,6 +90,13 @@ pub struct ChartWorkspace {
     pub selection: ChartSelection,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ChartExport {
+    pub svg: String,
+    pub placements: Vec<PlacementRow>,
+    pub aspects: Vec<AspectRow>,
+}
+
 impl ChartWorkspace {
     pub fn new(chart: ChartViewModel, aspects: Vec<AspectRow>) -> Self {
         let placements = chart.placement_rows();
@@ -98,6 +105,14 @@ impl ChartWorkspace {
             placements,
             aspects,
             selection: ChartSelection::default(),
+        }
+    }
+
+    pub fn export(&self) -> ChartExport {
+        ChartExport {
+            svg: render_svg_with_selection(&self.chart, &self.selection),
+            placements: self.placements.clone(),
+            aspects: self.aspects.clone(),
         }
     }
 }
