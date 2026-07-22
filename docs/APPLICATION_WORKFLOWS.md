@@ -31,7 +31,8 @@ it. The CLI exposes this as `deck-pack-verify`.
   source-linked journal entries.
 - Person and session commands may create or edit composition records, while
   `deck-list`, `person-list`, and `session-list` provide the IDs needed by the
-  guided workflows.
+  guided workflows. `deck-list` also reports `pack=none` or the verified pack
+  ID bound to each deck.
 - Backup export and import copy authenticated encrypted envelope bytes; they do
   not create a plaintext export format.
 

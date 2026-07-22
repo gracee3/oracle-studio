@@ -319,7 +319,10 @@ fn dispatch(
                 .filter(|artifact| artifact.kind() == ArtifactKind::SibyllaDeck)
             {
                 let deck = StudioService::deck_manifest(document, artifact.id())?;
-                println!("{}\t{}", artifact.id().as_str(), deck.name());
+                let pack = artifact
+                    .deck_pack_id()
+                    .map_or("pack=none".to_owned(), |id| format!("pack={}", id.as_str()));
+                println!("{}\t{}\t{}", artifact.id().as_str(), deck.name(), pack);
             }
             None
         }

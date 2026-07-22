@@ -100,6 +100,10 @@ fn guided_cli_completes_and_recovers_an_encrypted_manual_reading() {
         .args(["--id", "fictional_deck_record"]);
     success(import);
 
+    let mut decks = command(&vault, &password);
+    decks.arg("deck-list");
+    assert!(success(decks).contains("fictional_deck_record\tCLI Fixture Deck\tpack=none"));
+
     let mut reading = command(&vault, &password);
     reading
         .args([
