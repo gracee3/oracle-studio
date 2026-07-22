@@ -55,8 +55,9 @@ cargo run --locked --bin oracle-studio -- \
 ```
 
 Generation reads enabled card `asset_id` values from the deck, hashes the
-matching PNG files, records their dimensions, and writes only metadata. It
-does not copy images into the vault.
+matching PNG files (either `<asset_id>.png` or `images/<asset_id>.png`), records
+their dimensions, and writes only metadata. It does not copy images into the
+vault.
 
 After importing a deck artifact into a vault, verify a pack before rendering or
 recognition:
