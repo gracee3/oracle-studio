@@ -86,12 +86,34 @@ dependencies = [
 [[package]]
 name = "astraeus-artifacts"
 version = "0.1.0"
-source = "git+https://github.com/gracee3/astraeus?rev=eb9a756d0d2814f55fcb6f29bdc99c8bb28df85a#eb9a756d0d2814f55fcb6f29bdc99c8bb28df85a"
+source = "git+https://github.com/gracee3/astraeus?rev=52d24862b8287b89b0986b7799583d82ecab21e9#52d24862b8287b89b0986b7799583d82ecab21e9"
 dependencies = [
- "astraeus-core",
+ "astraeus-core 0.1.0 (git+https://github.com/gracee3/astraeus?rev=52d24862b8287b89b0986b7799583d82ecab21e9)",
  "serde",
  "serde_json",
  "sha2",
+ "thiserror",
+]
+
+[[package]]
+name = "astraeus-artifacts"
+version = "0.1.0"
+source = "git+https://github.com/gracee3/astraeus?rev=eb9a756d0d2814f55fcb6f29bdc99c8bb28df85a#eb9a756d0d2814f55fcb6f29bdc99c8bb28df85a"
+dependencies = [
+ "astraeus-core 0.1.0 (git+https://github.com/gracee3/astraeus?rev=eb9a756d0d2814f55fcb6f29bdc99c8bb28df85a)",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+]
+
+[[package]]
+name = "astraeus-core"
+version = "0.1.0"
+source = "git+https://github.com/gracee3/astraeus?rev=52d24862b8287b89b0986b7799583d82ecab21e9#52d24862b8287b89b0986b7799583d82ecab21e9"
+dependencies = [
+ "chrono",
+ "serde",
  "thiserror",
 ]
 
@@ -103,6 +125,58 @@ dependencies = [
  "chrono",
  "serde",
  "thiserror",
+]
+
+[[package]]
+name = "astraeus-derived"
+version = "0.1.0"
+source = "git+https://github.com/gracee3/astraeus?rev=52d24862b8287b89b0986b7799583d82ecab21e9#52d24862b8287b89b0986b7799583d82ecab21e9"
+dependencies = [
+ "astraeus-artifacts 0.1.0 (git+https://github.com/gracee3/astraeus?rev=52d24862b8287b89b0986b7799583d82ecab21e9)",
+ "astraeus-core 0.1.0 (git+https://github.com/gracee3/astraeus?rev=52d24862b8287b89b0986b7799583d82ecab21e9)",
+ "astraeus-specifications",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+]
+
+[[package]]
+name = "astraeus-events"
+version = "0.1.0"
+source = "git+https://github.com/gracee3/astraeus?rev=52d24862b8287b89b0986b7799583d82ecab21e9#52d24862b8287b89b0986b7799583d82ecab21e9"
+dependencies = [
+ "astraeus-artifacts 0.1.0 (git+https://github.com/gracee3/astraeus?rev=52d24862b8287b89b0986b7799583d82ecab21e9)",
+ "astraeus-core 0.1.0 (git+https://github.com/gracee3/astraeus?rev=52d24862b8287b89b0986b7799583d82ecab21e9)",
+ "astraeus-derived",
+ "astraeus-specifications",
+ "chrono",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+]
+
+[[package]]
+name = "astraeus-specifications"
+version = "0.1.0"
+source = "git+https://github.com/gracee3/astraeus?rev=52d24862b8287b89b0986b7799583d82ecab21e9#52d24862b8287b89b0986b7799583d82ecab21e9"
+dependencies = [
+ "astraeus-core 0.1.0 (git+https://github.com/gracee3/astraeus?rev=52d24862b8287b89b0986b7799583d82ecab21e9)",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "astraeus-swiss"
+version = "0.1.0"
+source = "git+https://github.com/gracee3/astraeus?rev=52d24862b8287b89b0986b7799583d82ecab21e9#52d24862b8287b89b0986b7799583d82ecab21e9"
+dependencies = [
+ "astraeus-core 0.1.0 (git+https://github.com/gracee3/astraeus?rev=52d24862b8287b89b0986b7799583d82ecab21e9)",
+ "astraeus-events",
+ "chrono",
+ "sweph-sys",
 ]
 
 [[package]]
@@ -482,12 +556,26 @@ checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 name = "oracle-studio-app"
 version = "0.1.0"
 dependencies = [
- "astraeus-artifacts",
- "astraeus-core",
+ "astraeus-artifacts 0.1.0 (git+https://github.com/gracee3/astraeus?rev=52d24862b8287b89b0986b7799583d82ecab21e9)",
+ "astraeus-core 0.1.0 (git+https://github.com/gracee3/astraeus?rev=52d24862b8287b89b0986b7799583d82ecab21e9)",
+ "astraeus-swiss",
+ "oracle-studio-assets",
  "oracle-studio-core",
  "sibylla-artifacts",
  "sibylla-core",
  "sibylla-shuffle",
+ "thiserror",
+]
+
+[[package]]
+name = "oracle-studio-assets"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+ "sibylla-artifacts",
+ "sibylla-core",
  "thiserror",
 ]
 
@@ -513,7 +601,7 @@ dependencies = [
 name = "oracle-studio-core"
 version = "0.1.0"
 dependencies = [
- "astraeus-artifacts",
+ "astraeus-artifacts 0.1.0 (git+https://github.com/gracee3/astraeus?rev=eb9a756d0d2814f55fcb6f29bdc99c8bb28df85a)",
  "chrono",
  "serde",
  "serde_json",
@@ -752,6 +840,15 @@ name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
+
+[[package]]
+name = "sweph-sys"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e09076a262af442f92d0a02519cc6f34a9d42fe0b698be78fe5663bde509e16"
+dependencies = [
+ "cc",
+]
 
 [[package]]
 name = "syn"

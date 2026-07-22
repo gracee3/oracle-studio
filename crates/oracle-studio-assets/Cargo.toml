@@ -1,0 +1,18 @@
+[package]
+name = "oracle-studio-assets"
+version = "0.1.0"
+description = "Validated local deck-pack indexes for Oracle Studio"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+sibylla-artifacts = { version = "0.1.0", git = "https://github.com/gracee3/sibylla", rev = "a154c32b83b110d2568a9ab10828b4f8b3dba7c7" }
+thiserror.workspace = true
+
+[dev-dependencies]
+sibylla-core = { version = "0.1.0", git = "https://github.com/gracee3/sibylla", rev = "a154c32b83b110d2568a9ab10828b4f8b3dba7c7" }

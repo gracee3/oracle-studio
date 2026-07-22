@@ -19,9 +19,14 @@ ArtifactRecord
 - stable application ID
 - optional person and session IDs
 - engine: astraeus | sibylla
-- artifact kind and producing Git revision
+- artifact kind, schema version, and producing Git revision
 - engine content ID
 - exact canonical artifact JSON
+
+DeckPackManifest
+- application-owned pack ID
+- exact Sibylla deck artifact content ID
+- card asset IDs, relative paths, hashes, dimensions, and source/license data
 
 JournalEntry
 - stable application ID
@@ -47,3 +52,7 @@ Initial engine pins:
 
 No sibling path dependency is permitted. The producing revision is stored per
 record so future migrations can select the correct reader explicitly.
+
+Deck-pack metadata is verified separately from the immutable artifact record.
+It does not change Sibylla content IDs, enter the tarot reading snapshot, or
+place image bytes in the encrypted vault document.

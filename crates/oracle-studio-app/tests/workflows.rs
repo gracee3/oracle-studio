@@ -177,6 +177,18 @@ fn calculation_artifacts_are_validated_and_associated_without_recalculation() {
     let result = DeterministicMock::new(positions, houses)
         .calculate(&request)
         .unwrap();
+    let calculated = StudioService::calculate_chart(
+        &composed(),
+        id("artifact.id", "calculated_chart_record"),
+        Some(id("person.id", "fictional_client")),
+        Some(id("session.id", "fictional_session")),
+        request.clone(),
+    )
+    .unwrap();
+    assert_eq!(
+        calculated.artifacts()[0].kind(),
+        ArtifactKind::AstraeusCalculation
+    );
     let json = CalculationArtifact::new(request, result)
         .unwrap()
         .to_json()

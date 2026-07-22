@@ -8,6 +8,10 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+astraeus-artifacts = { version = "0.1.0", git = "https://github.com/gracee3/astraeus", rev = "52d24862b8287b89b0986b7799583d82ecab21e9" }
+astraeus-core = { version = "0.1.0", git = "https://github.com/gracee3/astraeus", rev = "52d24862b8287b89b0986b7799583d82ecab21e9" }
+astraeus-swiss = { version = "0.1.0", git = "https://github.com/gracee3/astraeus", rev = "52d24862b8287b89b0986b7799583d82ecab21e9" }
+oracle-studio-assets = { version = "0.1.0", path = "../oracle-studio-assets" }
 oracle-studio-core = { version = "0.1.0", path = "../oracle-studio-core" }
 sibylla-artifacts = { version = "0.1.0", git = "https://github.com/gracee3/sibylla", rev = "a154c32b83b110d2568a9ab10828b4f8b3dba7c7" }
 sibylla-core = { version = "0.1.0", git = "https://github.com/gracee3/sibylla", rev = "a154c32b83b110d2568a9ab10828b4f8b3dba7c7" }
@@ -15,5 +19,3 @@ sibylla-shuffle = { version = "0.1.0", git = "https://github.com/gracee3/sibylla
 thiserror.workspace = true
 
 [dev-dependencies]
-astraeus-artifacts = { version = "0.1.0", git = "https://github.com/gracee3/astraeus", rev = "eb9a756d0d2814f55fcb6f29bdc99c8bb28df85a" }
-astraeus-core = { version = "0.1.0", git = "https://github.com/gracee3/astraeus", rev = "eb9a756d0d2814f55fcb6f29bdc99c8bb28df85a" }
