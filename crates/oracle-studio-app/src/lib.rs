@@ -1,5 +1,8 @@
 //! Reusable offline use-case services for Oracle Studio.
 
+use astraeus_artifacts::CalculationArtifact;
+use astraeus_core::{CalculationRequest, EphemerisAdapter};
+use astraeus_swiss::SwissEphemerisAdapter;
 use oracle_studio_core::{
     ArtifactKind, ArtifactRecord, JournalEntry, PersonProfile, Session, StableId, VaultDocument,
 };
@@ -162,6 +165,28 @@ impl StudioService {
             document,
             ArtifactRecord::from_astraeus_calculation(record_id, person_id, session_id, json)?,
         )
+    }
+
+    /// Calculate a chart with Astraeus and persist its immutable artifact.
+    ///
+    /// Local-time resolution, person/session ownership, and encrypted storage
+    /// remain Oracle Studio concerns; Astraeus receives an exact UTC request.
+    pub fn calculate_chart(
+        document: &VaultDocument,
+        record_id: StableId,
+        person_id: Option<StableId>,
+        session_id: Option<StableId>,
+        request: CalculationRequest,
+    ) -> Result<VaultDocument, AppError> {
+        let result = SwissEphemerisAdapter::moshier()
+            .calculate(&request)
+            .map_err(|error| AppError::Astraeus(error.to_string()))?;
+        let artifact = CalculationArtifact::new(request, result)
+            .map_err(|error| AppError::Astraeus(error.to_string()))?;
+        let json = artifact
+            .to_json()
+            .map_err(|error| AppError::Astraeus(error.to_string()))?;
+        Self::import_chart(document, record_id, person_id, session_id, &json)
     }
 
     pub fn record_manual_reading(
@@ -428,6 +453,8 @@ pub enum AppError {
     Manifest(#[from] sibylla_core::ManifestError),
     #[error("invalid Sibylla value: {0}")]
     SibyllaValidation(#[from] sibylla_core::ValidationError),
+    #[error("Astraeus calculation failed: {0}")]
+    Astraeus(String),
     #[error(transparent)]
     Shuffle(#[from] sibylla_shuffle::ShuffleError),
 }
