@@ -2,10 +2,11 @@ use std::collections::BTreeMap;
 
 use astraeus_artifacts::CalculationArtifact;
 use astraeus_core::{
-    AngularPosition, CalculationRequest, CelestialObject, ChartAngles, DeterministicMock,
-    EphemerisAdapter, GeographicLocation, HouseCusps, HouseSystem, Position, UtcInstant, Zodiac,
+    AngularPosition, AspectDefinitions, AspectKind, CalculationRequest, CelestialObject,
+    ChartAngles, ChartPointId, DeterministicMock, EphemerisAdapter, GeographicLocation, HouseCusps,
+    HouseSystem, Position, UtcInstant, Zodiac, calculate_aspects,
 };
-use oracle_studio_chart_view::{ChartSelection, ChartViewModel, render_svg};
+use oracle_studio_chart_view::{AspectRow, ChartSelection, ChartViewModel, render_svg};
 
 #[test]
 fn view_model_formats_calculated_points_without_recalculation() {
@@ -62,4 +63,23 @@ fn selection_state_is_shared_by_wheel_and_table_clients() {
     selection.deselect("moon");
     selection.clear();
     assert!(!selection.is_selected("sun"));
+}
+
+#[test]
+fn aspect_rows_preserve_engine_results_for_tables() {
+    let positions = std::collections::BTreeMap::from([
+        (
+            ChartPointId::from(CelestialObject::Sun),
+            AngularPosition::new(0.0, 1.0).unwrap(),
+        ),
+        (
+            ChartPointId::from(CelestialObject::Moon),
+            AngularPosition::new(90.0, 1.0).unwrap(),
+        ),
+    ]);
+    let aspects = calculate_aspects(&positions, &AspectDefinitions::ptolemaic(1.0).unwrap());
+    let rows = AspectRow::from_aspects(&aspects);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].kind, format!("{:?}", AspectKind::Square));
+    assert_eq!(rows[0].orb_degrees, 0.0);
 }
