@@ -6,6 +6,7 @@ use std::{
 };
 
 const DECK: &str = r#"{"schema_version":1,"id":"cli_fixture_deck","name":"CLI Fixture Deck","attribution":{"author":"Oracle Studio contributors","artist":null,"publisher":null},"tradition":"Original metadata-only test fixture","rights":{"license":"AGPL-3.0-or-later","source":null,"notes":"No artwork."},"reversal_rate_basis_points":0,"cards":[{"id":"fool","identity":{"kind":"conventional","id":"fool"},"printed_title":"The Fool","printed_number":null,"printed_suit":null,"printed_rank":null,"enabled":true,"asset_id":null,"correspondences":[],"notes":null}]}"#;
+const PACK_DECK: &str = r#"{"schema_version":1,"id":"cli_pack_deck","name":"CLI Pack Deck","attribution":{"author":"Oracle Studio contributors","artist":null,"publisher":null},"tradition":"Original metadata-only test fixture","rights":{"license":"AGPL-3.0-or-later","source":null,"notes":"No artwork."},"reversal_rate_basis_points":0,"cards":[{"id":"fool","identity":{"kind":"conventional","id":"fool"},"printed_title":"The Fool","printed_number":null,"printed_suit":null,"printed_rank":null,"enabled":true,"asset_id":"fool","correspondences":[],"notes":null}]}"#;
 
 struct TestDirectory(PathBuf);
 
@@ -189,4 +190,68 @@ fn broad_password_file_permissions_are_rejected_before_unlock() {
     let output = command.output().unwrap();
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("password file permissions"));
+}
+
+#[test]
+fn cli_generates_and_verifies_a_deck_pack() {
+    let directory = TestDirectory::new();
+    let vault = directory.0.join("journal.vault");
+    let password = directory.0.join("password");
+    fs::write(&password, b"fictional pack password\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&password, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    let deck = directory.0.join("deck.json");
+    let artifact = directory.0.join("deck-artifact.json");
+    fs::write(&deck, PACK_DECK).unwrap();
+    fs::write(
+        &artifact,
+        format!(r#"{{"schema_version":1,"artifact_type":"deck","payload":{PACK_DECK}}}"#),
+    )
+    .unwrap();
+    let root = directory.0.join("pack");
+    fs::create_dir_all(root.join("images")).unwrap();
+    let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
+    png.extend_from_slice(&500_u32.to_be_bytes());
+    png.extend_from_slice(&857_u32.to_be_bytes());
+    fs::write(root.join("images/fool.png"), png).unwrap();
+    let sidecar = directory.0.join("assets.json");
+
+    let mut init = command(&vault, &password);
+    init.arg("init");
+    success(init);
+    let mut import = command(&vault, &password);
+    import
+        .arg("deck-import")
+        .arg(&deck)
+        .args(["--id", "cli_pack_deck_record"]);
+    success(import);
+
+    let mut generate = command(&vault, &password);
+    generate.args([
+        "deck-pack-generate",
+        artifact.to_str().unwrap(),
+        root.to_str().unwrap(),
+        "cli_pack",
+        sidecar.to_str().unwrap(),
+        "--file-page",
+        "https://example.com/file",
+        "--original-url",
+        "https://example.com/fool.png",
+        "--license",
+        "Public domain",
+    ]);
+    assert!(success(generate).contains("Generated deck pack cli_pack with 1 assets"));
+
+    let mut verify = command(&vault, &password);
+    verify.args([
+        "deck-pack-verify",
+        "--deck",
+        "cli_pack_deck_record",
+        sidecar.to_str().unwrap(),
+        root.to_str().unwrap(),
+    ]);
+    assert!(success(verify).contains("Verified 1 deck assets"));
 }
