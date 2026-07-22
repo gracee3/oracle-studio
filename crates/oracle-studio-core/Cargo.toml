@@ -8,7 +8,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-astraeus-artifacts = { version = "0.1.0", git = "https://github.com/gracee3/astraeus", rev = "952a143b700ea5cad960498e7d8916a49ebb3691" }
+astraeus-artifacts = { version = "0.1.0", git = "https://github.com/gracee3/astraeus", rev = "eb9a756d0d2814f55fcb6f29bdc99c8bb28df85a" }
 chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true
