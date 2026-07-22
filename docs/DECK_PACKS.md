@@ -54,6 +54,21 @@ The pack JSON's `deck_content_id` must equal the canonical content ID of the
 imported Sibylla deck artifact. The command reads files only for hashing; it
 does not copy artwork into the vault or alter the immutable deck record.
 
+After verification, bind the pack to the imported deck record so future
+readings can inherit the verified asset context:
+
+```bash
+cargo run --locked --bin oracle-studio -- \
+  --vault /path/to/private/journal.vault \
+  deck-pack-bind \
+  --deck rider_waite_smith_geldard \
+  /path/to/pack/assets.json \
+  /path/to/pack
+```
+
+Binding stores only the pack ID and exact deck content ID in the application
+record. The image files remain outside the encrypted vault document.
+
 ## Asset retention boundary
 
 The asset sidecar is metadata and a verification index. Future Oracle Studio

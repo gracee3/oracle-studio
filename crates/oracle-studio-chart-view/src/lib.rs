@@ -7,6 +7,7 @@
 use astraeus_artifacts::CalculationArtifact;
 use astraeus_core::ChartAngle;
 use serde::Serialize;
+use std::collections::BTreeSet;
 
 pub const VIEW_SCHEMA_VERSION: u32 = 1;
 
@@ -48,6 +49,33 @@ pub struct AnglesView {
     pub ascendant_degrees: f64,
     pub midheaven_degrees: f64,
     pub vertex_degrees: f64,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct ChartSelection {
+    selected_ids: BTreeSet<String>,
+}
+
+impl ChartSelection {
+    pub fn select(&mut self, id: impl Into<String>) {
+        self.selected_ids.insert(id.into());
+    }
+
+    pub fn deselect(&mut self, id: &str) {
+        self.selected_ids.remove(id);
+    }
+
+    pub fn clear(&mut self) {
+        self.selected_ids.clear();
+    }
+
+    pub fn is_selected(&self, id: &str) -> bool {
+        self.selected_ids.contains(id)
+    }
+
+    pub fn selected_ids(&self) -> impl Iterator<Item = &str> {
+        self.selected_ids.iter().map(String::as_str)
+    }
 }
 
 /// Render a deterministic, presentation-only SVG wheel.

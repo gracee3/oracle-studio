@@ -160,6 +160,8 @@ pub struct ArtifactRecord {
     producer_revision: String,
     content_id: String,
     canonical_json: String,
+    deck_pack_id: Option<StableId>,
+    deck_pack_content_id: Option<String>,
 }
 
 impl ArtifactRecord {
@@ -184,6 +186,8 @@ impl ArtifactRecord {
             canonical_json: artifact
                 .to_json()
                 .map_err(|error| ModelError::InvalidArtifact(error.to_string()))?,
+            deck_pack_id: None,
+            deck_pack_content_id: None,
         })
     }
 
@@ -213,6 +217,8 @@ impl ArtifactRecord {
             canonical_json: artifact
                 .to_json()
                 .map_err(|error| ModelError::InvalidArtifact(error.to_string()))?,
+            deck_pack_id: None,
+            deck_pack_content_id: None,
         })
     }
 
@@ -239,6 +245,28 @@ impl ArtifactRecord {
     }
     pub fn canonical_json(&self) -> &str {
         &self.canonical_json
+    }
+
+    pub fn deck_pack_id(&self) -> Option<&StableId> {
+        self.deck_pack_id.as_ref()
+    }
+
+    pub fn deck_pack_content_id(&self) -> Option<&str> {
+        self.deck_pack_content_id.as_deref()
+    }
+
+    pub fn bind_deck_pack(
+        &mut self,
+        pack_id: StableId,
+        deck_content_id: impl Into<String>,
+    ) -> Result<(), ModelError> {
+        let deck_content_id = deck_content_id.into();
+        if self.kind != ArtifactKind::SibyllaDeck || self.content_id != deck_content_id {
+            return Err(ModelError::InvalidDeckPackBinding);
+        }
+        self.deck_pack_id = Some(pack_id);
+        self.deck_pack_content_id = Some(deck_content_id);
+        Ok(())
     }
 }
 
@@ -365,6 +393,10 @@ struct ArtifactWire {
     producer_revision: String,
     content_id: String,
     canonical_json: String,
+    #[serde(default)]
+    deck_pack_id: Option<String>,
+    #[serde(default)]
+    deck_pack_content_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -597,6 +629,18 @@ impl ArtifactWire {
                 ArtifactRecord::from_sibylla(id, person_id, session_id, &self.canonical_json)?
             }
         };
+        let mut rebuilt = rebuilt;
+        match (
+            self.deck_pack_id.as_ref(),
+            self.deck_pack_content_id.as_ref(),
+        ) {
+            (Some(pack_id), Some(content_id)) => rebuilt.bind_deck_pack(
+                StableId::new("artifact.deck_pack_id", pack_id.clone())?,
+                content_id.clone(),
+            )?,
+            (None, None) => {}
+            _ => return Err(ModelError::InvalidDeckPackBinding),
+        }
         if rebuilt.kind != self.kind
             || self
                 .artifact_schema_version
@@ -604,6 +648,12 @@ impl ArtifactWire {
                 != rebuilt.artifact_schema_version
             || rebuilt.producer_revision != self.producer_revision
             || rebuilt.content_id != self.content_id
+            || rebuilt.deck_pack_id
+                != self
+                    .deck_pack_id
+                    .map(|id| StableId::new("artifact.deck_pack_id", id.clone()))
+                    .transpose()?
+            || rebuilt.deck_pack_content_id != self.deck_pack_content_id
         {
             return Err(ModelError::ArtifactMetadataMismatch);
         }
@@ -649,6 +699,8 @@ pub enum ModelError {
     InvalidArtifact(String),
     #[error("artifact metadata does not match its canonical payload")]
     ArtifactMetadataMismatch,
+    #[error("deck pack binding does not match a Sibylla deck artifact")]
+    InvalidDeckPackBinding,
     #[error("artifact person does not match its session person")]
     ArtifactPersonSessionMismatch,
     #[error("journal entry sources refer to inconsistent people or sessions")]
