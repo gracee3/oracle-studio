@@ -5,7 +5,7 @@
 //! to a renderer.
 
 use astraeus_artifacts::CalculationArtifact;
-use astraeus_core::ChartAngle;
+use astraeus_core::{Aspect, ChartAngle};
 use serde::Serialize;
 use std::collections::BTreeSet;
 
@@ -42,6 +42,32 @@ pub struct PlacementRow {
     pub house: u8,
     pub longitude_speed_degrees_per_day: f64,
     pub retrograde: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct AspectRow {
+    pub first: String,
+    pub second: String,
+    pub kind: String,
+    pub separation_degrees: f64,
+    pub orb_degrees: f64,
+    pub phase: String,
+}
+
+impl AspectRow {
+    pub fn from_aspects(aspects: &[Aspect]) -> Vec<Self> {
+        aspects
+            .iter()
+            .map(|aspect| Self {
+                first: format!("{:?}", aspect.first()),
+                second: format!("{:?}", aspect.second()),
+                kind: format!("{:?}", aspect.kind()),
+                separation_degrees: aspect.separation_degrees(),
+                orb_degrees: aspect.orb_degrees(),
+                phase: format!("{:?}", aspect.phase()),
+            })
+            .collect()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
