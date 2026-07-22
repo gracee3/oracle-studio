@@ -588,6 +588,7 @@ dependencies = [
  "clap",
  "getrandom 0.3.4",
  "oracle-studio-app",
+ "oracle-studio-assets",
  "oracle-studio-core",
  "oracle-studio-storage",
  "rpassword",
