@@ -3,6 +3,7 @@
 use astraeus_artifacts::CalculationArtifact;
 use astraeus_core::{CalculationRequest, EphemerisAdapter};
 use astraeus_swiss::SwissEphemerisAdapter;
+use oracle_studio_assets::{DeckPackManifest, VerifiedAsset};
 use oracle_studio_core::{
     ArtifactKind, ArtifactRecord, JournalEntry, PersonProfile, Session, StableId, VaultDocument,
 };
@@ -65,6 +66,25 @@ impl SearchHit {
 }
 
 impl StudioService {
+    pub fn verify_deck_pack(
+        document: &VaultDocument,
+        deck_record_id: &StableId,
+        pack_json: &str,
+        asset_root: &std::path::Path,
+    ) -> Result<Vec<VerifiedAsset>, AppError> {
+        let record = document
+            .artifacts()
+            .iter()
+            .find(|record| record.id() == deck_record_id)
+            .ok_or(AppError::NotFound("deck artifact"))?;
+        if record.kind() != ArtifactKind::SibyllaDeck {
+            return Err(AppError::ExpectedDeck);
+        }
+        let pack = DeckPackManifest::from_json(pack_json)?;
+        pack.verify_deck_artifact(record.canonical_json())?;
+        Ok(pack.verify_files(asset_root)?)
+    }
+
     pub fn deck_manifest(
         document: &VaultDocument,
         id: &StableId,
@@ -447,6 +467,8 @@ pub enum AppError {
     EmptyQuery,
     #[error(transparent)]
     Model(#[from] oracle_studio_core::ModelError),
+    #[error(transparent)]
+    Assets(#[from] oracle_studio_assets::AssetError),
     #[error(transparent)]
     Artifact(#[from] sibylla_artifacts::ArtifactError),
     #[error(transparent)]

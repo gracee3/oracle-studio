@@ -11,6 +11,12 @@ The current CLI walkthrough and exact command reference are in
 and a throwaway encrypted vault so the complete first tarot workflow can be
 tested without artwork or personal data.
 
+Deck images are not embedded in Sibylla artifacts or the encrypted vault
+document. The `oracle-studio-assets` crate validates an application-owned
+sidecar, binds it to the exact Sibylla deck content ID, rejects unsafe paths and
+symbolic links, and verifies every local file's SHA-256 before a UI can render
+it. The CLI exposes this as `deck-pack-verify`.
+
 ## Engine boundaries
 
 - Deck import accepts a Sibylla deck envelope or raw manifest and stores the

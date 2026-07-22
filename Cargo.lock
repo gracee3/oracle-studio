@@ -559,6 +559,7 @@ dependencies = [
  "astraeus-artifacts 0.1.0 (git+https://github.com/gracee3/astraeus?rev=52d24862b8287b89b0986b7799583d82ecab21e9)",
  "astraeus-core 0.1.0 (git+https://github.com/gracee3/astraeus?rev=52d24862b8287b89b0986b7799583d82ecab21e9)",
  "astraeus-swiss",
+ "oracle-studio-assets",
  "oracle-studio-core",
  "sibylla-artifacts",
  "sibylla-core",
@@ -574,6 +575,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "sibylla-artifacts",
+ "sibylla-core",
  "thiserror",
 ]
 

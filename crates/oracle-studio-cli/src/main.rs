@@ -77,6 +77,12 @@ enum Command {
         id: Option<String>,
     },
     DeckList,
+    DeckPackVerify {
+        #[arg(long)]
+        deck: String,
+        pack: PathBuf,
+        root: PathBuf,
+    },
     ChartImport {
         file: PathBuf,
         #[arg(long)]
@@ -299,6 +305,17 @@ fn dispatch(
                 let deck = StudioService::deck_manifest(document, artifact.id())?;
                 println!("{}\t{}", artifact.id().as_str(), deck.name());
             }
+            None
+        }
+        Command::DeckPackVerify { deck, pack, root } => {
+            let deck_id = StableId::new("deck_record_id", deck)?;
+            let verified = StudioService::verify_deck_pack(
+                document,
+                &deck_id,
+                &fs::read_to_string(pack)?,
+                &root,
+            )?;
+            println!("Verified {} deck assets", verified.len());
             None
         }
         Command::ChartImport {

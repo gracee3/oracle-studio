@@ -2,6 +2,7 @@
 members = [
     "crates/oracle-studio-core",
     "crates/oracle-studio-app",
+    "crates/oracle-studio-assets",
     "crates/oracle-studio-cli",
     "crates/oracle-studio-storage",
     "crates/oracle-studio-vault",

@@ -37,9 +37,13 @@ associate tarot and astrology artifacts with a client/session.
 
 ## Phase 5D: memory and practitioner controls
 
+Status: integration foundation in progress.
+
 - Add visible, editable, source-linked memory records.
 - Add practitioner-private visibility and export controls.
 - Add correction, forgetting, retention, and audit behavior.
+- Add engine-neutral artifact lineage and application-owned deck-pack
+  verification before rendering or recognition.
 
 AI interpretation, camera recognition, online accounts, synchronization,
 subscriptions, and commercial deck packs remain later projects.
