@@ -109,7 +109,8 @@ fn pack_generator_uses_enabled_deck_assets_and_png_dimensions() {
     let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
     png.extend_from_slice(&500u32.to_be_bytes());
     png.extend_from_slice(&857u32.to_be_bytes());
-    fs::write(root.join("fool.png"), &png).unwrap();
+    fs::create_dir(root.join("images")).unwrap();
+    fs::write(root.join("images/fool.png"), &png).unwrap();
     let deck = DeckManifest::from_json(DECK).unwrap();
     let envelope = DeckArtifact::new(deck).to_json().unwrap();
     let pack = DeckPackManifest::from_deck_artifact_png(
@@ -124,7 +125,7 @@ fn pack_generator_uses_enabled_deck_assets_and_png_dimensions() {
         ),
     )
     .unwrap();
-    assert_eq!(pack.assets()[0].local_path(), "fool.png");
+    assert_eq!(pack.assets()[0].local_path(), "images/fool.png");
     assert_eq!(pack.assets()[0].width_pixels(), 500);
     assert_eq!(pack.assets()[0].height_pixels(), 857);
     pack.verify_files(&root).unwrap();

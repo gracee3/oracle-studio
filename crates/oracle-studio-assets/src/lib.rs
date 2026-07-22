@@ -130,8 +130,7 @@ impl DeckPackManifest {
                 continue;
             };
             let asset_id = asset_id.as_str();
-            let local_path = format!("{asset_id}.png");
-            let path = root.join(&local_path);
+            let (local_path, path) = locate_png(root, asset_id);
             let bytes = fs::read(&path).map_err(|error| {
                 if error.kind() == std::io::ErrorKind::NotFound {
                     AssetError::MissingAsset(asset_id.to_owned(), path.clone())
@@ -415,4 +414,14 @@ fn png_dimensions(asset_id: &str, bytes: &[u8]) -> Result<(u32, u32), AssetError
         return Err(AssetError::UnsupportedImage(asset_id.to_owned()));
     }
     Ok((width, height))
+}
+
+fn locate_png(root: &Path, asset_id: &str) -> (String, PathBuf) {
+    let direct = format!("{asset_id}.png");
+    let direct_path = root.join(&direct);
+    if direct_path.is_file() {
+        return (direct, direct_path);
+    }
+    let nested = format!("images/{asset_id}.png");
+    (nested.clone(), root.join(nested))
 }
