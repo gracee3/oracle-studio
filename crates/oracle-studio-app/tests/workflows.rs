@@ -57,6 +57,22 @@ fn with_deck() -> VaultDocument {
     StudioService::import_deck(&composed(), id("artifact.id", "deck_record"), DECK).unwrap()
 }
 
+fn with_bound_deck() -> VaultDocument {
+    let document = with_deck();
+    let mut artifacts = document.artifacts().to_vec();
+    let content_id = artifacts[0].content_id().to_owned();
+    artifacts[0]
+        .bind_deck_pack(id("deck_pack.id", "creative_pack"), content_id)
+        .unwrap();
+    VaultDocument::new(
+        document.people().to_vec(),
+        document.sessions().to_vec(),
+        artifacts,
+        document.journal_entries().to_vec(),
+    )
+    .unwrap()
+}
+
 fn request(record: &str, reading: &str) -> ReadingRequest {
     ReadingRequest {
         artifact_record_id: id("artifact.id", record),
@@ -99,6 +115,14 @@ fn raw_decks_and_manual_readings_become_validated_immutable_artifacts() {
         Orientation::Unspecified
     );
     assert_eq!(reading.payload().subject_ref(), Some("fictional_client"));
+}
+
+#[test]
+fn search_exposes_bound_deck_pack_provenance() {
+    let hits = StudioService::search(&with_bound_deck(), "creative_pack").unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].entity(), SearchEntity::Artifact);
+    assert!(hits[0].snippet().contains("pack=creative_pack"));
 }
 
 #[test]

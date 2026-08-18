@@ -7,7 +7,7 @@ use astraeus_core::{
     HouseSystem, Position, UtcInstant, Zodiac, calculate_aspects,
 };
 use oracle_studio_chart_view::{
-    AspectRow, ChartLayer, ChartSelection, ChartViewModel, ChartWorkspace, LayerRole,
+    AspectRow, ChartLayer, ChartSelection, ChartViewModel, ChartWorkspace, LayerRole, LayerStyle,
     LayeredWorkspace, render_svg, render_svg_with_selection,
 };
 
@@ -134,7 +134,11 @@ fn layered_workspace_keeps_roles_and_layer_identity_explicit() {
         id: "natal".into(),
         role: LayerRole::Natal,
         chart,
+        style: LayerStyle::default(),
     }]);
+    let mut workspace = workspace;
     assert_eq!(workspace.layer("natal").unwrap().role, LayerRole::Natal);
+    assert!(workspace.set_visible("natal", false));
+    assert!(!workspace.layer("natal").unwrap().style.visible);
     assert!(workspace.layer("transit").is_none());
 }

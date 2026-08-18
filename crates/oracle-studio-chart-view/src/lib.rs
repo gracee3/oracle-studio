@@ -113,6 +113,24 @@ pub struct ChartLayer {
     pub id: String,
     pub role: LayerRole,
     pub chart: ChartViewModel,
+    pub style: LayerStyle,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct LayerStyle {
+    pub visible: bool,
+    pub opacity: f32,
+    pub accent: String,
+}
+
+impl Default for LayerStyle {
+    fn default() -> Self {
+        Self {
+            visible: true,
+            opacity: 1.0,
+            accent: "#333333".into(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -131,6 +149,15 @@ impl LayeredWorkspace {
 
     pub fn layer(&self, id: &str) -> Option<&ChartLayer> {
         self.layers.iter().find(|layer| layer.id == id)
+    }
+
+    pub fn set_visible(&mut self, id: &str, visible: bool) -> bool {
+        if let Some(layer) = self.layers.iter_mut().find(|layer| layer.id == id) {
+            layer.style.visible = visible;
+            true
+        } else {
+            false
+        }
     }
 }
 

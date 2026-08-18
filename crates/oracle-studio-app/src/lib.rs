@@ -371,13 +371,32 @@ impl StudioService {
             );
         }
         for artifact in document.artifacts() {
-            push_hit(
-                &mut hits,
-                SearchEntity::Artifact,
-                artifact.id(),
-                &query,
-                [Some(artifact.canonical_json()), None],
-            );
+            let pack_metadata = artifact
+                .deck_pack_id()
+                .zip(artifact.deck_pack_content_id())
+                .map(|(pack_id, content_id)| {
+                    format!("pack={} deck_content_id={}", pack_id.as_str(), content_id)
+                });
+            if pack_metadata
+                .as_deref()
+                .is_some_and(|metadata| metadata.to_lowercase().contains(&query))
+            {
+                push_hit(
+                    &mut hits,
+                    SearchEntity::Artifact,
+                    artifact.id(),
+                    &query,
+                    [pack_metadata.as_deref(), None],
+                );
+            } else {
+                push_hit(
+                    &mut hits,
+                    SearchEntity::Artifact,
+                    artifact.id(),
+                    &query,
+                    [Some(artifact.canonical_json()), None],
+                );
+            }
         }
         for entry in document.journal_entries() {
             push_hit(
