@@ -4,6 +4,17 @@
 //! astrology calculations and deliberately leaves geometry and glyph styling
 //! to a renderer.
 
+mod transit;
+mod transit_svg;
+
+pub use transit::{
+    ChartAspect, ChartPoint, ChartRing, ChartScene, TransitFrame, TransitTimeline,
+    TransitTimelineError,
+};
+pub use transit_svg::{
+    RenderOptions, WheelOrientation, render_biwheel_svg, resolve_circular_collisions,
+};
+
 use astraeus_artifacts::CalculationArtifact;
 use astraeus_core::{Aspect, ChartAngle};
 use serde::Serialize;

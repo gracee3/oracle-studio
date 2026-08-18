@@ -1,0 +1,42 @@
+:root {
+  color-scheme: light dark;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  --surface: #f7f1e8;
+  --panel: #fffaf1;
+  --ink: #29222f;
+  --accent: #7b3349;
+  --border: #bcaebe;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; color: var(--ink); background: var(--surface); }
+main, footer { width: min(100% - 2rem, 70rem); margin-inline: auto; }
+header { padding: 2rem 0 1rem; }
+h1 { margin: .15rem 0 .5rem; font-family: ui-serif, Georgia, serif; }
+.eyebrow { margin: 0; color: var(--accent); font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+.privacy-warning { max-width: 70ch; padding: .75rem 1rem; border-left: .25rem solid var(--accent); background: color-mix(in srgb, var(--panel) 88%, var(--accent)); }
+.chart-shell { display: grid; grid-template-columns: minmax(20rem, 1fr) minmax(16rem, 22rem); gap: 1.25rem; align-items: start; }
+#chart-stage { min-width: 0; border: 1px solid var(--border); border-radius: .75rem; overflow: hidden; background: #fffdf8; }
+#chart-stage svg { display: block; width: 100%; height: auto; }
+.controls { display: grid; gap: 1rem; padding: 1rem; border: 1px solid var(--border); border-radius: .75rem; background: var(--panel); position: sticky; top: 1rem; }
+.transport { display: flex; flex-wrap: wrap; gap: .4rem; }
+button, select { min-height: 2.5rem; padding: .45rem .65rem; font: inherit; color: inherit; border: 1px solid var(--border); border-radius: .35rem; background: transparent; }
+button[aria-pressed="true"] { color: #fff; border-color: var(--accent); background: var(--accent); }
+button:focus-visible, select:focus-visible, input:focus-visible { outline: .2rem solid var(--accent); outline-offset: .15rem; }
+.scrubber-label { display: grid; gap: .35rem; font-weight: 650; }
+#scrubber { width: 100%; }
+.readout { display: grid; gap: .65rem; }
+#timestamp { font-variant-numeric: tabular-nums; font-weight: 650; }
+fieldset { display: flex; flex-wrap: wrap; gap: .75rem; border: 0; padding: 0; }
+legend { width: 100%; margin-bottom: .4rem; font-weight: 700; }
+footer { margin-top: 2rem; padding: 1rem 0 2rem; border-top: 1px solid var(--border); font-size: .9rem; }
+a { color: var(--accent); }
+
+@media (max-width: 48rem) {
+  .chart-shell { grid-template-columns: 1fr; }
+  .controls { position: static; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { scroll-behavior: auto !important; }
+}

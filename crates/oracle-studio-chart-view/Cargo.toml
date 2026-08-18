@@ -9,7 +9,15 @@ rust-version.workspace = true
 
 [dependencies]
 astraeus-artifacts = { version = "0.1.0", git = "https://github.com/gracee3/astraeus", rev = "52d24862b8287b89b0986b7799583d82ecab21e9" }
+astraeus-comparison = { version = "0.1.0", git = "https://github.com/gracee3/astraeus", rev = "52d24862b8287b89b0986b7799583d82ecab21e9" }
 astraeus-core = { version = "0.1.0", git = "https://github.com/gracee3/astraeus", rev = "52d24862b8287b89b0986b7799583d82ecab21e9" }
+chrono.workspace = true
 serde.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
+astraeus-derived = { version = "0.1.0", git = "https://github.com/gracee3/astraeus", rev = "52d24862b8287b89b0986b7799583d82ecab21e9" }
+astraeus-specifications = { version = "0.1.0", git = "https://github.com/gracee3/astraeus", rev = "52d24862b8287b89b0986b7799583d82ecab21e9" }
+astraeus-techniques = { version = "0.1.0", git = "https://github.com/gracee3/astraeus", rev = "52d24862b8287b89b0986b7799583d82ecab21e9" }
+serde_json.workspace = true
+sha2.workspace = true

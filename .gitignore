@@ -9,3 +9,4 @@
 *.swo
 *~
 oracle-studio-cli-test/
+/var/

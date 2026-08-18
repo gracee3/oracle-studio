@@ -13,9 +13,9 @@ not recalculate astrology or reinterpret tarot domain records.
 
 Phase 5C/5D integration checkpoint: validated composition records, encrypted
 atomic persistence, reusable tarot/chart/journal services, validated local
-Sibylla deck-pack indexes, in-memory search, and a guided command-line
-interface. There is no graphical UI, synchronization, account system, AI
-layer, or camera recognition yet.
+Sibylla deck-pack indexes, in-memory search, a guided command-line interface,
+and a stateless SVG/HTML transit-biwheel renderer. There is no native graphical
+UI, synchronization, account system, AI layer, or camera recognition yet.
 
 ## CLI
 
@@ -55,6 +55,14 @@ asset packs are documented separately from this public repository.
 See the [Phase 5 plan](docs/PHASE_5_PLAN.md),
 [composition model](docs/COMPOSITION_MODEL.md), and
 [vault threat model](docs/VAULT.md).
+
+## Transit chart export
+
+`oracle-studio-chart` renders validated physical Astraeus transit-to-natal
+comparison artifacts without opening a vault or recalculating astrology. It can
+produce a deterministic SVG or a self-contained plain-JavaScript HTML player.
+See the [renderer boundary, CLI, animation semantics, and privacy
+notes](docs/CHART_RENDERING.md).
 
 ## License
 

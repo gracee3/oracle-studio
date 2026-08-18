@@ -108,6 +108,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "astraeus-comparison"
+version = "0.1.0"
+source = "git+https://github.com/gracee3/astraeus?rev=52d24862b8287b89b0986b7799583d82ecab21e9#52d24862b8287b89b0986b7799583d82ecab21e9"
+dependencies = [
+ "astraeus-core 0.1.0 (git+https://github.com/gracee3/astraeus?rev=52d24862b8287b89b0986b7799583d82ecab21e9)",
+ "astraeus-derived",
+ "astraeus-techniques",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+]
+
+[[package]]
 name = "astraeus-core"
 version = "0.1.0"
 source = "git+https://github.com/gracee3/astraeus?rev=52d24862b8287b89b0986b7799583d82ecab21e9#52d24862b8287b89b0986b7799583d82ecab21e9"
@@ -177,6 +191,22 @@ dependencies = [
  "astraeus-events",
  "chrono",
  "sweph-sys",
+]
+
+[[package]]
+name = "astraeus-techniques"
+version = "0.1.0"
+source = "git+https://github.com/gracee3/astraeus?rev=52d24862b8287b89b0986b7799583d82ecab21e9#52d24862b8287b89b0986b7799583d82ecab21e9"
+dependencies = [
+ "astraeus-artifacts 0.1.0 (git+https://github.com/gracee3/astraeus?rev=52d24862b8287b89b0986b7799583d82ecab21e9)",
+ "astraeus-core 0.1.0 (git+https://github.com/gracee3/astraeus?rev=52d24862b8287b89b0986b7799583d82ecab21e9)",
+ "astraeus-derived",
+ "astraeus-specifications",
+ "chrono",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
 ]
 
 [[package]]
@@ -580,12 +610,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "oracle-studio-chart"
+version = "0.1.0"
+dependencies = [
+ "astraeus-comparison",
+ "chrono",
+ "clap",
+ "getrandom 0.3.4",
+ "oracle-studio-chart-view",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "oracle-studio-chart-view"
 version = "0.1.0"
 dependencies = [
  "astraeus-artifacts 0.1.0 (git+https://github.com/gracee3/astraeus?rev=52d24862b8287b89b0986b7799583d82ecab21e9)",
+ "astraeus-comparison",
  "astraeus-core 0.1.0 (git+https://github.com/gracee3/astraeus?rev=52d24862b8287b89b0986b7799583d82ecab21e9)",
+ "astraeus-derived",
+ "astraeus-specifications",
+ "astraeus-techniques",
+ "chrono",
  "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
 ]
 
 [[package]]

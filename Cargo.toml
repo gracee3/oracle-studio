@@ -4,6 +4,7 @@ members = [
     "crates/oracle-studio-app",
     "crates/oracle-studio-assets",
     "crates/oracle-studio-chart-view",
+    "crates/oracle-studio-chart",
     "crates/oracle-studio-cli",
     "crates/oracle-studio-storage",
     "crates/oracle-studio-vault",
