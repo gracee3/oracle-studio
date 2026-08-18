@@ -118,6 +118,8 @@ fn timeline_cli_sorts_frames_embeds_only_render_data_and_escapes_titles() {
     let directory = TestDirectory::new();
     let output = directory.0.join("timeline.html");
     let hostile_title = "Fictional </script><script>alert('x')</script> & chart";
+    let hostile_natal_name = "Example <Natal> & inner";
+    let hostile_location = "Sample </p><script>alert('place')</script>";
     success(
         chart_command()
             .arg("timeline")
@@ -128,7 +130,13 @@ fn timeline_cli_sorts_frames_embeds_only_render_data_and_escapes_titles() {
             .arg("--output")
             .arg(&output)
             .arg("--title")
-            .arg(hostile_title),
+            .arg(hostile_title)
+            .args(["--natal-name", hostile_natal_name])
+            .args(["--natal-datetime", "2000-01-01T05:30:00+05:30"])
+            .args(["--natal-location", hostile_location])
+            .args(["--transit-name", "Example transits"])
+            .args(["--transit-datetime", "2025-12-31T19:00:00-05:00"])
+            .args(["--transit-location", "Fictional test location"]),
     );
     let html = fs::read_to_string(&output).unwrap();
     let first = html.find("2026-01-01T00:00:00+00:00").unwrap();
@@ -137,6 +145,17 @@ fn timeline_cli_sorts_frames_embeds_only_render_data_and_escapes_titles() {
     assert!(first < second && second < third);
     assert!(!html.contains("</script><script>alert"));
     assert!(html.contains("Fictional &lt;/script&gt;&lt;script&gt;alert"));
+    assert!(html.contains("Example &lt;Natal&gt; &amp; inner"));
+    assert!(html.contains("Sample &lt;/p&gt;&lt;script&gt;alert"));
+    assert!(html.contains("Natal chart <span aria-hidden=\"true\">·</span> Inner wheel"));
+    assert!(html.contains("Transit event <span aria-hidden=\"true\">·</span> Outer wheel"));
+    assert!(html.contains("id=\"natal-chart-datetime\""));
+    assert!(html.contains("Sat, Jan 01, 2000 · 05:30 +05:30"));
+    assert!(html.contains("id=\"transit-chart-datetime\""));
+    assert!(html.contains("Wed, Dec 31, 2025 · 19:00 -05:00"));
+    assert!(html.contains("Tropical <span aria-hidden=\"true\">·</span> Placidus"));
+    assert!(html.contains("\"schema_version\":2"));
+    assert!(html.contains("\"transit_offset_seconds\":-18000"));
     assert!(!html.contains("frame-01.json"));
     assert!(!html.contains("fixtures/comparisons"));
     assert!(!html.contains("latitude_degrees"));
@@ -162,9 +181,12 @@ fn timeline_cli_sorts_frames_embeds_only_render_data_and_escapes_titles() {
     assert!(html.contains("Number(svg.dataset.transitInnerRadius)"));
     assert!(html.contains("function layoutLabels(points, lane)"));
     assert!(html.contains("precision: 'degree'"));
+    assert!(!html.contains("data-role=\"sign\""));
     assert!(html.contains("data-role=\"position\""));
     assert!(html.contains("data-role=\"aspect-glyph\""));
     assert!(html.contains("document.getElementById('natal-structure-layer')"));
+    assert!(html.contains("function formatChartDatetime(milliseconds, offsetSeconds)"));
+    assert!(html.contains("transitChartDatetime.textContent = formatChartDatetime"));
     assert!(html.contains("AGPL-3.0-or-later"));
     assert!(html.contains("contains derived chart positions"));
     #[cfg(unix)]
@@ -175,6 +197,40 @@ fn timeline_cli_sorts_frames_embeds_only_render_data_and_escapes_titles() {
             0o600
         );
     }
+}
+
+#[test]
+fn timeline_cli_rejects_display_dates_that_do_not_match_artifact_instants() {
+    let directory = TestDirectory::new();
+    let output = directory.0.join("natal-mismatch.html");
+    let result = run(chart_command()
+        .arg("timeline")
+        .arg("--comparison")
+        .arg(fixture("frame-01.json"))
+        .arg("--output")
+        .arg(&output)
+        .args(["--natal-datetime", "2000-01-02T00:00:00Z"]));
+    assert!(!result.status.success());
+    assert!(
+        String::from_utf8_lossy(&result.stderr)
+            .contains("natal display datetime 2000-01-02T00:00:00+00:00")
+    );
+    assert!(!output.exists());
+
+    let transit_output = directory.0.join("transit-mismatch.html");
+    let transit_result = run(chart_command()
+        .arg("timeline")
+        .arg("--comparison")
+        .arg(fixture("frame-01.json"))
+        .arg("--output")
+        .arg(&transit_output)
+        .args(["--transit-datetime", "2026-01-02T00:00:00Z"]));
+    assert!(!transit_result.status.success());
+    assert!(
+        String::from_utf8_lossy(&transit_result.stderr)
+            .contains("transit display datetime 2026-01-02T00:00:00+00:00")
+    );
+    assert!(!transit_output.exists());
 }
 
 #[test]

@@ -7,6 +7,7 @@
   const svg = document.getElementById('oracle-transit-biwheel')
   const scrubber = document.getElementById('scrubber')
   const timestamp = document.getElementById('timestamp')
+  const transitChartDatetime = document.getElementById('transit-chart-datetime')
   const playPause = document.getElementById('play-pause')
   const reverse = document.getElementById('reverse')
   const forward = document.getElementById('forward')
@@ -16,14 +17,12 @@
   const frameTimes = frames.map(frame => Date.parse(frame.timestamp))
   const natalById = new Map(timeline.natal.points.map(point => [point.id, point]))
   const SVG_NS = 'http://www.w3.org/2000/svg'
-  const SIGNS = ['♈', '♉', '♊', '♋', '♌', '♍', '♎', '♏', '♐', '♑', '♒', '♓']
   const PATH_GLYPHS = new Set(['Sun', 'Moon', 'Mercury', 'Venus', 'Mars', 'Jupiter', 'Saturn', 'Uranus', 'Neptune', 'Pluto', 'Chiron', 'MeanNode', 'TrueNode', 'MeanSouthNode', 'TrueSouthNode'])
   const geometry = {
     center: Number(svg.dataset.center),
     aspectRadius: Number(svg.dataset.aspectRadius),
     transit: {
       innerRadius: Number(svg.dataset.transitInnerRadius),
-      signRadius: Number(svg.dataset.transitSignRadius),
       positionRadius: Number(svg.dataset.transitPositionRadius),
       glyphRadius: Number(svg.dataset.transitGlyphRadius)
     },
@@ -107,13 +106,13 @@
     let glyph
     if (PATH_GLYPHS.has(point.id)) glyph = point.retrograde ? 28 : 18
     else glyph = point.retrograde ? 34 : 24
-    return [18, position, glyph]
+    return [position, glyph]
   }
 
   function requiredGap(left, right, lane, precision) {
     const leftWidths = tokenWidths(left, precision)
     const rightWidths = tokenWidths(right, precision)
-    const radii = [lane.signRadius, lane.positionRadius, lane.glyphRadius]
+    const radii = [lane.positionRadius, lane.glyphRadius]
     return Math.max(...radii.map((radius, index) => {
       const distance = (leftWidths[index] + rightWidths[index]) / 2 + geometry.labelPadding
       return 2 * Math.asin(Math.max(0, Math.min(1, distance / (2 * radius)))) * 180 / Math.PI
@@ -189,20 +188,15 @@
       const actual = visualLongitude(point.longitude_degrees)
       const layout = layouts[index]
       const visual = visualLongitude(layout.displayLongitude)
-      const sign = polar(visual, geometry.transit.signRadius)
       const position = polar(visual, geometry.transit.positionRadius)
       const glyph = polar(visual, geometry.transit.glyphRadius)
-      setLine(group.querySelector('[data-role="leader"]'), polar(actual, geometry.transit.innerRadius + 4), polar(visual, geometry.transit.signRadius - 9))
+      setLine(group.querySelector('[data-role="leader"]'), polar(actual, geometry.transit.innerRadius + 4), polar(visual, geometry.transit.positionRadius - 9))
       setLine(group.querySelector('[data-role="tick"]'), polar(actual, geometry.transit.innerRadius - 4), polar(actual, geometry.transit.innerRadius + 4))
       const rounded = roundPosition(point.longitude_degrees, layout.precision)
-      const signElement = group.querySelector('[data-role="sign"]')
-      signElement.setAttribute('x', sign[0].toFixed(3))
-      signElement.setAttribute('y', sign[1].toFixed(3))
-      signElement.setAttribute('class', `point-sign point-sign--${rounded.signIndex % 4}`)
-      signElement.textContent = SIGNS[rounded.signIndex]
       const positionElement = group.querySelector('[data-role="position"]')
       positionElement.setAttribute('x', position[0].toFixed(3))
       positionElement.setAttribute('y', position[1].toFixed(3))
+      positionElement.dataset.signIndex = String(rounded.signIndex)
       positionElement.textContent = rounded.minutes === null ? `${pad2(rounded.degrees)}°` : `${pad2(rounded.degrees)}°${pad2(rounded.minutes)}′`
       const glyphElement = group.querySelector('[data-role="glyph"]')
       if (glyphElement.tagName.toLowerCase() === 'g') glyphElement.setAttribute('transform', `translate(${glyph[0].toFixed(3)} ${glyph[1].toFixed(3)})`)
@@ -267,6 +261,24 @@
     return { Conjunction: '☌', Sextile: '⚹', Square: '□', Trine: '△', Opposition: '☍' }[kind] || '·'
   }
 
+  function offsetText(offsetSeconds) {
+    const sign = offsetSeconds < 0 ? '-' : '+'
+    const absolute = Math.abs(offsetSeconds)
+    return `${sign}${pad2(Math.floor(absolute / 3600))}:${pad2(Math.floor((absolute % 3600) / 60))}`
+  }
+
+  function formatChartDatetime(milliseconds, offsetSeconds) {
+    const local = new Date(milliseconds + offsetSeconds * 1000)
+    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    return `${days[local.getUTCDay()]}, ${months[local.getUTCMonth()]} ${pad2(local.getUTCDate())}, ${local.getUTCFullYear()} · ${pad2(local.getUTCHours())}:${pad2(local.getUTCMinutes())} ${offsetText(offsetSeconds)}`
+  }
+
+  function machineChartDatetime(milliseconds, offsetSeconds) {
+    const local = new Date(milliseconds + offsetSeconds * 1000)
+    return `${local.toISOString().slice(0, -1)}${offsetText(offsetSeconds)}`
+  }
+
   function render(milliseconds) {
     currentMs = Math.max(firstMs, Math.min(lastMs, milliseconds))
     const scene = sample(currentMs)
@@ -275,6 +287,9 @@
     scrubber.value = String(Math.round(currentMs))
     timestamp.value = scene.timestamp
     timestamp.textContent = scene.timestamp
+    const sceneMs = Date.parse(scene.timestamp)
+    transitChartDatetime.dateTime = machineChartDatetime(sceneMs, data.transit_offset_seconds)
+    transitChartDatetime.textContent = formatChartDatetime(sceneMs, data.transit_offset_seconds)
   }
 
   function setDirection(nextDirection) {

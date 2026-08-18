@@ -258,6 +258,19 @@ fn committed_fixtures_cover_full_selected_populations_and_motion_edges() {
     }));
     assert!(scene.transit[0].longitude_degrees > 358.0);
     assert!(scene.transit[1].longitude_degrees < 1.0);
+    let svg = render_biwheel_svg(&scene, &RenderOptions::default());
+    assert_eq!(
+        svg.matches("class=\"chart-point chart-point--natal\"")
+            .count(),
+        11
+    );
+    assert_eq!(
+        svg.matches("class=\"chart-point chart-point--transit\"")
+            .count(),
+        12
+    );
+    assert_eq!(svg.matches("id=\"natal-point-sun\"").count(), 1);
+    assert_eq!(svg.matches("id=\"transit-point-sun\"").count(), 1);
     let timeline = TransitTimeline::from_comparisons(&[first, second, third]).unwrap();
     assert!(
         timeline
@@ -283,6 +296,11 @@ fn accepts_only_validated_physical_moving_transit_comparisons() {
     let validated = ComparisonArtifact::from_json(&json).unwrap();
     let scene = ChartScene::from_comparison(&validated).unwrap();
     assert_eq!(scene.timestamp, "2026-01-01T00:00:00+00:00");
+    assert_eq!(scene.natal.timestamp, "2000-01-01T00:00:00+00:00");
+    assert_eq!(scene.natal.zodiac, "Tropical");
+    assert_eq!(scene.natal.house_system, "WholeSign");
+    assert_eq!(scene.transit_zodiac, "Tropical");
+    assert_eq!(scene.transit_house_system, "WholeSign");
     assert_eq!(scene.natal.houses.len(), 12);
     assert!(scene.aspects.iter().any(|aspect| aspect.kind == "Square"));
     assert!(
@@ -570,9 +588,11 @@ fn selected_order_structural_angles_and_normalized_lanes_drive_the_svg() {
 
     let svg = render_biwheel_svg(&scene, &RenderOptions::default());
     assert!(svg.contains("data-aspect-radius=\"136.920\""));
-    assert!(svg.contains("data-natal-sign-radius=\"149.960\""));
-    assert!(svg.contains("data-transit-glyph-radius=\"280.360\""));
+    assert!(svg.contains("data-natal-position-radius=\"166.260\""));
+    assert!(svg.contains("data-transit-glyph-radius=\"277.100\""));
     assert!(svg.contains("data-cusp-label-radius=\"309.700\""));
+    assert!(!svg.contains("data-natal-sign-radius"));
+    assert!(!svg.contains("data-transit-sign-radius"));
     assert!(!svg.contains("id=\"zodiac-layer\""));
     assert!(!svg.contains("id=\"house-label-"));
     assert_eq!(
@@ -580,6 +600,12 @@ fn selected_order_structural_angles_and_normalized_lanes_drive_the_svg() {
         4
     );
     assert_eq!(svg.matches("data-role=\"cusp-label\"").count(), 12);
+    assert_eq!(
+        svg.chars()
+            .filter(|character| "♈♉♊♋♌♍♎♏♐♑♒♓".contains(*character))
+            .count(),
+        12
+    );
     assert!(svg.contains(">00° ♉ 00′</text>"));
     assert!(svg.contains("id=\"natal-point-vertex\""));
     assert!(!svg.contains("id=\"natal-point-ascendant\""));
@@ -592,7 +618,8 @@ fn selected_order_structural_angles_and_normalized_lanes_drive_the_svg() {
     assert!(svg.contains("id=\"transit-point-imumcoeli\""));
     assert!(svg.contains("id=\"transit-point-vertex\""));
     assert!(!svg.contains("id=\"transit-point-jupiter\""));
-    assert!(svg.contains("data-role=\"sign\""));
+    assert!(!svg.contains("data-role=\"sign\""));
+    assert!(!svg.contains("class=\"point-sign"));
     assert!(svg.contains("data-role=\"position\""));
     assert!(svg.contains("data-role=\"glyph\""));
     assert!(svg.contains("data-role=\"tick\""));

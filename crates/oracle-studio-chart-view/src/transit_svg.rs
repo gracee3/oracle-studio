@@ -9,13 +9,11 @@ const CENTER: f64 = SIZE / 2.0;
 const OUTER_RADIUS: f64 = 326.0;
 const ASPECT_RADIUS: f64 = OUTER_RADIUS * 0.42;
 const NATAL_INNER_RADIUS: f64 = ASPECT_RADIUS;
-const NATAL_SIGN_RADIUS: f64 = OUTER_RADIUS * 0.46;
-const NATAL_POSITION_RADIUS: f64 = OUTER_RADIUS * 0.54;
-const NATAL_GLYPH_RADIUS: f64 = OUTER_RADIUS * 0.62;
+const NATAL_POSITION_RADIUS: f64 = OUTER_RADIUS * 0.51;
+const NATAL_GLYPH_RADIUS: f64 = OUTER_RADIUS * 0.61;
 const TRANSIT_INNER_RADIUS: f64 = OUTER_RADIUS * 0.66;
-const TRANSIT_SIGN_RADIUS: f64 = OUTER_RADIUS * 0.70;
-const TRANSIT_POSITION_RADIUS: f64 = OUTER_RADIUS * 0.78;
-const TRANSIT_GLYPH_RADIUS: f64 = OUTER_RADIUS * 0.86;
+const TRANSIT_POSITION_RADIUS: f64 = OUTER_RADIUS * 0.75;
+const TRANSIT_GLYPH_RADIUS: f64 = OUTER_RADIUS * 0.85;
 const CUSP_INNER_RADIUS: f64 = OUTER_RADIUS * 0.90;
 const CUSP_LABEL_RADIUS: f64 = OUTER_RADIUS * 0.95;
 const LABEL_PADDING: f64 = 4.0;
@@ -86,7 +84,6 @@ impl PositionPrecision {
 #[derive(Clone, Copy, Debug)]
 struct PointGeometry {
     inner_radius: f64,
-    sign_radius: f64,
     position_radius: f64,
     glyph_radius: f64,
 }
@@ -109,7 +106,7 @@ pub fn render_biwheel_svg(scene: &ChartScene, options: &RenderOptions) -> String
     let mut svg = String::with_capacity(48_000);
     let _ = write!(
         svg,
-        "<svg id=\"oracle-transit-biwheel\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {SIZE:.0} {SIZE:.0}\" role=\"img\" aria-labelledby=\"chart-title chart-description\" data-orientation=\"{}\" data-ascendant=\"{:.12}\" data-center=\"{CENTER:.3}\" data-outer-radius=\"{OUTER_RADIUS:.3}\" data-aspect-radius=\"{ASPECT_RADIUS:.3}\" data-natal-inner-radius=\"{NATAL_INNER_RADIUS:.3}\" data-natal-sign-radius=\"{NATAL_SIGN_RADIUS:.3}\" data-natal-position-radius=\"{NATAL_POSITION_RADIUS:.3}\" data-natal-glyph-radius=\"{NATAL_GLYPH_RADIUS:.3}\" data-transit-inner-radius=\"{TRANSIT_INNER_RADIUS:.3}\" data-transit-sign-radius=\"{TRANSIT_SIGN_RADIUS:.3}\" data-transit-position-radius=\"{TRANSIT_POSITION_RADIUS:.3}\" data-transit-glyph-radius=\"{TRANSIT_GLYPH_RADIUS:.3}\" data-cusp-inner-radius=\"{CUSP_INNER_RADIUS:.3}\" data-cusp-label-radius=\"{CUSP_LABEL_RADIUS:.3}\" data-label-padding=\"{LABEL_PADDING:.3}\">",
+        "<svg id=\"oracle-transit-biwheel\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {SIZE:.0} {SIZE:.0}\" role=\"img\" aria-labelledby=\"chart-title chart-description\" data-orientation=\"{}\" data-ascendant=\"{:.12}\" data-center=\"{CENTER:.3}\" data-outer-radius=\"{OUTER_RADIUS:.3}\" data-aspect-radius=\"{ASPECT_RADIUS:.3}\" data-natal-inner-radius=\"{NATAL_INNER_RADIUS:.3}\" data-natal-position-radius=\"{NATAL_POSITION_RADIUS:.3}\" data-natal-glyph-radius=\"{NATAL_GLYPH_RADIUS:.3}\" data-transit-inner-radius=\"{TRANSIT_INNER_RADIUS:.3}\" data-transit-position-radius=\"{TRANSIT_POSITION_RADIUS:.3}\" data-transit-glyph-radius=\"{TRANSIT_GLYPH_RADIUS:.3}\" data-cusp-inner-radius=\"{CUSP_INNER_RADIUS:.3}\" data-cusp-label-radius=\"{CUSP_LABEL_RADIUS:.3}\" data-label-padding=\"{LABEL_PADDING:.3}\">",
         options.orientation, scene.natal.ascendant_degrees,
     );
     svg.push_str("<title id=\"chart-title\">Transit biwheel</title><desc id=\"chart-description\">Selected natal and transit points, natal cusps, and engine-authored inter-chart aspects.</desc>");
@@ -126,7 +123,6 @@ pub fn render_biwheel_svg(scene: &ChartScene, options: &RenderOptions) -> String
         &scene.natal.points,
         PointGeometry {
             inner_radius: NATAL_INNER_RADIUS,
-            sign_radius: NATAL_SIGN_RADIUS,
             position_radius: NATAL_POSITION_RADIUS,
             glyph_radius: NATAL_GLYPH_RADIUS,
         },
@@ -139,7 +135,6 @@ pub fn render_biwheel_svg(scene: &ChartScene, options: &RenderOptions) -> String
         &scene.transit,
         PointGeometry {
             inner_radius: TRANSIT_INNER_RADIUS,
-            sign_radius: TRANSIT_SIGN_RADIUS,
             position_radius: TRANSIT_POSITION_RADIUS,
             glyph_radius: TRANSIT_GLYPH_RADIUS,
         },
@@ -298,8 +293,7 @@ fn render_point(
     let (tick_inner_x, tick_inner_y) = polar(actual_visual, geometry.inner_radius - 4.0);
     let (tick_outer_x, tick_outer_y) = polar(actual_visual, geometry.inner_radius + 4.0);
     let (leader_x, leader_y) = polar(actual_visual, geometry.inner_radius + 4.0);
-    let (leader_end_x, leader_end_y) = polar(display_visual, geometry.sign_radius - 9.0);
-    let (sign_x, sign_y) = polar(display_visual, geometry.sign_radius);
+    let (leader_end_x, leader_end_y) = polar(display_visual, geometry.position_radius - 9.0);
     let (position_x, position_y) = polar(display_visual, geometry.position_radius);
     let (glyph_x, glyph_y) = polar(display_visual, geometry.glyph_radius);
     let rounded = round_position(point.longitude_degrees, layout.precision);
@@ -333,9 +327,8 @@ fn render_point(
     );
     let _ = write!(
         svg,
-        "<text id=\"{layer}-sign-{slug}\" data-role=\"sign\" class=\"point-sign point-sign--{}\" x=\"{sign_x:.3}\" y=\"{sign_y:.3}\">{}</text><text id=\"{layer}-position-{slug}\" data-role=\"position\" class=\"point-position\" x=\"{position_x:.3}\" y=\"{position_y:.3}\">{position}</text>",
-        rounded.sign_index % 4,
-        SIGNS[rounded.sign_index]
+        "<text id=\"{layer}-position-{slug}\" data-role=\"position\" data-sign-index=\"{}\" class=\"point-position\" x=\"{position_x:.3}\" y=\"{position_y:.3}\">{position}</text>",
+        rounded.sign_index
     );
     if let Some(glyph_id) = glyph_id(&point.id) {
         let _ = write!(
@@ -536,9 +529,8 @@ fn required_gap_degrees(
     let left_widths = token_widths(left, precision);
     let right_widths = token_widths(right, precision);
     [
-        (geometry.sign_radius, left_widths[0], right_widths[0]),
-        (geometry.position_radius, left_widths[1], right_widths[1]),
-        (geometry.glyph_radius, left_widths[2], right_widths[2]),
+        (geometry.position_radius, left_widths[0], right_widths[0]),
+        (geometry.glyph_radius, left_widths[1], right_widths[1]),
     ]
     .into_iter()
     .map(|(radius, left_width, right_width)| {
@@ -551,7 +543,7 @@ fn required_gap_degrees(
     .fold(0.0, f64::max)
 }
 
-fn token_widths(point: &ChartPoint, precision: PositionPrecision) -> [f64; 3] {
+fn token_widths(point: &ChartPoint, precision: PositionPrecision) -> [f64; 2] {
     let position = match precision {
         PositionPrecision::ArcMinute => 40.0,
         PositionPrecision::Degree => 24.0,
@@ -563,7 +555,7 @@ fn token_widths(point: &ChartPoint, precision: PositionPrecision) -> [f64; 3] {
     } else {
         24.0
     };
-    [18.0, position, glyph]
+    [position, glyph]
 }
 
 fn visual_longitude(longitude: f64, ascendant: f64, orientation: WheelOrientation) -> f64 {
@@ -711,7 +703,7 @@ const STYLE_AND_GLYPH_DEFS: &str = r##"<defs>
 :root{--wheel-bg:#fffdf8;--ink:#24202d;--muted:#80778b;--natal:#315d86;--transit:#a23e48;--aspect:#806f98;--ring:#c9c0ce;--fire:#b84b3b;--earth:#7d6540;--air:#3f7892;--water:#477861}
 .wheel-background{fill:var(--wheel-bg);stroke:var(--ink);stroke-width:1.5}.ring{fill:none;stroke:var(--ring);stroke-width:1}.ring--aspect-boundary{stroke-dasharray:2 4}.ring--transit-boundary{stroke:var(--transit)}
 .house-cusp,.position-tick,.point-leader{stroke:var(--muted);fill:none}.house-cusp{stroke-width:.8}.house-cusp--axis{stroke:var(--ink);stroke-width:1.8}.position-tick{stroke-width:2}.point-leader{stroke-width:.75;opacity:.75}
-.cusp-label,.point-sign,.point-position,.point-fallback,.motion-marker,.aspect-glyph{font-family:serif;text-anchor:middle;dominant-baseline:middle;fill:var(--ink)}.cusp-label{font-size:10px;fill:var(--natal)}.point-sign{font-size:17px}.point-position{font:10px sans-serif}.point-sign--0{fill:var(--fire)}.point-sign--1{fill:var(--earth)}.point-sign--2{fill:var(--air)}.point-sign--3{fill:var(--water)}
+.cusp-label,.point-position,.point-fallback,.motion-marker,.aspect-glyph{font-family:serif;text-anchor:middle;dominant-baseline:middle;fill:var(--ink)}.cusp-label{font-size:10px;fill:var(--natal)}.point-position{font:10px sans-serif}
 .point-glyph{fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}.chart-point--natal{color:var(--natal)}.chart-point--transit{color:var(--transit)}.point-fallback{font:bold 11px sans-serif;fill:currentColor}.motion-marker{font-size:9px;fill:currentColor}
 .aspect{color:var(--aspect);opacity:.78}.aspect line{stroke:currentColor;stroke-width:1}.aspect-glyph{fill:currentColor;stroke:none;font-size:13px;paint-order:stroke;stroke:var(--wheel-bg);stroke-width:3px}.aspect--conjunction{color:#6e6578}.aspect--opposition{color:#9b3b42}.aspect--square{color:#b06535}.aspect--trine{color:#39805e}.aspect--sextile{color:#3a7290}
 .is-hidden{display:none}
@@ -747,7 +739,6 @@ mod tests {
     fn transit_geometry() -> PointGeometry {
         PointGeometry {
             inner_radius: TRANSIT_INNER_RADIUS,
-            sign_radius: TRANSIT_SIGN_RADIUS,
             position_radius: TRANSIT_POSITION_RADIUS,
             glyph_radius: TRANSIT_GLYPH_RADIUS,
         }

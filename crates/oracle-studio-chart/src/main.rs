@@ -1,9 +1,11 @@
 use std::{fs, path::PathBuf};
 
 use astraeus_comparison::ComparisonArtifact;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, FixedOffset, Utc};
 use clap::{Parser, Subcommand, ValueEnum};
-use oracle_studio_chart::{render_player_html, write_private_atomic};
+use oracle_studio_chart::{
+    ChartInformation, PlayerOptions, render_player_html_with_options, write_private_atomic,
+};
 use oracle_studio_chart_view::{
     ChartScene, RenderOptions, TransitTimeline, WheelOrientation, render_biwheel_svg,
 };
@@ -43,6 +45,24 @@ enum Command {
         orientation: OrientationArg,
         #[arg(long, default_value = "Oracle Studio transit timeline")]
         title: String,
+        /// Display name for the fixed natal / inner chart.
+        #[arg(long, default_value = "Natal")]
+        natal_name: String,
+        /// Natal date and time with numeric offset; must equal the artifact instant.
+        #[arg(long, value_name = "RFC3339")]
+        natal_datetime: Option<DateTime<FixedOffset>>,
+        /// Caller-supplied natal location label (not inferred from coordinates).
+        #[arg(long)]
+        natal_location: Option<String>,
+        /// Display name for the moving transit / outer chart.
+        #[arg(long, default_value = "Transits")]
+        transit_name: String,
+        /// First transit date and time with offset; must equal the first frame instant.
+        #[arg(long, value_name = "RFC3339")]
+        transit_datetime: Option<DateTime<FixedOffset>>,
+        /// Caller-supplied transit location label (not inferred from coordinates).
+        #[arg(long)]
+        transit_location: Option<String>,
         #[arg(long)]
         overwrite: bool,
     },
@@ -108,6 +128,12 @@ fn run(cli: Cli) -> Result<(), CliError> {
             output,
             orientation,
             title,
+            natal_name,
+            natal_datetime,
+            natal_location,
+            transit_name,
+            transit_datetime,
+            transit_location,
             overwrite,
         } => {
             let mut artifacts = comparison
@@ -127,7 +153,18 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 .map(|(_, artifact)| artifact)
                 .collect();
             let timeline = TransitTimeline::from_comparisons(&artifacts)?;
-            let html = render_player_html(&timeline, &title, orientation.into())?;
+            let mut options = PlayerOptions::new(title, orientation.into());
+            options.natal = ChartInformation {
+                name: natal_name,
+                location: natal_location,
+                local_datetime: natal_datetime,
+            };
+            options.transit = ChartInformation {
+                name: transit_name,
+                location: transit_location,
+                local_datetime: transit_datetime,
+            };
+            let html = render_player_html_with_options(&timeline, &options)?;
             write_private_atomic(&output, html.as_bytes(), overwrite)?;
         }
     }

@@ -15,7 +15,8 @@ The renderer accepts only Astraeus schema-v1 comparisons that pass
 - `second_moves_against_first_fixed` motion policy;
 - physical first and second chart layers;
 - an identical first (natal) artifact in every timeline frame;
-- an identical moving-point population in every frame; and
+- an identical moving-point population in every frame;
+- identical transit zodiac and house-system settings in every frame; and
 - unique, strictly increasing embedded transit timestamps after CLI sorting.
 
 This validation is deliberately stricter than accepting arbitrary two-chart
@@ -46,10 +47,12 @@ MC/IC axes are emphasized, while house numbers and a separate fixed zodiac ring
 are omitted. Each natal cusp is placed at its exact longitude at radius `0.95`
 and displays its rounded degree, zodiac glyph, and minute.
 
-Point labels remain upright and use three radial tokens, ordered from the
-center outward as sign, position, and point glyph. Natal token radii are
-approximately `0.46`, `0.54`, and `0.62`; transit token radii are `0.70`,
-`0.78`, and `0.86`. Exact-longitude ticks sit on each lane's inner boundary,
+Point labels remain upright and use two radial tokens: the rounded position and
+the point glyph. Natal token radii are approximately `0.51` and `0.61`; transit
+token radii are `0.75` and `0.85`. Zodiac glyphs are limited to the twelve natal
+cusp labels instead of being repeated for every selected point. A point's sign
+is still recoverable from its wheel position, exact-longitude data attribute,
+and accessible title. Exact-longitude ticks sit on each lane's inner boundary,
 and leaders connect those ticks to any displaced label stack.
 
 Isolated positions display `DD°MM′`. A wrap-aware collision cluster switches
@@ -90,8 +93,31 @@ Render an interactive timeline (input order does not matter):
                fixtures/comparisons/frame-01.json \
                fixtures/comparisons/frame-02.json \
   --title "Fictional transit demonstration" \
+  --natal-name "Example natal" \
+  --natal-datetime "2000-01-01T01:00:00+01:00" \
+  --natal-location "Fictional test location" \
+  --transit-name "Example transits" \
+  --transit-datetime "2025-12-31T19:00:00-05:00" \
+  --transit-location "Fictional test location" \
   --output ./timeline.html
 ```
+
+The optional natal and transit date-time flags are independent RFC 3339 local
+representations of the instants embedded in their respective artifacts. They
+must include a numeric UTC offset and must resolve to the exact artifact
+instant; a mismatched date is rejected rather than silently relabeling a
+different chart. When omitted, the header displays the artifact time in UTC.
+The transit offset is retained while the player advances so its outer-chart
+date and time update with the sampled timestamp. It is a fixed numeric offset,
+not a daylight-saving timezone database.
+
+Names and locations are caller-supplied display labels. Astraeus coordinates
+are never reverse-geocoded or exposed as location names. The HTML always
+identifies the natal chart as the inner wheel and transits as the outer wheel,
+and shows each artifact's zodiac and house system. The SVG remains chart-only;
+all chart information stays in the surrounding HTML page. The serialized
+presentation timeline is schema version 2 because it now carries the natal
+instant and both charts' zodiac/house-system labels.
 
 Both commands default to `--orientation ascendant-left`; use
 `--orientation zodiac-zero-top` for a fixed zodiac wheel. Outputs are published
@@ -112,20 +138,22 @@ earlier frame's aspect set remains visible until the next exact frame. Previous
 and next controls always step to exact frames.
 
 The HTML contains the minimal render timeline: natal houses/points, moving
-points, motion, timestamps, and inter-chart aspects. It does not embed raw
-comparison envelopes, input paths, calculation provenance, or locations. It is
-still derived chart data and carries an in-file privacy warning.
+points, motion, timestamps, zodiac and house-system names, inter-chart aspects,
+and any caller-supplied chart names or location labels. It does not embed raw
+comparison envelopes, input paths, calculation provenance, or source
+coordinates. It is still derived chart data and carries an in-file privacy
+warning.
 
 The player reads all geometry constants from the generated SVG. At each sample
 it mirrors Rust's rounding, adaptive precision, wraparound clustering,
 variable-width displacement, upright token placement, ticks, leaders,
-retrograde markers, and aspect glyphs. The natal visibility control hides both
-the natal point lane and natal house/cusp structure; the other controls remain
-scoped to transits and aspects.
+retrograde markers, aspect glyphs, and transit header time. The natal
+visibility control hides both the natal point lane and natal house/cusp
+structure; the other controls remain scoped to transits and aspects.
 
 Names, chart-information headers, dates, and locations are not rendered inside
-the SVG. The HTML wrapper keeps only its caller-supplied title, timestamp
-readout, and privacy notice as chart metadata. A companion aspect/position
+the SVG. The HTML wrapper shows artifact-grounded chart information and the
+caller-supplied display labels described above. A companion aspect/position
 table is deliberately outside this renderer pass; fixture table images are
 used only to verify point and aspect semantics.
 
@@ -136,7 +164,7 @@ used only to verify point and aspect semantics.
 - Collision displacement is presentation-only; exact-position ticks and leader
   lines preserve the artifact coordinates.
 - Existing color tokens are retained pending a separate visual-design pass.
-- A metadata header and table view are intentionally excluded from this pass.
+- A companion aspect/position table remains intentionally excluded.
 - The player has no interpretation layer, aspect calculation, ephemeris access,
   network synchronization, or external fonts/assets.
 - A standalone HTML file can be copied like any other export and is not

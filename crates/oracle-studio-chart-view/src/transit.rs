@@ -6,7 +6,7 @@ use chrono::{DateTime, Duration, Utc};
 use serde::Serialize;
 use thiserror::Error;
 
-pub const TRANSIT_TIMELINE_SCHEMA_VERSION: u32 = 1;
+pub const TRANSIT_TIMELINE_SCHEMA_VERSION: u32 = 2;
 const MAX_INTERPOLATION_GAP: Duration = Duration::hours(24);
 const STATION_EPSILON: f64 = 1.0e-12;
 
@@ -30,6 +30,9 @@ pub struct ChartAspect {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ChartRing {
+    pub timestamp: String,
+    pub zodiac: String,
+    pub house_system: String,
     pub points: Vec<ChartPoint>,
     pub houses: Vec<f64>,
     pub ascendant_degrees: f64,
@@ -39,6 +42,8 @@ pub struct ChartRing {
 pub struct ChartScene {
     pub timestamp: String,
     pub natal: ChartRing,
+    pub transit_zodiac: String,
+    pub transit_house_system: String,
     pub transit: Vec<ChartPoint>,
     pub aspects: Vec<ChartAspect>,
 }
@@ -54,6 +59,8 @@ pub struct TransitFrame {
 pub struct TransitTimeline {
     pub schema_version: u32,
     pub natal: ChartRing,
+    pub transit_zodiac: String,
+    pub transit_house_system: String,
     pub frames: Vec<TransitFrame>,
 }
 
@@ -73,6 +80,8 @@ pub enum TransitTimelineError {
     NatalChanged,
     #[error("all frames must contain the identical moving-point population")]
     MovingPointPopulationChanged,
+    #[error("all frames must use the same transit zodiac and house system")]
+    TransitCalculationSettingsChanged,
     #[error("transit timestamps must be unique; duplicate {0}")]
     DuplicateTimestamp(String),
     #[error("transit timestamps must be strictly increasing: {previous} then {current}")]
@@ -87,6 +96,8 @@ impl ChartScene {
         let (natal, transit) = physical_layers(comparison)?;
         let natal_calculation = natal.calculation();
         let transit_calculation = transit.calculation();
+        let natal_request = natal_calculation.request();
+        let transit_request = transit_calculation.request();
         let timestamp = transit_calculation
             .request()
             .instant()
@@ -104,6 +115,9 @@ impl ChartScene {
         Ok(Self {
             timestamp,
             natal: ChartRing {
+                timestamp: natal_request.instant().as_datetime().to_rfc3339(),
+                zodiac: format!("{:?}", natal_request.zodiac()),
+                house_system: format!("{:?}", natal_request.house_system()),
                 points: selected_points(specification.first_points(), &natal_points)?,
                 houses: houses.cusps_degrees().to_vec(),
                 ascendant_degrees: houses
@@ -111,6 +125,8 @@ impl ChartScene {
                     .get(ChartAngle::Ascendant)
                     .longitude_degrees(),
             },
+            transit_zodiac: format!("{:?}", transit_request.zodiac()),
+            transit_house_system: format!("{:?}", transit_request.house_system()),
             transit: selected_points(specification.second_points(), &transit_points)?,
             aspects: comparison
                 .aspects()
@@ -187,6 +203,11 @@ impl TransitTimeline {
             if point_population(&scene.transit) != expected_point_population {
                 return Err(TransitTimelineError::MovingPointPopulationChanged);
             }
+            if scene.transit_zodiac != first_scene.transit_zodiac
+                || scene.transit_house_system != first_scene.transit_house_system
+            {
+                return Err(TransitTimelineError::TransitCalculationSettingsChanged);
+            }
             let current_time = parse_timestamp(&scene.timestamp)?;
             if current_time == previous_time {
                 return Err(TransitTimelineError::DuplicateTimestamp(scene.timestamp));
@@ -204,6 +225,8 @@ impl TransitTimeline {
         Ok(Self {
             schema_version: TRANSIT_TIMELINE_SCHEMA_VERSION,
             natal: first_scene.natal,
+            transit_zodiac: first_scene.transit_zodiac,
+            transit_house_system: first_scene.transit_house_system,
             frames,
         })
     }
@@ -247,6 +270,8 @@ impl TransitTimeline {
                 return ChartScene {
                     timestamp: timestamp.to_rfc3339(),
                     natal: self.natal.clone(),
+                    transit_zodiac: self.transit_zodiac.clone(),
+                    transit_house_system: self.transit_house_system.clone(),
                     transit,
                     aspects: pair[0].aspects.clone(),
                 };
@@ -259,6 +284,8 @@ impl TransitTimeline {
         ChartScene {
             timestamp: frame.timestamp.clone(),
             natal: self.natal.clone(),
+            transit_zodiac: self.transit_zodiac.clone(),
+            transit_house_system: self.transit_house_system.clone(),
             transit: frame.points.clone(),
             aspects: frame.aspects.clone(),
         }
