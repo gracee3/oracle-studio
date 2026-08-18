@@ -9,6 +9,8 @@ not recalculate astrology or reinterpret tarot domain records.
 
 ## Status
 
+**Lifecycle:** Active pre-1.0 application. The CLI and storage contracts are implemented; interfaces and the future graphical workspace may evolve.
+
 Phase 5C/5D integration checkpoint: validated composition records, encrypted
 atomic persistence, reusable tarot/chart/journal services, validated local
 Sibylla deck-pack indexes, in-memory search, and a guided command-line
