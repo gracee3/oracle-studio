@@ -64,8 +64,57 @@ fn chart(
     .unwrap()
 }
 
+fn chart_with_houses(
+    timestamp: &str,
+    points: &[(CelestialObject, f64, f64)],
+    cusps: [f64; 12],
+    ascendant: f64,
+    midheaven: f64,
+    vertex: f64,
+) -> DerivedChartArtifact {
+    let objects: Vec<_> = points.iter().map(|(object, _, _)| *object).collect();
+    let options =
+        CalculationOptions::new(objects, Zodiac::Tropical, None, HouseSystem::Placidus).unwrap();
+    let request = CalculationRequest::from_options(
+        UtcInstant::parse_rfc3339(timestamp).unwrap(),
+        GeographicLocation::new(0.0, 0.0, 0.0).unwrap(),
+        options.clone(),
+    );
+    let houses = HouseCusps::new(
+        cusps.to_vec(),
+        ChartAngles::new(
+            AngularPosition::new(ascendant, 0.0).unwrap(),
+            AngularPosition::new(midheaven, 0.0).unwrap(),
+            AngularPosition::new(vertex, 0.0).unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let positions = points
+        .iter()
+        .map(|(object, longitude, speed)| {
+            (
+                *object,
+                Position::new(*longitude, 0.0, 1.0, *speed).unwrap(),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let result = DeterministicMock::new(positions, houses)
+        .calculate(&request)
+        .unwrap();
+    DerivedChartArtifact::new(
+        CalculationArtifact::new(request, result).unwrap(),
+        ChartSpecification::new(options, AspectDefinitions::new(Vec::new()).unwrap()),
+    )
+    .unwrap()
+}
+
 fn selected(points: &[CelestialObject]) -> ChartPointSelection {
     ChartPointSelection::new(points.iter().copied().map(ChartPointId::from).collect()).unwrap()
+}
+
+fn selected_ids(points: &[ChartPointId]) -> ChartPointSelection {
+    ChartPointSelection::new(points.to_vec()).unwrap()
 }
 
 fn definitions() -> AspectDefinitions {
@@ -83,18 +132,57 @@ fn comparison(
     transit: DerivedChartArtifact,
     points: &[CelestialObject],
 ) -> ComparisonArtifact {
+    let selection = points
+        .iter()
+        .copied()
+        .map(ChartPointId::from)
+        .collect::<Vec<_>>();
+    comparison_with_selections(natal, transit, &selection, &selection)
+}
+
+fn comparison_with_selections(
+    natal: DerivedChartArtifact,
+    transit: DerivedChartArtifact,
+    first_points: &[ChartPointId],
+    second_points: &[ChartPointId],
+) -> ComparisonArtifact {
     ComparisonArtifact::new(
         natal,
         transit,
         ComparisonSpecification::moving_second(
             ComparisonKind::TransitToNatal,
             definitions(),
-            selected(points),
-            selected(points),
+            selected_ids(first_points),
+            selected_ids(second_points),
         )
         .unwrap(),
     )
     .unwrap()
+}
+
+fn ten_planets(offset: f64, speed: f64) -> Vec<(CelestialObject, f64, f64)> {
+    [
+        CelestialObject::Sun,
+        CelestialObject::Moon,
+        CelestialObject::Mercury,
+        CelestialObject::Venus,
+        CelestialObject::Mars,
+        CelestialObject::Jupiter,
+        CelestialObject::Saturn,
+        CelestialObject::Uranus,
+        CelestialObject::Neptune,
+        CelestialObject::Pluto,
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, object)| {
+        (
+            object,
+            (offset + index as f64 * 36.0).rem_euclid(360.0),
+            speed,
+        )
+    })
+    .collect()
 }
 
 fn natal() -> DerivedChartArtifact {
@@ -125,6 +213,59 @@ fn time(value: &str) -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(value)
         .unwrap()
         .with_timezone(&Utc)
+}
+
+#[test]
+fn committed_fixtures_cover_full_selected_populations_and_motion_edges() {
+    let first =
+        ComparisonArtifact::from_json(include_str!("../../../fixtures/comparisons/frame-01.json"))
+            .unwrap();
+    let second =
+        ComparisonArtifact::from_json(include_str!("../../../fixtures/comparisons/frame-02.json"))
+            .unwrap();
+    let third =
+        ComparisonArtifact::from_json(include_str!("../../../fixtures/comparisons/frame-03.json"))
+            .unwrap();
+    let scene = ChartScene::from_comparison(&first).unwrap();
+    assert_eq!(scene.natal.points.len(), 15);
+    assert_eq!(scene.transit.len(), 12);
+    assert_eq!(scene.natal.points[0].id, "Sun");
+    assert_eq!(scene.natal.points[10].id, "Ascendant");
+    assert_eq!(scene.natal.points[14].id, "Vertex");
+    assert_eq!(scene.transit[10].id, "Ascendant");
+    assert_eq!(scene.transit[11].id, "Midheaven");
+    assert!(
+        scene
+            .natal
+            .houses
+            .windows(2)
+            .any(|pair| ((pair[1] - pair[0]).rem_euclid(360.0) - 30.0).abs() > 0.5)
+    );
+    assert!(
+        scene
+            .transit
+            .iter()
+            .any(|point| point.id == "Mercury" && point.retrograde)
+    );
+    assert!(
+        scene
+            .transit
+            .iter()
+            .any(|point| { point.id == "Jupiter" && point.longitude_speed_degrees_per_day == 0.0 })
+    );
+    assert!(scene.aspects.iter().any(|aspect| {
+        aspect.natal_point_id == "Ascendant" || aspect.transit_point_id == "Midheaven"
+    }));
+    assert!(scene.transit[0].longitude_degrees > 358.0);
+    assert!(scene.transit[1].longitude_degrees < 1.0);
+    let timeline = TransitTimeline::from_comparisons(&[first, second, third]).unwrap();
+    assert!(
+        timeline
+            .scene_at(time("2026-01-01T06:00:00Z"))
+            .transit
+            .iter()
+            .any(|point| point.id == "Jupiter" && point.longitude_speed_degrees_per_day > 0.0)
+    );
 }
 
 #[test]
@@ -346,6 +487,137 @@ fn large_gaps_are_exact_jumps() {
 }
 
 #[test]
+fn selected_order_structural_angles_and_normalized_lanes_drive_the_svg() {
+    let natal_chart = chart_with_houses(
+        "2000-01-01T00:00:00Z",
+        &ten_planets(0.0, 0.0),
+        [
+            29.999_9, 61.25, 93.5, 126.75, 159.2, 190.4, 218.8, 246.1, 275.6, 302.2, 329.4, 351.8,
+        ],
+        29.999_9,
+        302.2,
+        205.5,
+    );
+    let transit_chart = chart_with_houses(
+        "2026-01-01T00:00:00Z",
+        &ten_planets(359.5, 1.0),
+        [
+            0.0, 31.0, 62.0, 93.0, 124.0, 155.0, 186.0, 217.0, 248.0, 279.0, 310.0, 341.0,
+        ],
+        0.0,
+        270.0,
+        180.0,
+    );
+    let natal_selection = [
+        ChartPointId::Vertex,
+        ChartPointId::Sun,
+        ChartPointId::Ascendant,
+        ChartPointId::Moon,
+        ChartPointId::Midheaven,
+        ChartPointId::Descendant,
+        ChartPointId::ImumCoeli,
+    ];
+    let transit_selection = [
+        ChartPointId::Midheaven,
+        ChartPointId::Mercury,
+        ChartPointId::Ascendant,
+        ChartPointId::Descendant,
+        ChartPointId::ImumCoeli,
+        ChartPointId::Vertex,
+        ChartPointId::Pluto,
+    ];
+    let artifact = comparison_with_selections(
+        natal_chart,
+        transit_chart,
+        &natal_selection,
+        &transit_selection,
+    );
+    let scene = ChartScene::from_comparison(&artifact).unwrap();
+    assert_eq!(
+        scene
+            .natal
+            .points
+            .iter()
+            .map(|point| point.id.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "Vertex",
+            "Sun",
+            "Ascendant",
+            "Moon",
+            "Midheaven",
+            "Descendant",
+            "ImumCoeli",
+        ]
+    );
+    assert_eq!(
+        scene
+            .transit
+            .iter()
+            .map(|point| point.id.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "Midheaven",
+            "Mercury",
+            "Ascendant",
+            "Descendant",
+            "ImumCoeli",
+            "Vertex",
+            "Pluto",
+        ]
+    );
+    assert!(!scene.natal.points.iter().any(|point| point.id == "Jupiter"));
+
+    let svg = render_biwheel_svg(&scene, &RenderOptions::default());
+    assert!(svg.contains("data-aspect-radius=\"136.920\""));
+    assert!(svg.contains("data-natal-sign-radius=\"149.960\""));
+    assert!(svg.contains("data-transit-glyph-radius=\"280.360\""));
+    assert!(svg.contains("data-cusp-label-radius=\"309.700\""));
+    assert!(!svg.contains("id=\"zodiac-layer\""));
+    assert!(!svg.contains("id=\"house-label-"));
+    assert_eq!(
+        svg.matches("class=\"house-cusp house-cusp--axis\"").count(),
+        4
+    );
+    assert_eq!(svg.matches("data-role=\"cusp-label\"").count(), 12);
+    assert!(svg.contains(">00° ♉ 00′</text>"));
+    assert!(svg.contains("id=\"natal-point-vertex\""));
+    assert!(!svg.contains("id=\"natal-point-ascendant\""));
+    assert!(!svg.contains("id=\"natal-point-midheaven\""));
+    assert!(!svg.contains("id=\"natal-point-descendant\""));
+    assert!(!svg.contains("id=\"natal-point-imumcoeli\""));
+    assert!(svg.contains("id=\"transit-point-ascendant\""));
+    assert!(svg.contains("id=\"transit-point-midheaven\""));
+    assert!(svg.contains("id=\"transit-point-descendant\""));
+    assert!(svg.contains("id=\"transit-point-imumcoeli\""));
+    assert!(svg.contains("id=\"transit-point-vertex\""));
+    assert!(!svg.contains("id=\"transit-point-jupiter\""));
+    assert!(svg.contains("data-role=\"sign\""));
+    assert!(svg.contains("data-role=\"position\""));
+    assert!(svg.contains("data-role=\"glyph\""));
+    assert!(svg.contains("data-role=\"tick\""));
+    assert!(svg.contains("data-role=\"leader\""));
+    assert!(svg.contains("data-role=\"aspect-line\""));
+    assert!(svg.contains("data-role=\"aspect-glyph\""));
+    assert!(svg.contains("☌"));
+    assert!(svg.contains("id=\"aspect--sun--midheaven--square--line\""));
+    let endpoint = |visual_longitude: f64| {
+        let radians = (visual_longitude - 90.0).to_radians();
+        (
+            360.0 + 136.92 * radians.cos(),
+            360.0 + 136.92 * radians.sin(),
+        )
+    };
+    let natal_sun = endpoint(240.0);
+    let transit_midheaven = endpoint(150.0);
+    assert!(svg.contains(&format!(
+        "id=\"aspect--sun--midheaven--square--line\" data-role=\"aspect-line\" x1=\"{:.3}\" y1=\"{:.3}\" x2=\"{:.3}\" y2=\"{:.3}\"",
+        natal_sun.0, natal_sun.1, transit_midheaven.0, transit_midheaven.1
+    )));
+    assert!(svg.contains("Sun Square Midheaven (orb 0.000000°, phase"));
+}
+
+#[test]
 fn svg_is_deterministic_accessible_escaped_and_oriented() {
     let artifact = comparison(
         natal(),
@@ -361,14 +633,12 @@ fn svg_is_deterministic_accessible_escaped_and_oriented() {
         &scene,
         &RenderOptions {
             orientation: WheelOrientation::AscendantLeft,
-            title: "Fictional <chart> & test".into(),
         },
     );
     let zodiac = render_biwheel_svg(
         &scene,
         &RenderOptions {
             orientation: WheelOrientation::ZodiacZeroTop,
-            title: "Fictional chart".into(),
         },
     );
     assert_eq!(
@@ -377,13 +647,13 @@ fn svg_is_deterministic_accessible_escaped_and_oriented() {
             &scene,
             &RenderOptions {
                 orientation: WheelOrientation::AscendantLeft,
-                title: "Fictional <chart> & test".into(),
             }
         )
     );
     assert!(ascendant.contains("role=\"img\""));
     assert!(ascendant.contains("aria-labelledby=\"chart-title chart-description\""));
-    assert!(ascendant.contains("Fictional &lt;chart&gt; &amp; test"));
+    assert!(ascendant.contains("<title id=\"chart-title\">Transit biwheel</title>"));
+    assert!(!ascendant.contains(&scene.timestamp));
     assert!(ascendant.contains("id=\"natal-point-sun\""));
     assert!(ascendant.contains("id=\"transit-tick-sun\""));
     assert!(ascendant.contains("id=\"aspect-layer\""));

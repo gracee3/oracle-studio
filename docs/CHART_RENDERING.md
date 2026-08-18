@@ -9,7 +9,7 @@ external resource requests.
 
 The renderer accepts only Astraeus schema-v1 comparisons that pass
 `ComparisonArtifact::from_json` at revision
-`52d24862b8287b89b0986b7799583d82ecab21e9`. Oracle then requires:
+`e5d295222018178c46fb882a302a57c810bf8bd1`. Oracle then requires:
 
 - `transit_to_natal` comparison kind;
 - `second_moves_against_first_fixed` motion policy;
@@ -23,10 +23,48 @@ data. Oracle does not calculate positions, houses, placements, aspects, phases,
 or orbs. Serialized comparison aspects are revalidated by Astraeus, copied into
 the render model, and changed only at exact frames.
 
-The separate mismatch between older recorded Oracle provenance pins and the
-current dependency revision is not repaired here. That needs an explicit
-historical-reader/migration design; merely changing recorded revisions could
-make existing vault records impossible to reopen.
+The renderer projects only the comparison specification's ordered
+`first_points` and `second_points` populations. A calculated but unselected
+body or angle is never added to either visible lane. The dependency revision
+adds getter-only access to those existing schema-v1 fields; canonical JSON and
+content identities are unchanged. The separate historical
+`oracle-studio-core` provenance pin remains at `eb9a756…` pending an explicit
+reader/migration design.
+
+## Biwheel geometry
+
+The square SVG retains a 326-unit outer radius and divides it into four
+normalized radial regions:
+
+- `0.00–0.42`: central aspect field;
+- `0.42–0.66`: natal point lane;
+- `0.66–0.90`: transit point lane; and
+- `0.90–1.00`: natal cusp band.
+
+House lines run from the aspect boundary to the cusp band. The ASC/DSC and
+MC/IC axes are emphasized, while house numbers and a separate fixed zodiac ring
+are omitted. Each natal cusp is placed at its exact longitude at radius `0.95`
+and displays its rounded degree, zodiac glyph, and minute.
+
+Point labels remain upright and use three radial tokens, ordered from the
+center outward as sign, position, and point glyph. Natal token radii are
+approximately `0.46`, `0.54`, and `0.62`; transit token radii are `0.70`,
+`0.78`, and `0.86`. Exact-longitude ticks sit on each lane's inner boundary,
+and leaders connect those ticks to any displaced label stack.
+
+Isolated positions display `DD°MM′`. A wrap-aware collision cluster switches
+as a unit to `DD°`, then receives deterministic variable-width constrained
+displacement. Rounding is to the nearest arcminute or degree as displayed and
+carries correctly into the next sign. Exact longitudes remain in data
+attributes and accessible titles; selection order breaks exact ties. Selected
+natal ASC/DSC and MC/IC use the structural house axes instead of duplicate
+natal labels. A selected natal Vertex and every selected transit angle render
+as ordinary point tokens.
+
+Inter-chart aspects never leave the central field. Their line endpoints use
+the points' exact longitudes, independent of label displacement, and the
+conventional aspect glyph is centered on each chord. Stable element IDs and
+accessible titles retain both point IDs, kind, orb, and phase.
 
 ## CLI
 
@@ -78,12 +116,27 @@ points, motion, timestamps, and inter-chart aspects. It does not embed raw
 comparison envelopes, input paths, calculation provenance, or locations. It is
 still derived chart data and carries an in-file privacy warning.
 
+The player reads all geometry constants from the generated SVG. At each sample
+it mirrors Rust's rounding, adaptive precision, wraparound clustering,
+variable-width displacement, upright token placement, ticks, leaders,
+retrograde markers, and aspect glyphs. The natal visibility control hides both
+the natal point lane and natal house/cusp structure; the other controls remain
+scoped to transits and aspects.
+
+Names, chart-information headers, dates, and locations are not rendered inside
+the SVG. The HTML wrapper keeps only its caller-supplied title, timestamp
+readout, and privacy notice as chart metadata. A companion aspect/position
+table is deliberately outside this renderer pass; fixture table images are
+used only to verify point and aspect semantics.
+
 ## Current limitations
 
 - This slice is SVG/HTML export, not a native GUI or vault migration.
 - Only physical transit-to-natal comparisons are supported.
 - Collision displacement is presentation-only; exact-position ticks and leader
   lines preserve the artifact coordinates.
+- Existing color tokens are retained pending a separate visual-design pass.
+- A metadata header and table view are intentionally excluded from this pass.
 - The player has no interpretation layer, aspect calculation, ephemeris access,
   network synchronization, or external fonts/assets.
 - A standalone HTML file can be copied like any other export and is not

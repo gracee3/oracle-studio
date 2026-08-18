@@ -7,12 +7,22 @@ use crate::{ChartPoint, ChartScene, transit::stable_slug};
 const SIZE: f64 = 720.0;
 const CENTER: f64 = SIZE / 2.0;
 const OUTER_RADIUS: f64 = 326.0;
-const TRANSIT_RADIUS: f64 = 302.0;
-const ZODIAC_RADIUS: f64 = 270.0;
-const NATAL_RADIUS: f64 = 224.0;
-const HOUSE_RADIUS: f64 = 202.0;
-const ASPECT_RADIUS: f64 = 142.0;
-const GLYPH_MIN_DISTANCE: f64 = 21.0;
+const ASPECT_RADIUS: f64 = OUTER_RADIUS * 0.42;
+const NATAL_INNER_RADIUS: f64 = ASPECT_RADIUS;
+const NATAL_SIGN_RADIUS: f64 = OUTER_RADIUS * 0.46;
+const NATAL_POSITION_RADIUS: f64 = OUTER_RADIUS * 0.54;
+const NATAL_GLYPH_RADIUS: f64 = OUTER_RADIUS * 0.62;
+const TRANSIT_INNER_RADIUS: f64 = OUTER_RADIUS * 0.66;
+const TRANSIT_SIGN_RADIUS: f64 = OUTER_RADIUS * 0.70;
+const TRANSIT_POSITION_RADIUS: f64 = OUTER_RADIUS * 0.78;
+const TRANSIT_GLYPH_RADIUS: f64 = OUTER_RADIUS * 0.86;
+const CUSP_INNER_RADIUS: f64 = OUTER_RADIUS * 0.90;
+const CUSP_LABEL_RADIUS: f64 = OUTER_RADIUS * 0.95;
+const LABEL_PADDING: f64 = 4.0;
+
+const SIGNS: [&str; 12] = [
+    "♈", "♉", "♊", "♋", "♌", "♍", "♎", "♏", "♐", "♑", "♒", "♓",
+];
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -48,49 +58,78 @@ impl std::fmt::Display for WheelOrientation {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RenderOptions {
     pub orientation: WheelOrientation,
-    pub title: String,
 }
 
 impl Default for RenderOptions {
     fn default() -> Self {
         Self {
             orientation: WheelOrientation::AscendantLeft,
-            title: "Natal chart with transits".to_owned(),
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PositionPrecision {
+    ArcMinute,
+    Degree,
+}
+
+impl PositionPrecision {
+    const fn data_value(self) -> &'static str {
+        match self {
+            Self::ArcMinute => "arcminute",
+            Self::Degree => "degree",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PointGeometry {
+    inner_radius: f64,
+    sign_radius: f64,
+    position_radius: f64,
+    glyph_radius: f64,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PointLayout {
+    display_longitude: f64,
+    precision: PositionPrecision,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RoundedPosition {
+    sign_index: usize,
+    degrees: u16,
+    minutes: Option<u16>,
 }
 
 /// Render a deterministic SVG biwheel from a validated presentation scene.
 pub fn render_biwheel_svg(scene: &ChartScene, options: &RenderOptions) -> String {
     let mut svg = String::with_capacity(48_000);
-    let title = escape_xml(&options.title);
-    let description = escape_xml(&format!(
-        "Natal houses and points with an outer transit layer and engine-authored inter-chart aspects at {}. Orientation: {}.",
-        scene.timestamp, options.orientation
-    ));
     let _ = write!(
         svg,
-        "<svg id=\"oracle-transit-biwheel\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {SIZE:.0} {SIZE:.0}\" role=\"img\" aria-labelledby=\"chart-title chart-description\" data-orientation=\"{}\" data-ascendant=\"{:.12}\">",
-        options.orientation, scene.natal.ascendant_degrees
+        "<svg id=\"oracle-transit-biwheel\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {SIZE:.0} {SIZE:.0}\" role=\"img\" aria-labelledby=\"chart-title chart-description\" data-orientation=\"{}\" data-ascendant=\"{:.12}\" data-center=\"{CENTER:.3}\" data-outer-radius=\"{OUTER_RADIUS:.3}\" data-aspect-radius=\"{ASPECT_RADIUS:.3}\" data-natal-inner-radius=\"{NATAL_INNER_RADIUS:.3}\" data-natal-sign-radius=\"{NATAL_SIGN_RADIUS:.3}\" data-natal-position-radius=\"{NATAL_POSITION_RADIUS:.3}\" data-natal-glyph-radius=\"{NATAL_GLYPH_RADIUS:.3}\" data-transit-inner-radius=\"{TRANSIT_INNER_RADIUS:.3}\" data-transit-sign-radius=\"{TRANSIT_SIGN_RADIUS:.3}\" data-transit-position-radius=\"{TRANSIT_POSITION_RADIUS:.3}\" data-transit-glyph-radius=\"{TRANSIT_GLYPH_RADIUS:.3}\" data-cusp-inner-radius=\"{CUSP_INNER_RADIUS:.3}\" data-cusp-label-radius=\"{CUSP_LABEL_RADIUS:.3}\" data-label-padding=\"{LABEL_PADDING:.3}\">",
+        options.orientation, scene.natal.ascendant_degrees,
     );
-    let _ = write!(
-        svg,
-        "<title id=\"chart-title\">{title}</title><desc id=\"chart-description\">{description}</desc>"
-    );
+    svg.push_str("<title id=\"chart-title\">Transit biwheel</title><desc id=\"chart-description\">Selected natal and transit points, natal cusps, and engine-authored inter-chart aspects.</desc>");
     svg.push_str(STYLE_AND_GLYPH_DEFS);
     let _ = write!(
         svg,
         "<circle class=\"wheel-background\" cx=\"{CENTER}\" cy=\"{CENTER}\" r=\"{OUTER_RADIUS}\"/>"
     );
-    render_zodiac(&mut svg, scene, options.orientation);
     render_houses(&mut svg, scene, options.orientation);
     render_aspects(&mut svg, scene, options.orientation);
     render_point_layer(
         &mut svg,
         "natal",
         &scene.natal.points,
-        NATAL_RADIUS,
-        NATAL_RADIUS + 13.0,
+        PointGeometry {
+            inner_radius: NATAL_INNER_RADIUS,
+            sign_radius: NATAL_SIGN_RADIUS,
+            position_radius: NATAL_POSITION_RADIUS,
+            glyph_radius: NATAL_GLYPH_RADIUS,
+        },
         scene.natal.ascendant_degrees,
         options.orientation,
     );
@@ -98,8 +137,12 @@ pub fn render_biwheel_svg(scene: &ChartScene, options: &RenderOptions) -> String
         &mut svg,
         "transit",
         &scene.transit,
-        TRANSIT_RADIUS,
-        TRANSIT_RADIUS - 13.0,
+        PointGeometry {
+            inner_radius: TRANSIT_INNER_RADIUS,
+            sign_radius: TRANSIT_SIGN_RADIUS,
+            position_radius: TRANSIT_POSITION_RADIUS,
+            glyph_radius: TRANSIT_GLYPH_RADIUS,
+        },
         scene.natal.ascendant_degrees,
         options.orientation,
     );
@@ -107,67 +150,41 @@ pub fn render_biwheel_svg(scene: &ChartScene, options: &RenderOptions) -> String
     svg
 }
 
-fn render_zodiac(svg: &mut String, scene: &ChartScene, orientation: WheelOrientation) {
-    const SIGNS: [&str; 12] = [
-        "♈", "♉", "♊", "♋", "♌", "♍", "♎", "♏", "♐", "♑", "♒", "♓",
-    ];
-    svg.push_str("<g id=\"zodiac-layer\" aria-label=\"Zodiac\">");
-    for degree in (0..360).step_by(5) {
-        let longitude = f64::from(degree);
-        let visual = visual_longitude(longitude, scene.natal.ascendant_degrees, orientation);
-        let length = if degree % 30 == 0 {
-            12.0
-        } else if degree % 10 == 0 {
-            8.0
-        } else {
-            4.0
-        };
-        let (x1, y1) = polar(visual, ZODIAC_RADIUS - length / 2.0);
-        let (x2, y2) = polar(visual, ZODIAC_RADIUS + length / 2.0);
-        let _ = write!(
-            svg,
-            "<line id=\"zodiac-tick-{degree}\" class=\"zodiac-tick\" x1=\"{x1:.3}\" y1=\"{y1:.3}\" x2=\"{x2:.3}\" y2=\"{y2:.3}\"/>"
-        );
-    }
-    for (index, sign) in SIGNS.iter().enumerate() {
-        let longitude = index as f64 * 30.0 + 15.0;
-        let visual = visual_longitude(longitude, scene.natal.ascendant_degrees, orientation);
-        let (x, y) = polar(visual, ZODIAC_RADIUS);
-        let _ = write!(
-            svg,
-            "<text id=\"zodiac-sign-{index}\" class=\"zodiac-sign zodiac-sign--{}\" x=\"{x:.3}\" y=\"{y:.3}\">{sign}</text>",
-            index % 4
-        );
-    }
-    svg.push_str("<circle class=\"ring\" cx=\"360\" cy=\"360\" r=\"258\"/><circle class=\"ring\" cx=\"360\" cy=\"360\" r=\"282\"/></g>");
-}
-
 fn render_houses(svg: &mut String, scene: &ChartScene, orientation: WheelOrientation) {
-    svg.push_str("<g id=\"house-layer\" aria-label=\"Natal houses\">");
+    svg.push_str("<g id=\"natal-structure-layer\" class=\"layer layer--natal\" aria-label=\"Natal houses and cusp band\">");
+    let _ = write!(
+        svg,
+        "<circle class=\"ring ring--aspect-boundary\" cx=\"{CENTER:.3}\" cy=\"{CENTER:.3}\" r=\"{ASPECT_RADIUS:.3}\"/><circle class=\"ring ring--cusp-boundary\" cx=\"{CENTER:.3}\" cy=\"{CENTER:.3}\" r=\"{CUSP_INNER_RADIUS:.3}\"/>"
+    );
     for (index, cusp) in scene.natal.houses.iter().copied().enumerate() {
         let visual = visual_longitude(cusp, scene.natal.ascendant_degrees, orientation);
-        let (x1, y1) = polar(visual, ASPECT_RADIUS + 10.0);
-        let (x2, y2) = polar(visual, HOUSE_RADIUS);
+        let (x1, y1) = polar(visual, ASPECT_RADIUS);
+        let (x2, y2) = polar(visual, CUSP_INNER_RADIUS);
+        let axis_class = if matches!(index, 0 | 3 | 6 | 9) {
+            " house-cusp--axis"
+        } else {
+            ""
+        };
         let _ = write!(
             svg,
-            "<line id=\"house-cusp-{}\" class=\"house-cusp\" x1=\"{x1:.3}\" y1=\"{y1:.3}\" x2=\"{x2:.3}\" y2=\"{y2:.3}\"><title>House {} cusp at {cusp:.6}°</title></line>",
+            "<line id=\"house-cusp-{}\" class=\"house-cusp{axis_class}\" data-longitude=\"{cusp:.12}\" x1=\"{x1:.3}\" y1=\"{y1:.3}\" x2=\"{x2:.3}\" y2=\"{y2:.3}\"><title>House {} cusp at {cusp:.12}°</title></line>",
             index + 1,
             index + 1
         );
-        let next = scene.natal.houses[(index + 1) % scene.natal.houses.len()];
-        let arc = (next - cusp).rem_euclid(360.0);
-        let midpoint = (cusp + arc / 2.0).rem_euclid(360.0);
-        let visual_midpoint =
-            visual_longitude(midpoint, scene.natal.ascendant_degrees, orientation);
-        let (label_x, label_y) = polar(visual_midpoint, HOUSE_RADIUS - 17.0);
+        let rounded = round_position(cusp, PositionPrecision::ArcMinute);
+        let (label_x, label_y) = polar(visual, CUSP_LABEL_RADIUS);
         let _ = write!(
             svg,
-            "<text id=\"house-label-{}\" class=\"house-label\" x=\"{label_x:.3}\" y=\"{label_y:.3}\">{}</text>",
+            "<text id=\"cusp-label-{}\" class=\"cusp-label\" data-role=\"cusp-label\" data-longitude=\"{cusp:.12}\" x=\"{label_x:.3}\" y=\"{label_y:.3}\">{:02}° {} {:02}′</text>",
             index + 1,
-            index + 1
+            rounded.degrees,
+            SIGNS[rounded.sign_index],
+            rounded
+                .minutes
+                .expect("arcminute precision includes minutes")
         );
     }
-    svg.push_str("<circle class=\"ring ring--aspect\" cx=\"360\" cy=\"360\" r=\"142\"/><circle class=\"ring\" cx=\"360\" cy=\"360\" r=\"202\"/></g>");
+    svg.push_str("</g>");
 }
 
 fn render_aspects(svg: &mut String, scene: &ChartScene, orientation: WheelOrientation) {
@@ -210,15 +227,29 @@ fn render_aspects(svg: &mut String, scene: &ChartScene, orientation: WheelOrient
             aspect.orb_degrees,
             aspect.phase.as_deref().unwrap_or("not supplied")
         ));
+        let midpoint_x = (x1 + x2) / 2.0;
+        let midpoint_y = (y1 + y2) / 2.0;
+        let id = escape_xml(&aspect.id);
+        let natal_id = escape_xml(&aspect.natal_point_id);
+        let transit_id = escape_xml(&aspect.transit_point_id);
+        let glyph = aspect_glyph(&aspect.kind);
         let _ = write!(
             svg,
-            "<line id=\"{}\" class=\"aspect aspect--{kind}\" data-natal-id=\"{}\" data-transit-id=\"{}\" data-kind=\"{kind}\" x1=\"{x1:.3}\" y1=\"{y1:.3}\" x2=\"{x2:.3}\" y2=\"{y2:.3}\"><title>{title}</title></line>",
-            escape_xml(&aspect.id),
-            escape_xml(&aspect.natal_point_id),
-            escape_xml(&aspect.transit_point_id)
+            "<g id=\"{id}\" class=\"aspect aspect--{kind}\" data-natal-id=\"{natal_id}\" data-transit-id=\"{transit_id}\" data-kind=\"{kind}\"><title>{title}</title><line id=\"{id}--line\" data-role=\"aspect-line\" x1=\"{x1:.3}\" y1=\"{y1:.3}\" x2=\"{x2:.3}\" y2=\"{y2:.3}\"/><text id=\"{id}--glyph\" data-role=\"aspect-glyph\" class=\"aspect-glyph\" x=\"{midpoint_x:.3}\" y=\"{midpoint_y:.3}\">{glyph}</text></g>"
         );
     }
     svg.push_str("</g>");
+}
+
+fn aspect_glyph(kind: &str) -> &'static str {
+    match kind {
+        "Conjunction" => "☌",
+        "Sextile" => "⚹",
+        "Square" => "□",
+        "Trine" => "△",
+        "Opposition" => "☍",
+        _ => "·",
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -226,33 +257,27 @@ fn render_point_layer(
     svg: &mut String,
     layer: &str,
     points: &[ChartPoint],
-    glyph_radius: f64,
-    tick_radius: f64,
+    geometry: PointGeometry,
     ascendant: f64,
     orientation: WheelOrientation,
 ) {
-    let longitudes: Vec<f64> = points.iter().map(|point| point.longitude_degrees).collect();
-    let display_longitudes =
-        resolve_circular_collisions(&longitudes, glyph_radius, GLYPH_MIN_DISTANCE);
+    let visible: Vec<_> = points
+        .iter()
+        .filter(|point| layer != "natal" || !is_structural_natal_angle(&point.id))
+        .collect();
+    let layouts = layout_point_labels(&visible, geometry);
     let _ = write!(
         svg,
         "<g id=\"{layer}-layer\" class=\"layer layer--{layer}\" aria-label=\"{layer} points\">"
     );
-    let _ = write!(
-        svg,
-        "<circle class=\"ring ring--{layer}\" cx=\"{CENTER}\" cy=\"{CENTER}\" r=\"{glyph_radius}\"/>"
-    );
-    for (point, display_longitude) in points.iter().zip(display_longitudes) {
-        render_point(
+    if layer == "transit" {
+        let _ = write!(
             svg,
-            layer,
-            point,
-            display_longitude,
-            glyph_radius,
-            tick_radius,
-            ascendant,
-            orientation,
+            "<circle class=\"ring ring--transit-boundary\" cx=\"{CENTER:.3}\" cy=\"{CENTER:.3}\" r=\"{TRANSIT_INNER_RADIUS:.3}\"/>"
         );
+    }
+    for (point, layout) in visible.into_iter().zip(layouts) {
+        render_point(svg, layer, point, layout, geometry, ascendant, orientation);
     }
     svg.push_str("</g>");
 }
@@ -262,19 +287,26 @@ fn render_point(
     svg: &mut String,
     layer: &str,
     point: &ChartPoint,
-    display_longitude: f64,
-    glyph_radius: f64,
-    tick_radius: f64,
+    layout: PointLayout,
+    geometry: PointGeometry,
     ascendant: f64,
     orientation: WheelOrientation,
 ) {
     let slug = stable_slug(&point.id);
     let actual_visual = visual_longitude(point.longitude_degrees, ascendant, orientation);
-    let display_visual = visual_longitude(display_longitude, ascendant, orientation);
-    let (tick_inner_x, tick_inner_y) = polar(actual_visual, tick_radius - 4.0);
-    let (tick_outer_x, tick_outer_y) = polar(actual_visual, tick_radius + 4.0);
-    let (leader_x, leader_y) = polar(actual_visual, glyph_radius);
-    let (glyph_x, glyph_y) = polar(display_visual, glyph_radius);
+    let display_visual = visual_longitude(layout.display_longitude, ascendant, orientation);
+    let (tick_inner_x, tick_inner_y) = polar(actual_visual, geometry.inner_radius - 4.0);
+    let (tick_outer_x, tick_outer_y) = polar(actual_visual, geometry.inner_radius + 4.0);
+    let (leader_x, leader_y) = polar(actual_visual, geometry.inner_radius + 4.0);
+    let (leader_end_x, leader_end_y) = polar(display_visual, geometry.sign_radius - 9.0);
+    let (sign_x, sign_y) = polar(display_visual, geometry.sign_radius);
+    let (position_x, position_y) = polar(display_visual, geometry.position_radius);
+    let (glyph_x, glyph_y) = polar(display_visual, geometry.glyph_radius);
+    let rounded = round_position(point.longitude_degrees, layout.precision);
+    let position = match rounded.minutes {
+        Some(minutes) => format!("{:02}°{minutes:02}′", rounded.degrees),
+        None => format!("{:02}°", rounded.degrees),
+    };
     let label = escape_xml(&format!(
         "{} {} at {:.6}°, speed {:.6}° per day{}",
         if layer == "natal" { "Natal" } else { "Transit" },
@@ -285,17 +317,25 @@ fn render_point(
     ));
     let _ = write!(
         svg,
-        "<g id=\"{layer}-point-{slug}\" class=\"chart-point chart-point--{layer}\" data-point-id=\"{}\" data-longitude=\"{:.12}\"><title>{label}</title>",
+        "<g id=\"{layer}-point-{slug}\" class=\"chart-point chart-point--{layer}\" data-point-id=\"{}\" data-longitude=\"{:.12}\" data-display-longitude=\"{:.12}\" data-precision=\"{}\"><title>{label}</title>",
         escape_xml(&point.id),
-        point.longitude_degrees
+        point.longitude_degrees,
+        layout.display_longitude,
+        layout.precision.data_value()
     );
     let _ = write!(
         svg,
-        "<line id=\"{layer}-leader-{slug}\" data-role=\"leader\" class=\"point-leader\" x1=\"{leader_x:.3}\" y1=\"{leader_y:.3}\" x2=\"{glyph_x:.3}\" y2=\"{glyph_y:.3}\"/>"
+        "<line id=\"{layer}-leader-{slug}\" data-role=\"leader\" class=\"point-leader\" x1=\"{leader_x:.3}\" y1=\"{leader_y:.3}\" x2=\"{leader_end_x:.3}\" y2=\"{leader_end_y:.3}\"/>"
     );
     let _ = write!(
         svg,
         "<line id=\"{layer}-tick-{slug}\" data-role=\"tick\" class=\"position-tick\" x1=\"{tick_inner_x:.3}\" y1=\"{tick_inner_y:.3}\" x2=\"{tick_outer_x:.3}\" y2=\"{tick_outer_y:.3}\"/>"
+    );
+    let _ = write!(
+        svg,
+        "<text id=\"{layer}-sign-{slug}\" data-role=\"sign\" class=\"point-sign point-sign--{}\" x=\"{sign_x:.3}\" y=\"{sign_y:.3}\">{}</text><text id=\"{layer}-position-{slug}\" data-role=\"position\" class=\"point-position\" x=\"{position_x:.3}\" y=\"{position_y:.3}\">{position}</text>",
+        rounded.sign_index % 4,
+        SIGNS[rounded.sign_index]
     );
     if let Some(glyph_id) = glyph_id(&point.id) {
         let _ = write!(
@@ -318,6 +358,10 @@ fn render_point(
         );
     }
     svg.push_str("</g>");
+}
+
+fn is_structural_natal_angle(id: &str) -> bool {
+    matches!(id, "Ascendant" | "Descendant" | "Midheaven" | "ImumCoeli")
 }
 
 fn glyph_id(id: &str) -> Option<&'static str> {
@@ -348,6 +392,178 @@ fn glyph_fallback(id: &str) -> &str {
         "Vertex" => "Vx",
         _ => "•",
     }
+}
+
+fn round_position(longitude: f64, precision: PositionPrecision) -> RoundedPosition {
+    match precision {
+        PositionPrecision::ArcMinute => {
+            let total = (longitude.rem_euclid(360.0) * 60.0).round() as i64;
+            let total = total.rem_euclid(360 * 60) as u16;
+            let sign_index = usize::from(total / (30 * 60));
+            let within_sign = total % (30 * 60);
+            RoundedPosition {
+                sign_index,
+                degrees: within_sign / 60,
+                minutes: Some(within_sign % 60),
+            }
+        }
+        PositionPrecision::Degree => {
+            let total = longitude.rem_euclid(360.0).round() as i64;
+            let total = total.rem_euclid(360) as u16;
+            RoundedPosition {
+                sign_index: usize::from(total / 30),
+                degrees: total % 30,
+                minutes: None,
+            }
+        }
+    }
+}
+
+fn layout_point_labels(points: &[&ChartPoint], geometry: PointGeometry) -> Vec<PointLayout> {
+    if points.is_empty() {
+        return Vec::new();
+    }
+    if points.len() == 1 {
+        return vec![PointLayout {
+            display_longitude: points[0].longitude_degrees.rem_euclid(360.0),
+            precision: PositionPrecision::ArcMinute,
+        }];
+    }
+
+    let mut sorted: Vec<(usize, f64)> = points
+        .iter()
+        .enumerate()
+        .map(|(index, point)| (index, point.longitude_degrees.rem_euclid(360.0)))
+        .collect();
+    sorted.sort_by(|left, right| {
+        left.1
+            .total_cmp(&right.1)
+            .then_with(|| left.0.cmp(&right.0))
+    });
+
+    let mut cut_after = 0;
+    let mut largest_gap = f64::NEG_INFINITY;
+    for index in 0..sorted.len() {
+        let gap = (sorted[(index + 1) % sorted.len()].1 - sorted[index].1).rem_euclid(360.0);
+        if gap >= largest_gap {
+            largest_gap = gap;
+            cut_after = index;
+        }
+    }
+    let start = (cut_after + 1) % sorted.len();
+    let mut unwrapped = Vec::with_capacity(sorted.len());
+    for offset in 0..sorted.len() {
+        let entry = sorted[(start + offset) % sorted.len()];
+        let mut angle = entry.1;
+        while unwrapped
+            .last()
+            .is_some_and(|(_, previous): &(usize, f64)| angle < *previous)
+        {
+            angle += 360.0;
+        }
+        unwrapped.push((entry.0, angle));
+    }
+
+    let mut result = points
+        .iter()
+        .map(|point| PointLayout {
+            display_longitude: point.longitude_degrees.rem_euclid(360.0),
+            precision: PositionPrecision::ArcMinute,
+        })
+        .collect::<Vec<_>>();
+    let mut cluster_start = 0;
+    for index in 1..=unwrapped.len() {
+        let continues = index < unwrapped.len()
+            && unwrapped[index].1 - unwrapped[index - 1].1
+                < required_gap_degrees(
+                    points[unwrapped[index - 1].0],
+                    points[unwrapped[index].0],
+                    geometry,
+                    PositionPrecision::ArcMinute,
+                );
+        if continues {
+            continue;
+        }
+        if index - cluster_start > 1 {
+            resolve_label_cluster(
+                &unwrapped[cluster_start..index],
+                points,
+                geometry,
+                &mut result,
+            );
+        }
+        cluster_start = index;
+    }
+    result
+}
+
+fn resolve_label_cluster(
+    cluster: &[(usize, f64)],
+    points: &[&ChartPoint],
+    geometry: PointGeometry,
+    result: &mut [PointLayout],
+) {
+    let mut offsets = vec![0.0; cluster.len()];
+    for index in 1..cluster.len() {
+        offsets[index] = offsets[index - 1]
+            + required_gap_degrees(
+                points[cluster[index - 1].0],
+                points[cluster[index].0],
+                geometry,
+                PositionPrecision::Degree,
+            );
+    }
+    let adjusted: Vec<_> = cluster
+        .iter()
+        .enumerate()
+        .map(|(index, (_, angle))| angle - offsets[index])
+        .collect();
+    let mean = adjusted.iter().sum::<f64>() / adjusted.len() as f64;
+    for (index, (original_index, _)) in cluster.iter().enumerate() {
+        result[*original_index] = PointLayout {
+            display_longitude: (mean + offsets[index]).rem_euclid(360.0),
+            precision: PositionPrecision::Degree,
+        };
+    }
+}
+
+fn required_gap_degrees(
+    left: &ChartPoint,
+    right: &ChartPoint,
+    geometry: PointGeometry,
+    precision: PositionPrecision,
+) -> f64 {
+    let left_widths = token_widths(left, precision);
+    let right_widths = token_widths(right, precision);
+    [
+        (geometry.sign_radius, left_widths[0], right_widths[0]),
+        (geometry.position_radius, left_widths[1], right_widths[1]),
+        (geometry.glyph_radius, left_widths[2], right_widths[2]),
+    ]
+    .into_iter()
+    .map(|(radius, left_width, right_width)| {
+        let distance = (left_width + right_width) / 2.0 + LABEL_PADDING;
+        2.0 * (distance / (2.0 * radius))
+            .clamp(0.0, 1.0)
+            .asin()
+            .to_degrees()
+    })
+    .fold(0.0, f64::max)
+}
+
+fn token_widths(point: &ChartPoint, precision: PositionPrecision) -> [f64; 3] {
+    let position = match precision {
+        PositionPrecision::ArcMinute => 40.0,
+        PositionPrecision::Degree => 24.0,
+    };
+    let glyph = if glyph_id(&point.id).is_some() {
+        if point.retrograde { 28.0 } else { 18.0 }
+    } else if point.retrograde {
+        34.0
+    } else {
+        24.0
+    };
+    [18.0, position, glyph]
 }
 
 fn visual_longitude(longitude: f64, ascendant: f64, orientation: WheelOrientation) -> f64 {
@@ -493,11 +709,11 @@ fn escape_xml(value: &str) -> String {
 const STYLE_AND_GLYPH_DEFS: &str = r##"<defs>
 <style>
 :root{--wheel-bg:#fffdf8;--ink:#24202d;--muted:#80778b;--natal:#315d86;--transit:#a23e48;--aspect:#806f98;--ring:#c9c0ce;--fire:#b84b3b;--earth:#7d6540;--air:#3f7892;--water:#477861}
-.wheel-background{fill:var(--wheel-bg);stroke:var(--ink);stroke-width:1.5}.ring{fill:none;stroke:var(--ring);stroke-width:1}.ring--aspect{stroke-dasharray:2 4}.ring--natal{stroke:var(--natal)}.ring--transit{stroke:var(--transit)}
-.zodiac-tick,.house-cusp,.position-tick,.point-leader{stroke:var(--muted);fill:none}.zodiac-tick{stroke-width:.7}.house-cusp{stroke-width:.8}.position-tick{stroke-width:2}.point-leader{stroke-width:.75;opacity:.75}
-.zodiac-sign,.house-label,.point-fallback,.motion-marker{font-family:serif;text-anchor:middle;dominant-baseline:middle;fill:var(--ink)}.zodiac-sign{font-size:19px}.zodiac-sign--0{fill:var(--fire)}.zodiac-sign--1{fill:var(--earth)}.zodiac-sign--2{fill:var(--air)}.zodiac-sign--3{fill:var(--water)}.house-label{font:11px sans-serif;fill:var(--muted)}
+.wheel-background{fill:var(--wheel-bg);stroke:var(--ink);stroke-width:1.5}.ring{fill:none;stroke:var(--ring);stroke-width:1}.ring--aspect-boundary{stroke-dasharray:2 4}.ring--transit-boundary{stroke:var(--transit)}
+.house-cusp,.position-tick,.point-leader{stroke:var(--muted);fill:none}.house-cusp{stroke-width:.8}.house-cusp--axis{stroke:var(--ink);stroke-width:1.8}.position-tick{stroke-width:2}.point-leader{stroke-width:.75;opacity:.75}
+.cusp-label,.point-sign,.point-position,.point-fallback,.motion-marker,.aspect-glyph{font-family:serif;text-anchor:middle;dominant-baseline:middle;fill:var(--ink)}.cusp-label{font-size:10px;fill:var(--natal)}.point-sign{font-size:17px}.point-position{font:10px sans-serif}.point-sign--0{fill:var(--fire)}.point-sign--1{fill:var(--earth)}.point-sign--2{fill:var(--air)}.point-sign--3{fill:var(--water)}
 .point-glyph{fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}.chart-point--natal{color:var(--natal)}.chart-point--transit{color:var(--transit)}.point-fallback{font:bold 11px sans-serif;fill:currentColor}.motion-marker{font-size:9px;fill:currentColor}
-.aspect{stroke:var(--aspect);stroke-width:1;opacity:.72}.aspect--conjunction{stroke:#6e6578}.aspect--opposition{stroke:#9b3b42}.aspect--square{stroke:#b06535}.aspect--trine{stroke:#39805e}.aspect--sextile{stroke:#3a7290}
+.aspect{color:var(--aspect);opacity:.78}.aspect line{stroke:currentColor;stroke-width:1}.aspect-glyph{fill:currentColor;stroke:none;font-size:13px;paint-order:stroke;stroke:var(--wheel-bg);stroke-width:3px}.aspect--conjunction{color:#6e6578}.aspect--opposition{color:#9b3b42}.aspect--square{color:#b06535}.aspect--trine{color:#39805e}.aspect--sextile{color:#3a7290}
 .is-hidden{display:none}
 </style>
 <g id="glyph-sun"><path d="m-1,-8 -2.18182,.727268 -2.181819,1.454543 -1.454552,2.18182 -.727268,2.181819 0,2.181819 .727268,2.181819 1.454552,2.18182 2.181819,1.454544 2.18182,.727276 2.18181,0 2.18182,-.727276 2.181819,-1.454544 1.454552,-2.18182 .727268,-2.181819 0,-2.181819 -.727268,-2.181819 -1.454552,-2.18182 -2.181819,-1.454543 -2.18182,-.727268 -2.18181,0 m.727267,6.54545 -.727267,.727276 0,.727275 .727267,.727268 .727276,0 .727267,-.727268 0,-.727275 -.727267,-.727276 -.727276,0"/></g>
@@ -514,3 +730,106 @@ const STYLE_AND_GLYPH_DEFS: &str = r##"<defs>
 <g id="glyph-north-node"><path d="m-2,3-1.3333334,-.6666667-.6666666,0-1.3333334,.6666667-.6666667,1.3333333 0,.6666667.6666667,1.3333333 1.3333334,.6666667.6666666,0 1.3333334,-.6666667.6666666,-1.3333333 0,-.6666667-.6666666,-1.3333333-2,-2.66666665-.6666667,-1.99999995 0,-1.3333334.6666667,-2 1.3333333,-1.3333333 2,-.6666667 2.6666666,0 2,.6666667 1.3333333,1.3333333.6666667,2 0,1.3333334-.6666667,1.99999995-2,2.66666665-.6666666,1.3333333 0,.6666667.6666666,1.3333333 1.3333334,.6666667.6666666,0 1.3333334,-.6666667.6666667,-1.3333333 0,-.6666667-.6666667,-1.3333333-1.3333334,-.6666667-.6666666,0-1.3333334,.6666667m-8,-6 .6666667,-1.3333333 1.3333333,-1.3333333 2,-.6666667 2.6666666,0 2,.6666667 1.3333333,1.3333333.6666667,1.3333333"/></g>
 <g id="glyph-south-node" transform="rotate(180)"><use href="#glyph-north-node"/></g>
 </defs>"##;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn point(id: &str, longitude_degrees: f64, retrograde: bool) -> ChartPoint {
+        ChartPoint {
+            id: id.to_owned(),
+            longitude_degrees,
+            longitude_speed_degrees_per_day: if retrograde { -1.0 } else { 1.0 },
+            retrograde,
+        }
+    }
+
+    fn transit_geometry() -> PointGeometry {
+        PointGeometry {
+            inner_radius: TRANSIT_INNER_RADIUS,
+            sign_radius: TRANSIT_SIGN_RADIUS,
+            position_radius: TRANSIT_POSITION_RADIUS,
+            glyph_radius: TRANSIT_GLYPH_RADIUS,
+        }
+    }
+
+    #[test]
+    fn positions_round_to_arcminutes_and_roll_signs_forward() {
+        assert_eq!(
+            round_position(29.999_9, PositionPrecision::ArcMinute),
+            RoundedPosition {
+                sign_index: 1,
+                degrees: 0,
+                minutes: Some(0),
+            }
+        );
+        assert_eq!(
+            round_position(359.999_9, PositionPrecision::ArcMinute),
+            RoundedPosition {
+                sign_index: 0,
+                degrees: 0,
+                minutes: Some(0),
+            }
+        );
+        assert_eq!(
+            round_position(89.501, PositionPrecision::Degree),
+            RoundedPosition {
+                sign_index: 3,
+                degrees: 0,
+                minutes: None,
+            }
+        );
+    }
+
+    #[test]
+    fn adaptive_layout_keeps_isolated_minutes_and_spreads_wrap_cluster_in_order() {
+        let points = [
+            point("Ascendant", 359.5, false),
+            point("Mercury", 0.0, true),
+            point("Sun", 0.5, false),
+            point("Moon", 110.25, false),
+        ];
+        let references = points.iter().collect::<Vec<_>>();
+        let layout = layout_point_labels(&references, transit_geometry());
+        assert_eq!(layout[3].precision, PositionPrecision::ArcMinute);
+        assert!(
+            layout[..3]
+                .iter()
+                .all(|entry| entry.precision == PositionPrecision::Degree)
+        );
+        assert!(
+            layout
+                .iter()
+                .all(|entry| entry.display_longitude.is_finite())
+        );
+        let unwrapped = [
+            layout[0].display_longitude,
+            if layout[1].display_longitude < layout[0].display_longitude {
+                layout[1].display_longitude + 360.0
+            } else {
+                layout[1].display_longitude
+            },
+            if layout[2].display_longitude < layout[0].display_longitude {
+                layout[2].display_longitude + 360.0
+            } else {
+                layout[2].display_longitude
+            },
+        ];
+        assert!(unwrapped[0] < unwrapped[1] && unwrapped[1] < unwrapped[2]);
+    }
+
+    #[test]
+    fn exact_ties_use_selection_order() {
+        let points = [
+            point("Vertex", 42.0, false),
+            point("Ascendant", 42.0, false),
+            point("Moon", 42.0, false),
+        ];
+        let references = points.iter().collect::<Vec<_>>();
+        let layout = layout_point_labels(&references, transit_geometry());
+        assert!(
+            layout[0].display_longitude < layout[1].display_longitude
+                && layout[1].display_longitude < layout[2].display_longitude
+        );
+    }
+}

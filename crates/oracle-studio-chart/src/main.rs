@@ -99,7 +99,6 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 &scene,
                 &RenderOptions {
                     orientation: orientation.into(),
-                    title: format!("Transit biwheel at {}", scene.timestamp),
                 },
             );
             write_private_atomic(&output, svg.as_bytes(), overwrite)?;

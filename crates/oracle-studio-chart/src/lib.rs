@@ -43,13 +43,7 @@ pub fn render_player_html(
         .expect("validated timeline timestamp")
         .with_timezone(&chrono::Utc);
     let first_scene = timeline.scene_at(first_time);
-    let svg = render_biwheel_svg(
-        &first_scene,
-        &RenderOptions {
-            orientation,
-            title: title.to_owned(),
-        },
-    );
+    let svg = render_biwheel_svg(&first_scene, &RenderOptions { orientation });
     let data = serde_json::to_string(&PlayerData {
         schema_version: 1,
         orientation,

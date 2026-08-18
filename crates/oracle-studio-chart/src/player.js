@@ -16,10 +16,19 @@
   const frameTimes = frames.map(frame => Date.parse(frame.timestamp))
   const natalById = new Map(timeline.natal.points.map(point => [point.id, point]))
   const SVG_NS = 'http://www.w3.org/2000/svg'
-  const CENTER = 360
-  const TRANSIT_RADIUS = 302
-  const ASPECT_RADIUS = 142
-  const TICK_RADIUS = 289
+  const SIGNS = ['♈', '♉', '♊', '♋', '♌', '♍', '♎', '♏', '♐', '♑', '♒', '♓']
+  const PATH_GLYPHS = new Set(['Sun', 'Moon', 'Mercury', 'Venus', 'Mars', 'Jupiter', 'Saturn', 'Uranus', 'Neptune', 'Pluto', 'Chiron', 'MeanNode', 'TrueNode', 'MeanSouthNode', 'TrueSouthNode'])
+  const geometry = {
+    center: Number(svg.dataset.center),
+    aspectRadius: Number(svg.dataset.aspectRadius),
+    transit: {
+      innerRadius: Number(svg.dataset.transitInnerRadius),
+      signRadius: Number(svg.dataset.transitSignRadius),
+      positionRadius: Number(svg.dataset.transitPositionRadius),
+      glyphRadius: Number(svg.dataset.transitGlyphRadius)
+    },
+    labelPadding: Number(svg.dataset.labelPadding)
+  }
   const MAX_INTERPOLATION_MS = 24 * 60 * 60 * 1000
   let currentMs = firstMs
   let direction = 1
@@ -44,7 +53,7 @@
 
   function polar(longitude, radius) {
     const radians = (longitude - 90) * Math.PI / 180
-    return [CENTER + radius * Math.cos(radians), CENTER + radius * Math.sin(radians)]
+    return [geometry.center + radius * Math.cos(radians), geometry.center + radius * Math.sin(radians)]
   }
 
   function directionFor(speed) {
@@ -93,19 +102,36 @@
     return { timestamp: frames[frames.length - 1].timestamp, points: frames[frames.length - 1].points, aspects: frames[frames.length - 1].aspects }
   }
 
-  // The largest empty arc is the cut, which keeps a 359°/0° cluster intact.
-  // Repeated pair spreading mirrors the selected AstroChart collision behavior
-  // while remaining deterministic for every animation sample.
-  function resolveCollisions(points) {
-    if (points.length < 2) return points.map(point => point.longitude_degrees)
-    const minimumGap = 2 * Math.asin(21 / (2 * TRANSIT_RADIUS)) * 180 / Math.PI
+  function tokenWidths(point, precision) {
+    const position = precision === 'arcminute' ? 40 : 24
+    let glyph
+    if (PATH_GLYPHS.has(point.id)) glyph = point.retrograde ? 28 : 18
+    else glyph = point.retrograde ? 34 : 24
+    return [18, position, glyph]
+  }
+
+  function requiredGap(left, right, lane, precision) {
+    const leftWidths = tokenWidths(left, precision)
+    const rightWidths = tokenWidths(right, precision)
+    const radii = [lane.signRadius, lane.positionRadius, lane.glyphRadius]
+    return Math.max(...radii.map((radius, index) => {
+      const distance = (leftWidths[index] + rightWidths[index]) / 2 + geometry.labelPadding
+      return 2 * Math.asin(Math.max(0, Math.min(1, distance / (2 * radius)))) * 180 / Math.PI
+    }))
+  }
+
+  // Match Rust's wrap-aware adaptive layout: isolated labels keep arcminutes;
+  // collision clusters switch to degrees before centered constrained spreading.
+  function layoutLabels(points, lane) {
+    if (points.length === 0) return []
+    if (points.length === 1) return [{ displayLongitude: ((points[0].longitude_degrees % 360) + 360) % 360, precision: 'arcminute' }]
     const sorted = points.map((point, index) => ({ index, angle: (point.longitude_degrees + 360) % 360 })).sort((left, right) => left.angle - right.angle || left.index - right.index)
     let cutAfter = 0
     let largestGap = -1
     sorted.forEach((point, index) => {
       const next = sorted[(index + 1) % sorted.length]
       const gap = (next.angle - point.angle + 360) % 360
-      if (gap > largestGap) { largestGap = gap; cutAfter = index }
+      if (gap >= largestGap) { largestGap = gap; cutAfter = index }
     })
     const unwrapped = []
     for (let offset = 0; offset < sorted.length; offset += 1) {
@@ -114,20 +140,39 @@
       while (unwrapped.length && angle < unwrapped[unwrapped.length - 1].angle) angle += 360
       unwrapped.push({ ...entry, angle })
     }
-    const displayed = unwrapped.map(entry => entry.angle)
-    for (let pass = 0; pass < displayed.length; pass += 1) {
-      for (let index = 1; index < displayed.length; index += 1) {
-        const gap = displayed[index] - displayed[index - 1]
-        if (gap < minimumGap) {
-          const adjustment = (minimumGap - gap) / 2
-          displayed[index - 1] -= adjustment
-          displayed[index] += adjustment
+    const result = points.map(point => ({ displayLongitude: ((point.longitude_degrees % 360) + 360) % 360, precision: 'arcminute' }))
+    let clusterStart = 0
+    for (let index = 1; index <= unwrapped.length; index += 1) {
+      const continues = index < unwrapped.length && unwrapped[index].angle - unwrapped[index - 1].angle < requiredGap(points[unwrapped[index - 1].index], points[unwrapped[index].index], lane, 'arcminute')
+      if (continues) continue
+      if (index - clusterStart > 1) {
+        const cluster = unwrapped.slice(clusterStart, index)
+        const offsets = new Array(cluster.length).fill(0)
+        for (let offset = 1; offset < cluster.length; offset += 1) {
+          offsets[offset] = offsets[offset - 1] + requiredGap(points[cluster[offset - 1].index], points[cluster[offset].index], lane, 'degree')
         }
+        const mean = cluster.reduce((sum, entry, offset) => sum + entry.angle - offsets[offset], 0) / cluster.length
+        cluster.forEach((entry, offset) => {
+          result[entry.index] = { displayLongitude: ((mean + offsets[offset]) % 360 + 360) % 360, precision: 'degree' }
+        })
       }
+      clusterStart = index
     }
-    const result = new Array(points.length)
-    unwrapped.forEach((entry, index) => { result[entry.index] = (displayed[index] + 360) % 360 })
     return result
+  }
+
+  function roundPosition(longitude, precision) {
+    if (precision === 'arcminute') {
+      const total = ((Math.round((((longitude % 360) + 360) % 360) * 60) % 21600) + 21600) % 21600
+      const withinSign = total % 1800
+      return { signIndex: Math.floor(total / 1800), degrees: Math.floor(withinSign / 60), minutes: withinSign % 60 }
+    }
+    const total = ((Math.round(((longitude % 360) + 360) % 360) % 360) + 360) % 360
+    return { signIndex: Math.floor(total / 30), degrees: total % 30, minutes: null }
+  }
+
+  function pad2(value) {
+    return String(value).padStart(2, '0')
   }
 
   function setLine(line, start, end) {
@@ -138,15 +183,27 @@
   }
 
   function updateTransit(points) {
-    const displayed = resolveCollisions(points)
+    const layouts = layoutLabels(points, geometry.transit)
     points.forEach((point, index) => {
       const group = document.getElementById(`transit-point-${slug(point.id)}`)
       const actual = visualLongitude(point.longitude_degrees)
-      const visual = visualLongitude(displayed[index])
-      const actualAtGlyph = polar(actual, TRANSIT_RADIUS)
-      const glyph = polar(visual, TRANSIT_RADIUS)
-      setLine(group.querySelector('[data-role="leader"]'), actualAtGlyph, glyph)
-      setLine(group.querySelector('[data-role="tick"]'), polar(actual, TICK_RADIUS - 4), polar(actual, TICK_RADIUS + 4))
+      const layout = layouts[index]
+      const visual = visualLongitude(layout.displayLongitude)
+      const sign = polar(visual, geometry.transit.signRadius)
+      const position = polar(visual, geometry.transit.positionRadius)
+      const glyph = polar(visual, geometry.transit.glyphRadius)
+      setLine(group.querySelector('[data-role="leader"]'), polar(actual, geometry.transit.innerRadius + 4), polar(visual, geometry.transit.signRadius - 9))
+      setLine(group.querySelector('[data-role="tick"]'), polar(actual, geometry.transit.innerRadius - 4), polar(actual, geometry.transit.innerRadius + 4))
+      const rounded = roundPosition(point.longitude_degrees, layout.precision)
+      const signElement = group.querySelector('[data-role="sign"]')
+      signElement.setAttribute('x', sign[0].toFixed(3))
+      signElement.setAttribute('y', sign[1].toFixed(3))
+      signElement.setAttribute('class', `point-sign point-sign--${rounded.signIndex % 4}`)
+      signElement.textContent = SIGNS[rounded.signIndex]
+      const positionElement = group.querySelector('[data-role="position"]')
+      positionElement.setAttribute('x', position[0].toFixed(3))
+      positionElement.setAttribute('y', position[1].toFixed(3))
+      positionElement.textContent = rounded.minutes === null ? `${pad2(rounded.degrees)}°` : `${pad2(rounded.degrees)}°${pad2(rounded.minutes)}′`
       const glyphElement = group.querySelector('[data-role="glyph"]')
       if (glyphElement.tagName.toLowerCase() === 'g') glyphElement.setAttribute('transform', `translate(${glyph[0].toFixed(3)} ${glyph[1].toFixed(3)})`)
       else { glyphElement.setAttribute('x', glyph[0].toFixed(3)); glyphElement.setAttribute('y', glyph[1].toFixed(3)) }
@@ -164,6 +221,8 @@
         marker.classList.toggle('is-hidden', !point.retrograde)
       }
       group.dataset.longitude = point.longitude_degrees.toFixed(12)
+      group.dataset.displayLongitude = layout.displayLongitude.toFixed(12)
+      group.dataset.precision = layout.precision
       group.querySelector('title').textContent = `Transit ${point.id} at ${point.longitude_degrees.toFixed(6)}°, speed ${point.longitude_speed_degrees_per_day.toFixed(6)}° per day${point.retrograde ? ', retrograde' : ''}`
     })
   }
@@ -176,18 +235,36 @@
       const natal = natalById.get(aspect.natal_point_id)
       const transit = transitById.get(aspect.transit_point_id)
       if (!natal || !transit) return
-      const line = document.createElementNS(SVG_NS, 'line')
-      line.setAttribute('id', aspect.id)
-      line.setAttribute('class', `aspect aspect--${slug(aspect.kind)}`)
-      line.dataset.natalId = aspect.natal_point_id
-      line.dataset.transitId = aspect.transit_point_id
-      line.dataset.kind = slug(aspect.kind)
-      setLine(line, polar(visualLongitude(natal.longitude_degrees), ASPECT_RADIUS), polar(visualLongitude(transit.longitude_degrees), ASPECT_RADIUS))
+      const group = document.createElementNS(SVG_NS, 'g')
+      group.setAttribute('id', aspect.id)
+      group.setAttribute('class', `aspect aspect--${slug(aspect.kind)}`)
+      group.dataset.natalId = aspect.natal_point_id
+      group.dataset.transitId = aspect.transit_point_id
+      group.dataset.kind = slug(aspect.kind)
       const title = document.createElementNS(SVG_NS, 'title')
       title.textContent = `${aspect.natal_point_id} ${aspect.kind} ${aspect.transit_point_id} (orb ${aspect.orb_degrees.toFixed(6)}°, phase ${aspect.phase || 'not supplied'})`
-      line.appendChild(title)
-      layer.appendChild(line)
+      group.appendChild(title)
+      const start = polar(visualLongitude(natal.longitude_degrees), geometry.aspectRadius)
+      const end = polar(visualLongitude(transit.longitude_degrees), geometry.aspectRadius)
+      const line = document.createElementNS(SVG_NS, 'line')
+      line.setAttribute('id', `${aspect.id}--line`)
+      line.setAttribute('data-role', 'aspect-line')
+      setLine(line, start, end)
+      group.appendChild(line)
+      const glyph = document.createElementNS(SVG_NS, 'text')
+      glyph.setAttribute('id', `${aspect.id}--glyph`)
+      glyph.setAttribute('data-role', 'aspect-glyph')
+      glyph.setAttribute('class', 'aspect-glyph')
+      glyph.setAttribute('x', ((start[0] + end[0]) / 2).toFixed(3))
+      glyph.setAttribute('y', ((start[1] + end[1]) / 2).toFixed(3))
+      glyph.textContent = aspectGlyph(aspect.kind)
+      group.appendChild(glyph)
+      layer.appendChild(group)
     })
+  }
+
+  function aspectGlyph(kind) {
+    return { Conjunction: '☌', Sextile: '⚹', Square: '□', Trine: '△', Opposition: '☍' }[kind] || '·'
   }
 
   function render(milliseconds) {
@@ -237,7 +314,10 @@
   forward.addEventListener('click', () => setDirection(1))
   document.getElementById('previous-frame').addEventListener('click', () => stepExact(-1))
   document.getElementById('next-frame').addEventListener('click', () => stepExact(1))
-  document.getElementById('toggle-natal').addEventListener('change', event => document.getElementById('natal-layer').classList.toggle('is-hidden', !event.target.checked))
+  document.getElementById('toggle-natal').addEventListener('change', event => {
+    document.getElementById('natal-structure-layer').classList.toggle('is-hidden', !event.target.checked)
+    document.getElementById('natal-layer').classList.toggle('is-hidden', !event.target.checked)
+  })
   document.getElementById('toggle-transit').addEventListener('change', event => document.getElementById('transit-layer').classList.toggle('is-hidden', !event.target.checked))
   document.getElementById('toggle-aspects').addEventListener('change', event => document.getElementById('aspect-layer').classList.toggle('is-hidden', !event.target.checked))
 

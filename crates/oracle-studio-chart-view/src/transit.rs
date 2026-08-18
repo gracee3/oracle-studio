@@ -1,7 +1,7 @@
 use astraeus_comparison::{
     ChartLayerArtifact, ComparisonArtifact, ComparisonKind, ComparisonMotionPolicy,
 };
-use astraeus_core::{ChartAngle, chart_point_positions};
+use astraeus_core::{ChartAngle, ChartPointSelection, chart_point_positions};
 use chrono::{DateTime, Duration, Utc};
 use serde::Serialize;
 use thiserror::Error;
@@ -98,25 +98,20 @@ impl ChartScene {
             .map_err(|error| TransitTimelineError::InvalidPointData(error.to_string()))?;
         let transit_points = chart_point_positions(transit_calculation.result())
             .map_err(|error| TransitTimelineError::InvalidPointData(error.to_string()))?;
+        let specification = comparison.specification();
         let houses = natal_calculation.result().houses();
 
         Ok(Self {
             timestamp,
             natal: ChartRing {
-                points: natal_points
-                    .into_iter()
-                    .map(|(id, position)| point(format!("{id:?}"), position))
-                    .collect(),
+                points: selected_points(specification.first_points(), &natal_points)?,
                 houses: houses.cusps_degrees().to_vec(),
                 ascendant_degrees: houses
                     .angles()
                     .get(ChartAngle::Ascendant)
                     .longitude_degrees(),
             },
-            transit: transit_points
-                .into_iter()
-                .map(|(id, position)| point(format!("{id:?}"), position))
-                .collect(),
+            transit: selected_points(specification.second_points(), &transit_points)?,
             aspects: comparison
                 .aspects()
                 .iter()
@@ -142,6 +137,30 @@ impl ChartScene {
                 .collect(),
         })
     }
+}
+
+fn selected_points(
+    selection: &ChartPointSelection,
+    available: &std::collections::BTreeMap<
+        astraeus_core::ChartPointId,
+        astraeus_core::AngularPosition,
+    >,
+) -> Result<Vec<ChartPoint>, TransitTimelineError> {
+    selection
+        .as_slice()
+        .iter()
+        .map(|id| {
+            available
+                .get(id)
+                .copied()
+                .map(|position| point(format!("{id:?}"), position))
+                .ok_or_else(|| {
+                    TransitTimelineError::InvalidPointData(format!(
+                        "selected point {id:?} is absent from its validated chart"
+                    ))
+                })
+        })
+        .collect()
 }
 
 impl TransitTimeline {

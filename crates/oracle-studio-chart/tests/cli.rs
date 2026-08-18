@@ -100,7 +100,10 @@ fn svg_cli_is_private_atomic_and_requires_explicit_overwrite() {
     );
     let replacement = fs::read_to_string(&output).unwrap();
     assert_ne!(replacement, original);
-    assert!(replacement.contains("2026-01-01T12:00:00+00:00"));
+    assert!(!replacement.contains("2026-01-01T12:00:00+00:00"));
+    assert!(replacement.contains(
+        "id=\"transit-point-sun\" class=\"chart-point chart-point--transit\" data-point-id=\"Sun\" data-longitude=\"0.500000000000\""
+    ));
     assert!(fs::read_dir(&directory.0).unwrap().all(|entry| {
         !entry
             .unwrap()
@@ -143,6 +146,7 @@ fn timeline_cli_sorts_frames_embeds_only_render_data_and_escapes_titles() {
     assert!(!html.contains("<link"));
     assert!(!html.contains("fetch("));
     assert!(!html.contains("XMLHttpRequest"));
+    assert!(!html.contains("<table"));
     assert!(html.contains("Content-Security-Policy"));
     assert!(html.contains("id=\"play-pause\""));
     assert!(html.contains("id=\"reverse\""));
@@ -155,6 +159,12 @@ fn timeline_cli_sorts_frames_embeds_only_render_data_and_escapes_titles() {
     assert!(html.contains("id=\"toggle-transit\""));
     assert!(html.contains("id=\"toggle-aspects\""));
     assert!(html.contains("aspects: frames[index].aspects"));
+    assert!(html.contains("Number(svg.dataset.transitInnerRadius)"));
+    assert!(html.contains("function layoutLabels(points, lane)"));
+    assert!(html.contains("precision: 'degree'"));
+    assert!(html.contains("data-role=\"position\""));
+    assert!(html.contains("data-role=\"aspect-glyph\""));
+    assert!(html.contains("document.getElementById('natal-structure-layer')"));
     assert!(html.contains("AGPL-3.0-or-later"));
     assert!(html.contains("contains derived chart positions"));
     #[cfg(unix)]
