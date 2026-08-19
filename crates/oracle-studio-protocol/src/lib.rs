@@ -316,7 +316,34 @@ pub struct CalculateChartRequest {
     pub chart_definition_id: String,
     pub saved_location_id: String,
     pub ambiguous_time_choice: Option<AmbiguousTimeChoiceInput>,
-    pub calculated_at: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResolveChartTimeRequest {
+    pub protocol_version: u16,
+    pub chart_definition_id: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResolvedTimeSummary {
+    pub abbreviation: String,
+    pub utc_offset_display: String,
+    pub utc_instant: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum LocalTimeResolutionSummary {
+    Unique {
+        value: ResolvedTimeSummary,
+    },
+    Ambiguous {
+        earlier: ResolvedTimeSummary,
+        later: ResolvedTimeSummary,
+    },
+    Nonexistent,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -455,6 +482,7 @@ pub struct PersonSummary {
     pub id: String,
     pub display_name: String,
     pub kind: String,
+    pub notes: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -462,30 +490,56 @@ pub struct PersonSummary {
 pub struct LocationSummary {
     pub id: String,
     pub label: String,
+    pub administrative_names: Vec<String>,
     pub country_code: String,
     pub time_zone: String,
     pub latitude_degrees: f64,
     pub longitude_degrees: f64,
+    pub elevation_meters: Option<f64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct ChartCalculationSummary {
+    pub id: String,
+    pub abbreviation: String,
+    pub utc_offset_display: String,
+    pub utc_instant: String,
+    pub location_label: String,
+    pub calculated_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ChartSummary {
     pub id: String,
     pub label: String,
-    pub role: String,
+    pub role: ChartRoleInput,
     pub person_id: Option<String>,
+    pub local_date: String,
+    pub local_time: String,
+    pub time_zone: String,
+    pub zodiac: ZodiacInput,
+    pub ayanamsa: Option<AyanamsaInput>,
+    pub house_system: HouseSystemInput,
+    pub ordered_objects: Vec<CelestialObjectInput>,
+    pub ordered_points: Vec<ChartPointInput>,
     pub default_natal: bool,
     pub current_calculation_id: Option<String>,
+    pub calculation_history: Vec<ChartCalculationSummary>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ComparisonSummary {
     pub id: String,
     pub label: String,
     pub inner_chart_id: String,
     pub outer_chart_id: String,
+    pub inner_points: Vec<ChartPointInput>,
+    pub outer_points: Vec<ChartPointInput>,
+    pub aspects: Vec<AspectDefinitionInput>,
+    pub orientation: WheelOrientationInput,
     pub current_comparison_artifact_id: Option<String>,
 }
 
@@ -494,6 +548,77 @@ pub struct ComparisonSummary {
 pub struct WorkspaceSummary {
     pub active_person_id: Option<String>,
     pub active_comparison_id: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BiwheelPoint {
+    pub id: String,
+    pub longitude_degrees: f64,
+    pub longitude_speed_degrees_per_day: f64,
+    pub retrograde: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BiwheelAspect {
+    pub id: String,
+    pub natal_point_id: String,
+    pub transit_point_id: String,
+    pub kind: String,
+    pub orb_degrees: f64,
+    pub phase: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BiwheelRing {
+    pub timestamp: String,
+    pub zodiac: String,
+    pub house_system: String,
+    pub points: Vec<BiwheelPoint>,
+    pub houses: Vec<f64>,
+    pub ascendant_degrees: f64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BiwheelScene {
+    pub timestamp: String,
+    pub natal: BiwheelRing,
+    pub transit_zodiac: String,
+    pub transit_house_system: String,
+    pub transit: Vec<BiwheelPoint>,
+    pub aspects: Vec<BiwheelAspect>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChartInformation {
+    pub chart_label: String,
+    pub person_label: Option<String>,
+    pub role: ChartRoleInput,
+    pub local_date: String,
+    pub local_time: String,
+    pub abbreviation: String,
+    pub utc_offset_display: String,
+    pub utc_instant: String,
+    pub location_label: String,
+    pub administrative_names: Vec<String>,
+    pub country_code: String,
+    pub zodiac: String,
+    pub house_system: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspacePresentation {
+    pub comparison_id: String,
+    pub comparison_label: String,
+    pub inner: ChartInformation,
+    pub outer: ChartInformation,
+    pub orientation: WheelOrientationInput,
+    pub scene: BiwheelScene,
 }
 
 #[cfg(test)]
@@ -512,5 +637,20 @@ mod tests {
     fn requests_reject_unknown_fields() {
         let input = r#"{"protocol_version":1,"unexpected":true}"#;
         assert!(serde_json::from_str::<ProtocolRequest>(input).is_err());
+    }
+
+    #[test]
+    fn chart_time_requests_and_results_remain_strict() {
+        let request = r#"{"protocol_version":1,"chart_definition_id":"chart","extra":true}"#;
+        assert!(serde_json::from_str::<ResolveChartTimeRequest>(request).is_err());
+
+        let ambiguous = r#"{"kind":"ambiguous","earlier":{"abbreviation":"EDT","utc_offset_display":"UTC-04:00","utc_instant":"2026-11-01T05:30:00Z"},"later":{"abbreviation":"EST","utc_offset_display":"UTC-05:00","utc_instant":"2026-11-01T06:30:00Z"}}"#;
+        let resolution: LocalTimeResolutionSummary = serde_json::from_str(ambiguous).unwrap();
+        assert!(matches!(
+            resolution,
+            LocalTimeResolutionSummary::Ambiguous { earlier, later }
+                if earlier.utc_offset_display == "UTC-04:00"
+                    && later.utc_offset_display == "UTC-05:00"
+        ));
     }
 }

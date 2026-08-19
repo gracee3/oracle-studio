@@ -75,8 +75,24 @@ The native protocol exposes schema-v3 list, save, calculate, and workspace
 operations plus catalog status, explicit install, and local-only search. The
 Locations route includes the installer, catalog search, encrypted snapshot
 save, manual fallback, attribution, and saved-location list. Other foundation
-views remain explicit empty states until the chart-first form and renderer
-integration land.
+views implement the chart-first workflow:
+
+- people and person detail expose linked definitions and immutable history;
+- the chart editor persists local civil input and calculation defaults, then
+  shows a unique instant, both ambiguous fall-back choices, or an unshifted
+  nonexistent-time rejection before calculation;
+- the comparison builder stores ordered inner/outer selections, editable
+  aspect orbs, and wheel orientation; and
+- the active workspace displays immutable chart-information headers above a
+  deterministic natal/transit biwheel and offers static SVG export.
+
+The workspace presentation response is deliberately narrower than the vault.
+It contains the two immutable input headers and only the selected positions,
+natal cusps, and validated Astraeus inter-chart aspects required by the Rust
+renderer. The decrypted document, canonical artifacts, and password material
+never enter the WASM process. The UI converts that DTO into the same
+`ChartScene` consumed by the standalone exporter, so collision, orientation,
+glyph, precision, and lane behavior have one implementation.
 
 ## Build and run
 

@@ -72,6 +72,8 @@ pub struct TransitTimeline {
 
 #[derive(Debug, Error)]
 pub enum TransitTimelineError {
+    #[error("invalid Astraeus comparison artifact: {0}")]
+    InvalidComparisonArtifact(String),
     #[error("at least one comparison artifact is required")]
     EmptyTimeline,
     #[error("comparison kind must be transit_to_natal")]
@@ -97,6 +99,13 @@ pub enum TransitTimelineError {
 }
 
 impl ChartScene {
+    /// Validate canonical Astraeus comparison JSON and project its render-only scene.
+    pub fn from_comparison_json(json: &str) -> Result<Self, TransitTimelineError> {
+        let comparison = ComparisonArtifact::from_json(json)
+            .map_err(|error| TransitTimelineError::InvalidComparisonArtifact(error.to_string()))?;
+        Self::from_comparison(&comparison)
+    }
+
     pub fn from_comparison(comparison: &ComparisonArtifact) -> Result<Self, TransitTimelineError> {
         validate_policy(comparison)?;
         let (natal, transit) = physical_layers(comparison)?;

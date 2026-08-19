@@ -13,6 +13,7 @@ clap.workspace = true
 chrono.workspace = true
 getrandom.workspace = true
 oracle-studio-app = { version = "0.1.0", path = "../oracle-studio-app" }
+oracle-studio-chart-view = { version = "0.1.0", path = "../oracle-studio-chart-view" }
 oracle-studio-core = { version = "0.1.0", path = "../oracle-studio-core" }
 oracle-studio-location-catalog = { version = "0.1.0", path = "../oracle-studio-location-catalog" }
 oracle-studio-protocol = { version = "0.1.0", path = "../oracle-studio-protocol" }

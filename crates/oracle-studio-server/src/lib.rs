@@ -18,11 +18,13 @@ use axum::{
 };
 use chrono::{SecondsFormat, Utc};
 use oracle_studio_app::{ChartCalculationRequest, ComparisonCalculationRequest, StudioService};
+use oracle_studio_chart_view::{ChartPoint, ChartScene};
 use oracle_studio_core::{
-    AmbiguousTimeChoice, AspectDefinition, AspectKindId, AyanamsaId, CelestialObjectId,
-    ChartCalculationOptions, ChartDefinition, ChartPointId, ChartRole, ComparisonPreset,
-    HouseSystemId, LocalDateTimeInput, LocationProvenance, PersonKind, PersonProfile,
-    SavedLocation, StableId, VaultDocument, WheelOrientation, WorkspaceState, ZodiacId,
+    AmbiguousTimeChoice, ArtifactKind, AspectDefinition, AspectKindId, AyanamsaId,
+    CelestialObjectId, ChartCalculationOptions, ChartDefinition, ChartPointId, ChartRole,
+    ComparisonPreset, HouseSystemId, LocalDateTimeInput, LocalTimeResolution, LocationProvenance,
+    PersonKind, PersonProfile, SavedLocation, StableId, VaultDocument, WheelOrientation,
+    WorkspaceState, ZodiacId, resolve_local_time,
 };
 use oracle_studio_location_catalog::{
     ADMIN1_CODES_URL, ADMIN2_CODES_URL, ATTRIBUTION, CITIES500_URL, CatalogInstallInput,
@@ -31,13 +33,16 @@ use oracle_studio_location_catalog::{
 };
 use oracle_studio_protocol::{
     AmbiguousTimeChoiceInput, ApiError, ApiErrorCode, ApiResponse, AspectKindInput, AyanamsaInput,
-    CalculateChartRequest, CalculateComparisonRequest, CatalogMatchKind, CatalogPlaceSummary,
-    CatalogStatus, CelestialObjectInput, ChartPointInput, ChartRoleInput, ChartSummary,
-    ComparisonSummary, CreateVaultRequest, HouseSystemInput, InstallCatalogRequest,
-    LocationProvenanceInput, LocationSummary, MutationResult, PROTOCOL_VERSION, PersonKindInput,
-    PersonSummary, ProtocolRequest, SaveChartRequest, SaveComparisonRequest, SaveLocationRequest,
-    SavePersonRequest, SearchCatalogRequest, SessionStatus, SetWorkspaceRequest,
-    UnlockVaultRequest, VaultState, WheelOrientationInput, WorkspaceSummary, ZodiacInput,
+    BiwheelAspect, BiwheelPoint, BiwheelRing, BiwheelScene, CalculateChartRequest,
+    CalculateComparisonRequest, CatalogMatchKind, CatalogPlaceSummary, CatalogStatus,
+    CelestialObjectInput, ChartCalculationSummary, ChartInformation, ChartPointInput,
+    ChartRoleInput, ChartSummary, ComparisonSummary, CreateVaultRequest, HouseSystemInput,
+    InstallCatalogRequest, LocalTimeResolutionSummary, LocationProvenanceInput, LocationSummary,
+    MutationResult, PROTOCOL_VERSION, PersonKindInput, PersonSummary, ProtocolRequest,
+    ResolveChartTimeRequest, ResolvedTimeSummary, SaveChartRequest, SaveComparisonRequest,
+    SaveLocationRequest, SavePersonRequest, SearchCatalogRequest, SessionStatus,
+    SetWorkspaceRequest, UnlockVaultRequest, VaultState, WheelOrientationInput,
+    WorkspacePresentation, WorkspaceSummary, ZodiacInput,
 };
 use oracle_studio_storage::{ExpectedState, FileVault, StorageError, VaultRevision};
 use subtle::ConstantTimeEq;
@@ -196,11 +201,13 @@ pub fn app(state: AppState, distribution: impl AsRef<Path>) -> Router {
         .route("/catalog/search", post(search_catalog))
         .route("/charts/list", post(list_charts))
         .route("/charts/save", post(save_chart))
+        .route("/charts/time-resolution", post(resolve_chart_time))
         .route("/charts/calculate", post(calculate_chart))
         .route("/comparisons/list", post(list_comparisons))
         .route("/comparisons/save", post(save_comparison))
         .route("/comparisons/calculate", post(calculate_comparison))
         .route("/workspace/get", post(get_workspace))
+        .route("/workspace/view", post(get_workspace_presentation))
         .route("/workspace/set", post(set_workspace))
         .route_layer(middleware::from_fn_with_state(state.clone(), authorize_api))
         .with_state(state);
@@ -426,6 +433,7 @@ async fn list_people(
                 PersonKind::ProfessionalClient => "professional_client",
             }
             .to_owned(),
+            notes: person.notes().map(str::to_owned),
         })
         .collect::<Vec<_>>();
     Json(ApiResponse::current(people)).into_response()
@@ -450,10 +458,12 @@ async fn list_locations(
         .map(|location| LocationSummary {
             id: location.id().as_str().to_owned(),
             label: location.label().to_owned(),
+            administrative_names: location.administrative_names().to_vec(),
             country_code: location.country_code().to_owned(),
             time_zone: location.time_zone().to_owned(),
             latitude_degrees: location.latitude_degrees(),
             longitude_degrees: location.longitude_degrees(),
+            elevation_meters: location.elevation_meters(),
         })
         .collect::<Vec<_>>();
     Json(ApiResponse::current(locations)).into_response()
@@ -594,21 +604,7 @@ async fn list_charts(
         .document
         .chart_definitions()
         .iter()
-        .map(|chart| ChartSummary {
-            id: chart.id().as_str().to_owned(),
-            label: chart.label().to_owned(),
-            role: match chart.role() {
-                ChartRole::Natal => "natal",
-                ChartRole::Event => "event",
-                ChartRole::Transit => "transit",
-            }
-            .to_owned(),
-            person_id: chart.person_id().map(|id| id.as_str().to_owned()),
-            default_natal: chart.default_natal(),
-            current_calculation_id: chart
-                .current_calculation_id()
-                .map(|id| id.as_str().to_owned()),
-        })
+        .map(|chart| chart_summary(&current.document, chart))
         .collect::<Vec<_>>();
     Json(ApiResponse::current(charts)).into_response()
 }
@@ -634,6 +630,27 @@ async fn list_comparisons(
             label: comparison.label().to_owned(),
             inner_chart_id: comparison.inner_chart_definition_id().as_str().to_owned(),
             outer_chart_id: comparison.outer_chart_definition_id().as_str().to_owned(),
+            inner_points: comparison
+                .inner_points()
+                .iter()
+                .copied()
+                .map(protocol_point)
+                .collect(),
+            outer_points: comparison
+                .outer_points()
+                .iter()
+                .copied()
+                .map(protocol_point)
+                .collect(),
+            aspects: comparison
+                .aspects()
+                .iter()
+                .map(|aspect| oracle_studio_protocol::AspectDefinitionInput {
+                    kind: protocol_aspect(aspect.kind()),
+                    orb_degrees: aspect.orb_degrees(),
+                })
+                .collect(),
+            orientation: protocol_orientation(comparison.orientation()),
             current_comparison_artifact_id: comparison
                 .current_comparison_artifact_id()
                 .map(|id| id.as_str().to_owned()),
@@ -664,6 +681,24 @@ async fn get_workspace(
             .map(|id| id.as_str().to_owned()),
     }))
     .into_response()
+}
+
+async fn get_workspace_presentation(
+    State(state): State<AppState>,
+    Json(request): Json<ProtocolRequest>,
+) -> Response {
+    if let Err(response) = require_protocol(request.protocol_version) {
+        return response.into_response();
+    }
+    let mut session = state.0.session.lock().await;
+    let current = match active_session(&mut session) {
+        Ok(current) => current,
+        Err(response) => return response.into_response(),
+    };
+    match workspace_presentation(&current.document) {
+        Ok(presentation) => Json(ApiResponse::current(presentation)).into_response(),
+        Err(error) => app_error(error),
+    }
 }
 
 async fn save_person(
@@ -864,6 +899,53 @@ async fn calculate_chart(
     persist_result(current, next, calculation_id.as_str())
 }
 
+async fn resolve_chart_time(
+    State(state): State<AppState>,
+    Json(request): Json<ResolveChartTimeRequest>,
+) -> Response {
+    if let Err(response) = require_protocol(request.protocol_version) {
+        return response.into_response();
+    }
+    let chart_id = match StableId::new("chart_definition.id", request.chart_definition_id) {
+        Ok(id) => id,
+        Err(error) => return app_error(error),
+    };
+    let mut session = state.0.session.lock().await;
+    let current = match active_session(&mut session) {
+        Ok(current) => current,
+        Err(response) => return response.into_response(),
+    };
+    let chart = match current
+        .document
+        .chart_definitions()
+        .iter()
+        .find(|chart| chart.id() == &chart_id)
+    {
+        Some(chart) => chart,
+        None => {
+            return api_error(
+                StatusCode::NOT_FOUND,
+                ApiErrorCode::NotFound,
+                "the chart definition does not exist",
+            );
+        }
+    };
+    let resolution = match resolve_local_time(chart.local_input()) {
+        Ok(LocalTimeResolution::Unique(value)) => LocalTimeResolutionSummary::Unique {
+            value: resolved_time_summary(&value),
+        },
+        Ok(LocalTimeResolution::Ambiguous { earlier, later }) => {
+            LocalTimeResolutionSummary::Ambiguous {
+                earlier: resolved_time_summary(&earlier),
+                later: resolved_time_summary(&later),
+            }
+        }
+        Ok(LocalTimeResolution::Nonexistent) => LocalTimeResolutionSummary::Nonexistent,
+        Err(error) => return app_error(error),
+    };
+    Json(ApiResponse::current(resolution)).into_response()
+}
+
 async fn save_comparison(
     State(state): State<AppState>,
     Json(request): Json<SaveComparisonRequest>,
@@ -997,6 +1079,306 @@ async fn set_workspace(
     persist_result(current, next, "workspace")
 }
 
+fn chart_summary(document: &VaultDocument, chart: &ChartDefinition) -> ChartSummary {
+    ChartSummary {
+        id: chart.id().as_str().to_owned(),
+        label: chart.label().to_owned(),
+        role: protocol_role(chart.role()),
+        person_id: chart.person_id().map(|id| id.as_str().to_owned()),
+        local_date: chart.local_input().local_date().to_owned(),
+        local_time: chart.local_input().local_time().to_owned(),
+        time_zone: chart.local_input().time_zone().to_owned(),
+        zodiac: protocol_zodiac(chart.calculation_options().zodiac()),
+        ayanamsa: chart
+            .calculation_options()
+            .ayanamsa()
+            .map(protocol_ayanamsa),
+        house_system: protocol_house_system(chart.calculation_options().house_system()),
+        ordered_objects: chart
+            .calculation_options()
+            .ordered_objects()
+            .iter()
+            .copied()
+            .map(protocol_object)
+            .collect(),
+        ordered_points: chart
+            .ordered_points()
+            .iter()
+            .copied()
+            .map(protocol_point)
+            .collect(),
+        default_natal: chart.default_natal(),
+        current_calculation_id: chart
+            .current_calculation_id()
+            .map(|id| id.as_str().to_owned()),
+        calculation_history: document
+            .chart_calculations()
+            .iter()
+            .filter(|calculation| calculation.chart_definition_id() == chart.id())
+            .map(|calculation| ChartCalculationSummary {
+                id: calculation.id().as_str().to_owned(),
+                abbreviation: calculation.resolved_time().abbreviation().to_owned(),
+                utc_offset_display: calculation.resolved_time().utc_offset_display(),
+                utc_instant: calculation.resolved_time().utc_instant().to_owned(),
+                location_label: calculation.location_snapshot().label().to_owned(),
+                calculated_at: calculation.calculated_at().to_owned(),
+            })
+            .collect(),
+    }
+}
+
+fn workspace_presentation(
+    document: &VaultDocument,
+) -> Result<Option<WorkspacePresentation>, String> {
+    let Some(comparison_id) = document.workspace_state().active_comparison_preset_id() else {
+        return Ok(None);
+    };
+    let preset = document
+        .comparison_presets()
+        .iter()
+        .find(|preset| preset.id() == comparison_id)
+        .ok_or_else(|| "the active comparison preset is missing".to_owned())?;
+    let Some(artifact_id) = preset.current_comparison_artifact_id() else {
+        return Ok(None);
+    };
+    let artifact = document
+        .artifacts()
+        .iter()
+        .find(|artifact| artifact.id() == artifact_id)
+        .ok_or_else(|| "the active comparison artifact is missing".to_owned())?;
+    if artifact.kind() != ArtifactKind::AstraeusComparison {
+        return Err("the active workspace artifact is not an Astraeus comparison".to_owned());
+    }
+    let scene = ChartScene::from_comparison_json(artifact.canonical_json())
+        .map_err(|error| error.to_string())?;
+    let inner_calculation_id = preset
+        .current_inner_calculation_id()
+        .ok_or_else(|| "the active comparison has no inner calculation".to_owned())?;
+    let outer_calculation_id = preset
+        .current_outer_calculation_id()
+        .ok_or_else(|| "the active comparison has no outer calculation".to_owned())?;
+    let inner = chart_information(
+        document,
+        preset.inner_chart_definition_id(),
+        inner_calculation_id,
+        &scene.natal.zodiac,
+        &scene.natal.house_system,
+    )?;
+    let outer = chart_information(
+        document,
+        preset.outer_chart_definition_id(),
+        outer_calculation_id,
+        &scene.transit_zodiac,
+        &scene.transit_house_system,
+    )?;
+    Ok(Some(WorkspacePresentation {
+        comparison_id: preset.id().as_str().to_owned(),
+        comparison_label: preset.label().to_owned(),
+        inner,
+        outer,
+        orientation: protocol_orientation(preset.orientation()),
+        scene: protocol_scene(scene),
+    }))
+}
+
+fn chart_information(
+    document: &VaultDocument,
+    chart_id: &StableId,
+    calculation_id: &StableId,
+    zodiac: &str,
+    house_system: &str,
+) -> Result<ChartInformation, String> {
+    let chart = document
+        .chart_definitions()
+        .iter()
+        .find(|chart| chart.id() == chart_id)
+        .ok_or_else(|| "a workspace chart definition is missing".to_owned())?;
+    let calculation = document
+        .chart_calculations()
+        .iter()
+        .find(|calculation| calculation.id() == calculation_id)
+        .ok_or_else(|| "a workspace chart calculation is missing".to_owned())?;
+    let person_label = chart.person_id().and_then(|person_id| {
+        document
+            .people()
+            .iter()
+            .find(|person| person.id() == person_id)
+            .map(|person| person.display_name().to_owned())
+    });
+    let local = calculation.local_input_snapshot();
+    let resolved = calculation.resolved_time();
+    let location = calculation.location_snapshot();
+    Ok(ChartInformation {
+        chart_label: chart.label().to_owned(),
+        person_label,
+        role: protocol_role(chart.role()),
+        local_date: local.local_date().to_owned(),
+        local_time: local.local_time().to_owned(),
+        abbreviation: resolved.abbreviation().to_owned(),
+        utc_offset_display: resolved.utc_offset_display(),
+        utc_instant: resolved.utc_instant().to_owned(),
+        location_label: location.label().to_owned(),
+        administrative_names: location.administrative_names().to_vec(),
+        country_code: location.country_code().to_owned(),
+        zodiac: zodiac.to_owned(),
+        house_system: house_system.to_owned(),
+    })
+}
+
+fn protocol_scene(scene: ChartScene) -> BiwheelScene {
+    BiwheelScene {
+        timestamp: scene.timestamp,
+        natal: BiwheelRing {
+            timestamp: scene.natal.timestamp,
+            zodiac: scene.natal.zodiac,
+            house_system: scene.natal.house_system,
+            points: scene
+                .natal
+                .points
+                .into_iter()
+                .map(protocol_biwheel_point)
+                .collect(),
+            houses: scene.natal.houses,
+            ascendant_degrees: scene.natal.ascendant_degrees,
+        },
+        transit_zodiac: scene.transit_zodiac,
+        transit_house_system: scene.transit_house_system,
+        transit: scene
+            .transit
+            .into_iter()
+            .map(protocol_biwheel_point)
+            .collect(),
+        aspects: scene
+            .aspects
+            .into_iter()
+            .map(|aspect| BiwheelAspect {
+                id: aspect.id,
+                natal_point_id: aspect.natal_point_id,
+                transit_point_id: aspect.transit_point_id,
+                kind: aspect.kind,
+                orb_degrees: aspect.orb_degrees,
+                phase: aspect.phase,
+            })
+            .collect(),
+    }
+}
+
+fn protocol_biwheel_point(point: ChartPoint) -> BiwheelPoint {
+    BiwheelPoint {
+        id: point.id,
+        longitude_degrees: point.longitude_degrees,
+        longitude_speed_degrees_per_day: point.longitude_speed_degrees_per_day,
+        retrograde: point.retrograde,
+    }
+}
+
+fn resolved_time_summary(value: &oracle_studio_core::ResolvedLocalTime) -> ResolvedTimeSummary {
+    ResolvedTimeSummary {
+        abbreviation: value.abbreviation().to_owned(),
+        utc_offset_display: value.utc_offset_display(),
+        utc_instant: value.utc_instant().to_owned(),
+    }
+}
+
+const fn protocol_role(value: ChartRole) -> ChartRoleInput {
+    match value {
+        ChartRole::Natal => ChartRoleInput::Natal,
+        ChartRole::Event => ChartRoleInput::Event,
+        ChartRole::Transit => ChartRoleInput::Transit,
+    }
+}
+
+const fn protocol_zodiac(value: ZodiacId) -> ZodiacInput {
+    match value {
+        ZodiacId::Tropical => ZodiacInput::Tropical,
+        ZodiacId::Sidereal => ZodiacInput::Sidereal,
+    }
+}
+
+const fn protocol_ayanamsa(value: AyanamsaId) -> AyanamsaInput {
+    match value {
+        AyanamsaId::FaganBradley => AyanamsaInput::FaganBradley,
+        AyanamsaId::Lahiri => AyanamsaInput::Lahiri,
+        AyanamsaId::DeLuce => AyanamsaInput::DeLuce,
+        AyanamsaId::Raman => AyanamsaInput::Raman,
+        AyanamsaId::Krishnamurti => AyanamsaInput::Krishnamurti,
+        AyanamsaId::Yukteshwar => AyanamsaInput::Yukteshwar,
+        AyanamsaId::JnBhasin => AyanamsaInput::JnBhasin,
+    }
+}
+
+const fn protocol_house_system(value: HouseSystemId) -> HouseSystemInput {
+    match value {
+        HouseSystemId::Placidus => HouseSystemInput::Placidus,
+        HouseSystemId::Koch => HouseSystemInput::Koch,
+        HouseSystemId::Porphyry => HouseSystemInput::Porphyry,
+        HouseSystemId::Regiomontanus => HouseSystemInput::Regiomontanus,
+        HouseSystemId::Campanus => HouseSystemInput::Campanus,
+        HouseSystemId::Equal => HouseSystemInput::Equal,
+        HouseSystemId::WholeSign => HouseSystemInput::WholeSign,
+    }
+}
+
+const fn protocol_object(value: CelestialObjectId) -> CelestialObjectInput {
+    match value {
+        CelestialObjectId::Moon => CelestialObjectInput::Moon,
+        CelestialObjectId::Sun => CelestialObjectInput::Sun,
+        CelestialObjectId::Mercury => CelestialObjectInput::Mercury,
+        CelestialObjectId::Venus => CelestialObjectInput::Venus,
+        CelestialObjectId::Mars => CelestialObjectInput::Mars,
+        CelestialObjectId::Jupiter => CelestialObjectInput::Jupiter,
+        CelestialObjectId::Saturn => CelestialObjectInput::Saturn,
+        CelestialObjectId::Uranus => CelestialObjectInput::Uranus,
+        CelestialObjectId::Neptune => CelestialObjectInput::Neptune,
+        CelestialObjectId::Pluto => CelestialObjectInput::Pluto,
+        CelestialObjectId::MeanNode => CelestialObjectInput::MeanNode,
+        CelestialObjectId::TrueNode => CelestialObjectInput::TrueNode,
+        CelestialObjectId::Chiron => CelestialObjectInput::Chiron,
+    }
+}
+
+const fn protocol_point(value: ChartPointId) -> ChartPointInput {
+    match value {
+        ChartPointId::Moon => ChartPointInput::Moon,
+        ChartPointId::Sun => ChartPointInput::Sun,
+        ChartPointId::Mercury => ChartPointInput::Mercury,
+        ChartPointId::Venus => ChartPointInput::Venus,
+        ChartPointId::Mars => ChartPointInput::Mars,
+        ChartPointId::Jupiter => ChartPointInput::Jupiter,
+        ChartPointId::Saturn => ChartPointInput::Saturn,
+        ChartPointId::Uranus => ChartPointInput::Uranus,
+        ChartPointId::Neptune => ChartPointInput::Neptune,
+        ChartPointId::Pluto => ChartPointInput::Pluto,
+        ChartPointId::MeanNode => ChartPointInput::MeanNode,
+        ChartPointId::TrueNode => ChartPointInput::TrueNode,
+        ChartPointId::Chiron => ChartPointInput::Chiron,
+        ChartPointId::MeanSouthNode => ChartPointInput::MeanSouthNode,
+        ChartPointId::TrueSouthNode => ChartPointInput::TrueSouthNode,
+        ChartPointId::Ascendant => ChartPointInput::Ascendant,
+        ChartPointId::Midheaven => ChartPointInput::Midheaven,
+        ChartPointId::Descendant => ChartPointInput::Descendant,
+        ChartPointId::ImumCoeli => ChartPointInput::ImumCoeli,
+        ChartPointId::Vertex => ChartPointInput::Vertex,
+    }
+}
+
+const fn protocol_aspect(value: AspectKindId) -> AspectKindInput {
+    match value {
+        AspectKindId::Conjunction => AspectKindInput::Conjunction,
+        AspectKindId::Opposition => AspectKindInput::Opposition,
+        AspectKindId::Square => AspectKindInput::Square,
+        AspectKindId::Trine => AspectKindInput::Trine,
+        AspectKindId::Sextile => AspectKindInput::Sextile,
+    }
+}
+
+const fn protocol_orientation(value: WheelOrientation) -> WheelOrientationInput {
+    match value {
+        WheelOrientation::AscendantLeft => WheelOrientationInput::AscendantLeft,
+        WheelOrientation::AriesTop => WheelOrientationInput::AriesTop,
+    }
+}
+
 fn chart_calculation_request(
     request: CalculateChartRequest,
     chart_calculation_id: StableId,
@@ -1010,7 +1392,7 @@ fn chart_calculation_request(
             AmbiguousTimeChoiceInput::Earlier => AmbiguousTimeChoice::Earlier,
             AmbiguousTimeChoiceInput::Later => AmbiguousTimeChoice::Later,
         }),
-        calculated_at: request.calculated_at,
+        calculated_at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
     })
 }
 
@@ -1590,6 +1972,260 @@ mod tests {
         assert_eq!(results.data[0].match_kind, CatalogMatchKind::Exact);
 
         std::fs::remove_dir_all(&test_directory).unwrap();
+    }
+
+    #[tokio::test]
+    async fn encrypted_chart_workflow_presents_exact_selected_biwheel() {
+        let suffix = launch_token().unwrap();
+        let test_directory =
+            std::env::temp_dir().join(format!("oracle-workspace-api-{}", suffix.as_str()));
+        std::fs::create_dir(&test_directory).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&test_directory, std::fs::Permissions::from_mode(0o700))
+                .unwrap();
+        }
+        let vault_path = test_directory.join("workspace.oracle");
+        let file_name = vault_path.file_name().unwrap().to_string_lossy();
+        let lock_path = vault_path.with_file_name(format!(".{file_name}.lock"));
+        let router = test_app(DEFAULT_IDLE_TIMEOUT);
+
+        let requests = [
+            (
+                "/api/v1/vault/create",
+                serde_json::json!({
+                    "protocol_version": 1,
+                    "vault_path": vault_path.to_string_lossy(),
+                    "password": "test-only-password"
+                }),
+            ),
+            (
+                "/api/v1/people/save",
+                serde_json::json!({
+                    "protocol_version": 1,
+                    "id": "fictional_person",
+                    "display_name": "Fictional Person",
+                    "kind": "personal",
+                    "notes": null
+                }),
+            ),
+            (
+                "/api/v1/locations/save",
+                serde_json::json!({
+                    "protocol_version": 1,
+                    "id": "fictional_location",
+                    "label": "Fictional City",
+                    "administrative_names": ["Example State"],
+                    "country_code": "US",
+                    "latitude_degrees": 40.7128,
+                    "longitude_degrees": -74.0060,
+                    "elevation_meters": 10.0,
+                    "time_zone": "America/New_York",
+                    "provenance": {"kind": "manual"}
+                }),
+            ),
+            (
+                "/api/v1/charts/save",
+                serde_json::json!({
+                    "protocol_version": 1,
+                    "id": "fictional_natal",
+                    "label": "Fictional Natal",
+                    "role": "natal",
+                    "person_id": "fictional_person",
+                    "local_date": "2000-01-15",
+                    "local_time": "12:00:00",
+                    "time_zone": "America/New_York",
+                    "zodiac": "tropical",
+                    "ayanamsa": null,
+                    "house_system": "placidus",
+                    "ordered_objects": ["moon", "sun"],
+                    "ordered_points": ["moon", "sun", "ascendant", "midheaven"],
+                    "default_natal": true
+                }),
+            ),
+            (
+                "/api/v1/charts/save",
+                serde_json::json!({
+                    "protocol_version": 1,
+                    "id": "fictional_transit",
+                    "label": "Fictional Transit",
+                    "role": "transit",
+                    "person_id": null,
+                    "local_date": "2026-08-17",
+                    "local_time": "16:20:00",
+                    "time_zone": "America/New_York",
+                    "zodiac": "tropical",
+                    "ayanamsa": null,
+                    "house_system": "placidus",
+                    "ordered_objects": ["moon", "sun"],
+                    "ordered_points": ["moon", "sun", "ascendant", "midheaven"],
+                    "default_natal": false
+                }),
+            ),
+        ];
+        for (path, body) in requests {
+            let response = router
+                .clone()
+                .oneshot(api_request(path, TOKEN, ORIGIN, body.to_string()))
+                .await
+                .unwrap();
+            let status = response.status();
+            let body = to_bytes(response.into_body(), 128 * 1024).await.unwrap();
+            assert_eq!(
+                status,
+                StatusCode::OK,
+                "{path}: {}",
+                String::from_utf8_lossy(&body)
+            );
+        }
+
+        let response = router
+            .clone()
+            .oneshot(api_request(
+                "/api/v1/charts/time-resolution",
+                TOKEN,
+                ORIGIN,
+                r#"{"protocol_version":1,"chart_definition_id":"fictional_transit"}"#,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), 128 * 1024).await.unwrap();
+        let resolved: ApiResponse<LocalTimeResolutionSummary> =
+            serde_json::from_slice(&body).unwrap();
+        assert!(matches!(
+            resolved.data,
+            LocalTimeResolutionSummary::Unique { value }
+                if value.abbreviation == "EDT"
+                    && value.utc_offset_display == "UTC-04:00"
+                    && value.utc_instant == "2026-08-17T20:20:00Z"
+        ));
+
+        for (calculation_id, artifact_id, chart_id) in [
+            (
+                "fictional_natal_calc",
+                "fictional_natal_artifact",
+                "fictional_natal",
+            ),
+            (
+                "fictional_transit_calc",
+                "fictional_transit_artifact",
+                "fictional_transit",
+            ),
+        ] {
+            let body = serde_json::json!({
+                "protocol_version": 1,
+                "chart_calculation_id": calculation_id,
+                "calculation_artifact_id": artifact_id,
+                "chart_definition_id": chart_id,
+                "saved_location_id": "fictional_location",
+                "ambiguous_time_choice": null
+            })
+            .to_string();
+            let response = router
+                .clone()
+                .oneshot(api_request("/api/v1/charts/calculate", TOKEN, ORIGIN, body))
+                .await
+                .unwrap();
+            let status = response.status();
+            let body = to_bytes(response.into_body(), 256 * 1024).await.unwrap();
+            assert_eq!(
+                status,
+                StatusCode::OK,
+                "{chart_id}: {}",
+                String::from_utf8_lossy(&body)
+            );
+        }
+
+        let comparison = serde_json::json!({
+            "protocol_version": 1,
+            "id": "fictional_comparison",
+            "label": "Fictional Natal + Transit",
+            "inner_chart_definition_id": "fictional_natal",
+            "outer_chart_definition_id": "fictional_transit",
+            "inner_points": ["moon", "sun", "ascendant", "midheaven"],
+            "outer_points": ["moon", "sun", "ascendant", "midheaven"],
+            "aspects": [
+                {"kind": "conjunction", "orb_degrees": 8.0},
+                {"kind": "opposition", "orb_degrees": 8.0},
+                {"kind": "square", "orb_degrees": 6.0},
+                {"kind": "trine", "orb_degrees": 6.0},
+                {"kind": "sextile", "orb_degrees": 4.0}
+            ],
+            "orientation": "ascendant_left"
+        })
+        .to_string();
+        let response = router
+            .clone()
+            .oneshot(api_request(
+                "/api/v1/comparisons/save",
+                TOKEN,
+                ORIGIN,
+                comparison,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let response = router
+            .clone()
+            .oneshot(api_request(
+                "/api/v1/comparisons/calculate",
+                TOKEN,
+                ORIGIN,
+                r#"{"protocol_version":1,"comparison_artifact_id":"fictional_comparison_artifact","comparison_preset_id":"fictional_comparison"}"#,
+            ))
+            .await
+            .unwrap();
+        let status = response.status();
+        let body = to_bytes(response.into_body(), 256 * 1024).await.unwrap();
+        assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+
+        let response = router
+            .clone()
+            .oneshot(api_request(
+                "/api/v1/workspace/set",
+                TOKEN,
+                ORIGIN,
+                r#"{"protocol_version":1,"active_person_id":"fictional_person","active_comparison_id":"fictional_comparison"}"#,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let response = router
+            .oneshot(api_request(
+                "/api/v1/workspace/view",
+                TOKEN,
+                ORIGIN,
+                r#"{"protocol_version":1}"#,
+            ))
+            .await
+            .unwrap();
+        let status = response.status();
+        let body = to_bytes(response.into_body(), 512 * 1024).await.unwrap();
+        assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+        let workspace: ApiResponse<Option<WorkspacePresentation>> =
+            serde_json::from_slice(&body).unwrap();
+        let workspace = workspace.data.expect("active presentation");
+        assert_eq!(workspace.inner.chart_label, "Fictional Natal");
+        assert_eq!(
+            workspace.inner.person_label.as_deref(),
+            Some("Fictional Person")
+        );
+        assert_eq!(workspace.inner.abbreviation, "EST");
+        assert_eq!(workspace.inner.utc_offset_display, "UTC-05:00");
+        assert_eq!(workspace.inner.utc_instant, "2000-01-15T17:00:00Z");
+        assert_eq!(workspace.outer.abbreviation, "EDT");
+        assert_eq!(workspace.outer.utc_instant, "2026-08-17T20:20:00Z");
+        assert_eq!(workspace.scene.natal.points.len(), 4);
+        assert_eq!(workspace.scene.transit.len(), 4);
+        assert_eq!(workspace.orientation, WheelOrientationInput::AscendantLeft);
+
+        std::fs::remove_file(&vault_path).unwrap();
+        std::fs::remove_file(&lock_path).unwrap();
+        std::fs::remove_dir(&test_directory).unwrap();
     }
 
     #[test]

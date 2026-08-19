@@ -14,7 +14,9 @@ records.
 **Lifecycle:** Active pre-1.0 application. The CLI, storage contracts, chart
 renderer, Rust/WASM graphical foundation, and schema-v3 chart services are
 implemented. The optional content-addressed GeoNames catalog and manual location
-entry are available; the chart-first forms and workspace presentation are next.
+entry are available. The chart-first UI now covers people, person detail,
+editable chart definitions, explicit local-time resolution, immutable
+calculation history, comparison presets, and the active natal/transit biwheel.
 
 Phase 5C/5D integration checkpoint: validated composition records, encrypted
 atomic persistence, reusable tarot/chart/journal services, validated local
@@ -38,7 +40,8 @@ outside the vault and Git. See the [offline location catalog contract](docs/LOCA
 
 ## CLI
 
-The CLI is the current offline interface. Build and run it from this repository:
+The CLI remains available for offline vault, tarot, journal, and backup work.
+Build and run it from this repository:
 
 ```bash
 cargo build --locked --bin oracle-studio
@@ -98,7 +101,11 @@ cargo run --locked -p oracle-studio-server --bin oracle-studio-host -- \
 
 Open the complete loopback URL printed by the host. It includes a per-launch
 token in the URL fragment; the UI consumes and removes the fragment before
-making authenticated API calls. See [Studio application architecture](docs/STUDIO_ARCHITECTURE.md)
+making authenticated API calls. In the unlocked UI, create a person, save an
+offline or manual location, calculate natal and transit/event charts, and build
+an active comparison in the workspace. Studio shows both chart-information
+headers above the Rust-rendered biwheel and can export the same deterministic,
+self-contained static SVG. See [Studio application architecture](docs/STUDIO_ARCHITECTURE.md)
 for the protocol, platform-service boundary, CSP, and inactivity-lock contract.
 
 ## License
