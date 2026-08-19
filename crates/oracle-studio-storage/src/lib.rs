@@ -21,6 +21,20 @@ impl VaultRevision {
         &self.0
     }
 
+    pub fn parse(value: impl Into<String>) -> Option<Self> {
+        let value = value.into();
+        let digest = value.strip_prefix("sha256:")?;
+        if digest.len() == 64
+            && digest
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+        {
+            Some(Self(value))
+        } else {
+            None
+        }
+    }
+
     fn from_bytes(bytes: &[u8]) -> Self {
         Self(format!("sha256:{:x}", Sha256::digest(bytes)))
     }

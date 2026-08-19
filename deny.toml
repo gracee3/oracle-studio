@@ -1,6 +1,10 @@
 [advisories]
 version = 2
 yanked = "deny"
+ignore = [
+  { id = "RUSTSEC-2024-0436", reason = "Leptos 0.8.20 transitively uses paste; this is an unmaintained-only advisory with no safe upgrade, and no project code invokes paste directly." },
+  { id = "RUSTSEC-2026-0173", reason = "Leptos 0.8.20 macros transitively use proc-macro-error2; this is an unmaintained-only advisory with no safe upgrade, and the crate runs only at build time." },
+]
 
 [licenses]
 version = 2
@@ -9,9 +13,12 @@ allow = [
 	"AGPL-3.0-or-later",
 	"AGPL-3.0-only",
   "Apache-2.0",
-  "BSD-3-Clause",
+	"BSD-3-Clause",
+  "BSL-1.0",
+  "CC0-1.0",
   "MIT",
   "Unicode-3.0",
+  "Zlib",
 ]
 
 [bans]

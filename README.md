@@ -9,13 +9,17 @@ not recalculate astrology or reinterpret tarot domain records.
 
 ## Status
 
-**Lifecycle:** Active pre-1.0 application. The CLI and storage contracts are implemented; interfaces and the future graphical workspace may evolve.
+**Lifecycle:** Active pre-1.0 application. The CLI, storage contracts, chart
+renderer, and first Rust/WASM graphical foundation are implemented; chart data
+entry and workspace services may evolve.
 
 Phase 5C/5D integration checkpoint: validated composition records, encrypted
 atomic persistence, reusable tarot/chart/journal services, validated local
 Sibylla deck-pack indexes, in-memory search, a guided command-line interface,
-and a stateless SVG/HTML transit-biwheel renderer. There is no native graphical
-UI, synchronization, account system, AI layer, or camera recognition yet.
+and a stateless SVG/HTML transit-biwheel renderer. A Leptos CSR shell now runs
+through an authenticated, loopback-only Rust host with vault create/unlock and
+routes for people, locations, charts, and the comparison workspace. There is no
+synchronization, account system, AI layer, or camera recognition.
 
 ## CLI
 
@@ -65,6 +69,22 @@ The player displays artifact-grounded natal/transit dates, zodiac, and house
 system, plus optional caller-supplied chart names, local offsets, and location
 labels. See the [renderer boundary, CLI, animation semantics, and privacy
 notes](docs/CHART_RENDERING.md).
+
+## Rust/WASM Studio
+
+The graphical foundation uses only Rust components compiled to WebAssembly and
+a native Rust host. Build and launch it with:
+
+```bash
+(cd crates/oracle-studio-ui && trunk build --release)
+cargo run --locked -p oracle-studio-server --bin oracle-studio-host -- \
+  --dist crates/oracle-studio-ui/dist
+```
+
+Open the complete loopback URL printed by the host. It includes a per-launch
+token in the URL fragment; the UI consumes and removes the fragment before
+making authenticated API calls. See [Studio application architecture](docs/STUDIO_ARCHITECTURE.md)
+for the protocol, platform-service boundary, CSP, and inactivity-lock contract.
 
 ## License
 

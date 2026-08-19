@@ -2,9 +2,18 @@ use std::{fs, path::PathBuf};
 
 use fs2::FileExt;
 use oracle_studio_core::{ArtifactRecord, PersonKind, PersonProfile, StableId, VaultDocument};
-use oracle_studio_storage::{ExpectedState, FileVault, StorageError};
+use oracle_studio_storage::{ExpectedState, FileVault, StorageError, VaultRevision};
 
 const PASSWORD: &[u8] = b"fictional test password";
+
+#[test]
+fn revision_parser_accepts_only_canonical_sha256_values() {
+    let valid = format!("sha256:{}", "0a".repeat(32));
+    assert_eq!(VaultRevision::parse(&valid).unwrap().as_str(), valid);
+    assert!(VaultRevision::parse("sha256:ABCDEF").is_none());
+    assert!(VaultRevision::parse(format!("sha256:{}", "z0".repeat(32))).is_none());
+    assert!(VaultRevision::parse("md5:0000").is_none());
+}
 
 struct TestDirectory(PathBuf);
 
