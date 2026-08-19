@@ -1,0 +1,30 @@
+[package]
+name = "oracle-studio-server"
+version = "0.1.0"
+description = "Loopback-only native host for the Oracle Studio browser UI"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+axum.workspace = true
+clap.workspace = true
+getrandom.workspace = true
+oracle-studio-core = { version = "0.1.0", path = "../oracle-studio-core" }
+oracle-studio-protocol = { version = "0.1.0", path = "../oracle-studio-protocol" }
+oracle-studio-storage = { version = "0.1.0", path = "../oracle-studio-storage" }
+serde.workspace = true
+subtle.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "sync"] }
+tower-http = { workspace = true, features = ["fs"] }
+zeroize.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+tower = { workspace = true, features = ["util"] }
+
+[[bin]]
+name = "oracle-studio-host"
+path = "src/main.rs"
