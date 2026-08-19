@@ -1,6 +1,7 @@
 use std::{collections::BTreeMap, fmt::Write, str::FromStr};
 
-use serde::Serialize;
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use serde::{Deserialize, Serialize};
 
 use crate::{ChartPoint, ChartScene, transit::stable_slug};
 
@@ -18,11 +19,25 @@ const CUSP_INNER_RADIUS: f64 = OUTER_RADIUS * 0.90;
 const CUSP_LABEL_RADIUS: f64 = OUTER_RADIUS * 0.95;
 const LABEL_PADDING: f64 = 4.0;
 
-const SIGNS: [&str; 12] = [
-    "♈", "♉", "♊", "♋", "♌", "♍", "♎", "♏", "♐", "♑", "♒", "♓",
+const ASTRONOMICON_TTF: &[u8] =
+    include_bytes!("../../../assets/astronomicon-v1.1/Astronomicon.ttf");
+const SIGN_GLYPHS: [&str; 12] = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "\\", "K", "L"];
+const SIGN_NAMES: [&str; 12] = [
+    "Aries",
+    "Taurus",
+    "Gemini",
+    "Cancer",
+    "Leo",
+    "Virgo",
+    "Libra",
+    "Scorpio",
+    "Sagittarius",
+    "Capricorn",
+    "Aquarius",
+    "Pisces",
 ];
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum WheelOrientation {
     #[default]
@@ -110,11 +125,12 @@ pub fn render_biwheel_svg(scene: &ChartScene, options: &RenderOptions) -> String
         options.orientation, scene.natal.ascendant_degrees,
     );
     svg.push_str("<title id=\"chart-title\">Transit biwheel</title><desc id=\"chart-description\">Selected natal and transit points, natal cusps, and engine-authored inter-chart aspects.</desc>");
-    svg.push_str(STYLE_AND_GLYPH_DEFS);
+    render_font_and_style(&mut svg);
     let _ = write!(
         svg,
         "<circle class=\"wheel-background\" cx=\"{CENTER}\" cy=\"{CENTER}\" r=\"{OUTER_RADIUS}\"/>"
     );
+    render_lane_backgrounds(&mut svg);
     render_houses(&mut svg, scene, options.orientation);
     render_aspects(&mut svg, scene, options.orientation);
     render_point_layer(
@@ -145,6 +161,24 @@ pub fn render_biwheel_svg(scene: &ChartScene, options: &RenderOptions) -> String
     svg
 }
 
+fn render_font_and_style(svg: &mut String) {
+    svg.push_str("<defs><style>@font-face{font-family:Astronomicon;src:url(data:font/ttf;base64,");
+    svg.push_str(&BASE64.encode(ASTRONOMICON_TTF));
+    svg.push_str(") format('truetype');font-style:normal;font-weight:400}");
+    svg.push_str(CHART_STYLE);
+    svg.push_str("</style></defs>");
+}
+
+fn render_lane_backgrounds(svg: &mut String) {
+    let lane_width = OUTER_RADIUS * 0.24;
+    let natal_radius = OUTER_RADIUS * 0.54;
+    let transit_radius = OUTER_RADIUS * 0.78;
+    let _ = write!(
+        svg,
+        "<g id=\"lane-backgrounds\" aria-hidden=\"true\"><circle class=\"lane-background lane-background--natal\" cx=\"{CENTER:.3}\" cy=\"{CENTER:.3}\" r=\"{natal_radius:.3}\" stroke-width=\"{lane_width:.3}\"/><circle class=\"lane-background lane-background--transit\" cx=\"{CENTER:.3}\" cy=\"{CENTER:.3}\" r=\"{transit_radius:.3}\" stroke-width=\"{lane_width:.3}\"/></g>"
+    );
+}
+
 fn render_houses(svg: &mut String, scene: &ChartScene, orientation: WheelOrientation) {
     svg.push_str("<g id=\"natal-structure-layer\" class=\"layer layer--natal\" aria-label=\"Natal houses and cusp band\">");
     let _ = write!(
@@ -168,15 +202,21 @@ fn render_houses(svg: &mut String, scene: &ChartScene, orientation: WheelOrienta
         );
         let rounded = round_position(cusp, PositionPrecision::ArcMinute);
         let (label_x, label_y) = polar(visual, CUSP_LABEL_RADIUS);
+        let minutes = rounded
+            .minutes
+            .expect("arcminute precision includes minutes");
         let _ = write!(
             svg,
-            "<text id=\"cusp-label-{}\" class=\"cusp-label\" data-role=\"cusp-label\" data-longitude=\"{cusp:.12}\" x=\"{label_x:.3}\" y=\"{label_y:.3}\">{:02}° {} {:02}′</text>",
+            "<g id=\"cusp-label-{}\" class=\"cusp-label\" data-role=\"cusp-label\" data-longitude=\"{cusp:.12}\" transform=\"translate({label_x:.3} {label_y:.3})\"><title>House {} cusp at {:02}°{:02}′ {}</title><text class=\"cusp-position\" y=\"-6\">{:02}°{:02}′</text><text data-role=\"cusp-sign\" class=\"astronomicon cusp-sign\" y=\"7\"><title>{} sign</title>{}</text></g>",
+            index + 1,
             index + 1,
             rounded.degrees,
-            SIGNS[rounded.sign_index],
-            rounded
-                .minutes
-                .expect("arcminute precision includes minutes")
+            minutes,
+            SIGN_NAMES[rounded.sign_index],
+            rounded.degrees,
+            minutes,
+            SIGN_NAMES[rounded.sign_index],
+            SIGN_GLYPHS[rounded.sign_index]
         );
     }
     svg.push_str("</g>");
@@ -238,11 +278,11 @@ fn render_aspects(svg: &mut String, scene: &ChartScene, orientation: WheelOrient
 
 fn aspect_glyph(kind: &str) -> &'static str {
     match kind {
-        "Conjunction" => "☌",
-        "Sextile" => "⚹",
-        "Square" => "□",
-        "Trine" => "△",
-        "Opposition" => "☍",
+        "Conjunction" => "!",
+        "Sextile" => "%",
+        "Square" => "#",
+        "Trine" => "$",
+        "Opposition" => "\"",
         _ => "·",
     }
 }
@@ -295,6 +335,7 @@ fn render_point(
     let (leader_x, leader_y) = polar(actual_visual, geometry.inner_radius + 4.0);
     let (leader_end_x, leader_end_y) = polar(display_visual, geometry.position_radius - 9.0);
     let (position_x, position_y) = polar(display_visual, geometry.position_radius);
+    let (sign_x, sign_y) = polar(display_visual, geometry.position_radius + 12.0);
     let (glyph_x, glyph_y) = polar(display_visual, geometry.glyph_radius);
     let rounded = round_position(point.longitude_degrees, layout.precision);
     let position = match rounded.minutes {
@@ -311,7 +352,7 @@ fn render_point(
     ));
     let _ = write!(
         svg,
-        "<g id=\"{layer}-point-{slug}\" class=\"chart-point chart-point--{layer}\" data-point-id=\"{}\" data-longitude=\"{:.12}\" data-display-longitude=\"{:.12}\" data-precision=\"{}\"><title>{label}</title>",
+        "<g id=\"{layer}-point-{slug}\" class=\"chart-point chart-point--{layer} point--{slug}\" data-point-id=\"{}\" data-longitude=\"{:.12}\" data-display-longitude=\"{:.12}\" data-precision=\"{}\"><title>{label}</title>",
         escape_xml(&point.id),
         point.longitude_degrees,
         layout.display_longitude,
@@ -323,29 +364,30 @@ fn render_point(
     );
     let _ = write!(
         svg,
-        "<line id=\"{layer}-tick-{slug}\" data-role=\"tick\" class=\"position-tick\" x1=\"{tick_inner_x:.3}\" y1=\"{tick_inner_y:.3}\" x2=\"{tick_outer_x:.3}\" y2=\"{tick_outer_y:.3}\"/>"
+        "<line id=\"{layer}-tick-line-{slug}\" aria-hidden=\"true\" class=\"position-tick-line\" x1=\"{tick_inner_x:.3}\" y1=\"{tick_inner_y:.3}\" x2=\"{tick_outer_x:.3}\" y2=\"{tick_outer_y:.3}\"/><circle id=\"{layer}-tick-{slug}\" data-role=\"tick\" class=\"position-tick position-tick--{layer}\" cx=\"{:.3}\" cy=\"{:.3}\" r=\"3\"/>",
+        (tick_inner_x + tick_outer_x) / 2.0,
+        (tick_inner_y + tick_outer_y) / 2.0,
     );
     let _ = write!(
         svg,
         "<text id=\"{layer}-position-{slug}\" data-role=\"position\" data-sign-index=\"{}\" class=\"point-position\" x=\"{position_x:.3}\" y=\"{position_y:.3}\">{position}</text>",
         rounded.sign_index
     );
-    if let Some(glyph_id) = glyph_id(&point.id) {
-        let _ = write!(
-            svg,
-            "<g data-role=\"glyph\" class=\"point-glyph\" transform=\"translate({glyph_x:.3} {glyph_y:.3})\"><use href=\"#{glyph_id}\"/></g>"
-        );
-    } else {
-        let fallback = escape_xml(glyph_fallback(&point.id));
-        let _ = write!(
-            svg,
-            "<text data-role=\"glyph\" class=\"point-fallback\" x=\"{glyph_x:.3}\" y=\"{glyph_y:.3}\">{fallback}</text>"
-        );
-    }
+    let _ = write!(
+        svg,
+        "<text data-role=\"sign\" class=\"astronomicon point-sign\" x=\"{sign_x:.3}\" y=\"{sign_y:.3}\"><title>{} sign</title>{}</text>",
+        SIGN_NAMES[rounded.sign_index], SIGN_GLYPHS[rounded.sign_index]
+    );
+    let glyph = point_glyph(&point.id);
+    let _ = write!(
+        svg,
+        "<text data-role=\"glyph\" class=\"astronomicon point-glyph\" x=\"{glyph_x:.3}\" y=\"{glyph_y:.3}\"><title>{}</title>{glyph}</text>",
+        escape_xml(&point.id)
+    );
     if point.retrograde {
         let _ = write!(
             svg,
-            "<text data-role=\"motion\" class=\"motion-marker\" x=\"{:.3}\" y=\"{:.3}\">℞</text>",
+            "<text data-role=\"motion\" class=\"astronomicon motion-marker\" x=\"{:.3}\" y=\"{:.3}\"><title>Retrograde</title>N</text>",
             glyph_x + 9.0,
             glyph_y + 10.0
         );
@@ -357,33 +399,27 @@ fn is_structural_natal_angle(id: &str) -> bool {
     matches!(id, "Ascendant" | "Descendant" | "Midheaven" | "ImumCoeli")
 }
 
-fn glyph_id(id: &str) -> Option<&'static str> {
+fn point_glyph(id: &str) -> &'static str {
     match id {
-        "Sun" => Some("glyph-sun"),
-        "Moon" => Some("glyph-moon"),
-        "Mercury" => Some("glyph-mercury"),
-        "Venus" => Some("glyph-venus"),
-        "Mars" => Some("glyph-mars"),
-        "Jupiter" => Some("glyph-jupiter"),
-        "Saturn" => Some("glyph-saturn"),
-        "Uranus" => Some("glyph-uranus"),
-        "Neptune" => Some("glyph-neptune"),
-        "Pluto" => Some("glyph-pluto"),
-        "Chiron" => Some("glyph-chiron"),
-        "MeanNode" | "TrueNode" => Some("glyph-north-node"),
-        "MeanSouthNode" | "TrueSouthNode" => Some("glyph-south-node"),
-        _ => None,
-    }
-}
-
-fn glyph_fallback(id: &str) -> &str {
-    match id {
-        "Ascendant" => "As",
-        "Midheaven" => "Mc",
-        "Descendant" => "Ds",
-        "ImumCoeli" => "Ic",
-        "Vertex" => "Vx",
-        _ => "•",
+        "Moon" => "R",
+        "Mercury" => "S",
+        "Venus" => "T",
+        "Sun" => "Q",
+        "Mars" => "U",
+        "Jupiter" => "V",
+        "Saturn" => "W",
+        "Uranus" => "X",
+        "Neptune" => "Y",
+        "Pluto" => "Z",
+        "Chiron" => "q",
+        "MeanNode" | "TrueNode" => "g",
+        "MeanSouthNode" | "TrueSouthNode" => "i",
+        "Ascendant" => "c",
+        "Midheaven" => "d",
+        "Descendant" => "f",
+        "ImumCoeli" => "e",
+        "Vertex" => "k",
+        _ => unreachable!("validated Astraeus chart-point identifier {id:?}"),
     }
 }
 
@@ -548,13 +584,7 @@ fn token_widths(point: &ChartPoint, precision: PositionPrecision) -> [f64; 2] {
         PositionPrecision::ArcMinute => 40.0,
         PositionPrecision::Degree => 24.0,
     };
-    let glyph = if glyph_id(&point.id).is_some() {
-        if point.retrograde { 28.0 } else { 18.0 }
-    } else if point.retrograde {
-        34.0
-    } else {
-        24.0
-    };
+    let glyph = if point.retrograde { 28.0 } else { 18.0 };
     [position, glyph]
 }
 
@@ -695,33 +725,17 @@ fn escape_xml(value: &str) -> String {
         .replace('\'', "&apos;")
 }
 
-// Planetary path geometry and the 0° collision-cut idea are adapted from
-// AstroDraw/AstroChart project/src/svg.ts and project/src/utils.ts at commit
-// d8fb56fc7855ec4ea089710dba99f728c9b01918 (MIT). See THIRD_PARTY_NOTICES.md.
-const STYLE_AND_GLYPH_DEFS: &str = r##"<defs>
-<style>
-:root{--wheel-bg:#fffdf8;--ink:#24202d;--muted:#80778b;--natal:#315d86;--transit:#a23e48;--aspect:#806f98;--ring:#c9c0ce;--fire:#b84b3b;--earth:#7d6540;--air:#3f7892;--water:#477861}
-.wheel-background{fill:var(--wheel-bg);stroke:var(--ink);stroke-width:1.5}.ring{fill:none;stroke:var(--ring);stroke-width:1}.ring--aspect-boundary{stroke-dasharray:2 4}.ring--transit-boundary{stroke:var(--transit)}
-.house-cusp,.position-tick,.point-leader{stroke:var(--muted);fill:none}.house-cusp{stroke-width:.8}.house-cusp--axis{stroke:var(--ink);stroke-width:1.8}.position-tick{stroke-width:2}.point-leader{stroke-width:.75;opacity:.75}
-.cusp-label,.point-position,.point-fallback,.motion-marker,.aspect-glyph{font-family:serif;text-anchor:middle;dominant-baseline:middle;fill:var(--ink)}.cusp-label{font-size:10px;fill:var(--natal)}.point-position{font:10px sans-serif}
-.point-glyph{fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}.chart-point--natal{color:var(--natal)}.chart-point--transit{color:var(--transit)}.point-fallback{font:bold 11px sans-serif;fill:currentColor}.motion-marker{font-size:9px;fill:currentColor}
-.aspect{color:var(--aspect);opacity:.78}.aspect line{stroke:currentColor;stroke-width:1}.aspect-glyph{fill:currentColor;stroke:none;font-size:13px;paint-order:stroke;stroke:var(--wheel-bg);stroke-width:3px}.aspect--conjunction{color:#6e6578}.aspect--opposition{color:#9b3b42}.aspect--square{color:#b06535}.aspect--trine{color:#39805e}.aspect--sextile{color:#3a7290}
+const CHART_STYLE: &str = r##"
+:root{--wheel-bg:#10131c;--lane-natal:#202b3d;--lane-transit:#251f35;--ink:#f3f5f7;--muted:#8791a4;--natal:#a9c7f5;--transit:#e4b6ff;--aspect:#b6a6d9;--ring:#536075}
+.wheel-background{fill:var(--wheel-bg);stroke:var(--ink);stroke-width:1.5}.lane-background{fill:none}.lane-background--natal{stroke:var(--lane-natal)}.lane-background--transit{stroke:var(--lane-transit)}
+.ring{fill:none;stroke:var(--ring);stroke-width:1}.ring--aspect-boundary{stroke-dasharray:2 4}.ring--transit-boundary{stroke:var(--transit)}
+.house-cusp,.position-tick-line,.point-leader{stroke:var(--muted);fill:none}.house-cusp{stroke-width:.8}.house-cusp--axis{stroke:var(--ink);stroke-width:1.8}.position-tick-line{stroke-width:.8}.position-tick{stroke:currentColor;stroke-width:1.4}.position-tick--natal{fill:currentColor}.position-tick--transit{fill:var(--wheel-bg)}
+.point-leader{stroke-width:.8;opacity:.88}.chart-point--transit .point-leader{stroke-dasharray:3 3}.chart-point--natal .point-leader{stroke-dasharray:none}
+.astronomicon{font-family:Astronomicon}.cusp-label,.point-position,.point-sign,.point-glyph,.motion-marker,.aspect-glyph{text-anchor:middle;dominant-baseline:middle}.cusp-label{color:var(--natal)}.cusp-position{font:8px system-ui,sans-serif;fill:currentColor}.cusp-sign{font-size:12px;fill:currentColor}.point-position{font:9px system-ui,sans-serif;fill:currentColor}.point-sign{font-size:10px;fill:currentColor}.point-glyph{font-size:22px;fill:currentColor}.motion-marker{font-size:10px;fill:currentColor}
+.chart-point{color:var(--ink)}.point--moon{color:#d9e5ff}.point--sun{color:#ffd166}.point--mercury{color:#72ddf7}.point--venus{color:#ffafcc}.point--mars{color:#ff7b72}.point--jupiter{color:#c7a6ff}.point--saturn{color:#d6c7b0}.point--uranus{color:#80ed99}.point--neptune{color:#70b7e6}.point--pluto{color:#ff9f68}.point--meannode,.point--truenode,.point--meansouthnode,.point--truesouthnode{color:#b8c0ff}.point--chiron{color:#e6ccb2}.point--ascendant,.point--midheaven,.point--descendant,.point--imumcoeli,.point--vertex{color:#f1f3f5}
+.aspect{color:var(--aspect);opacity:.82}.aspect line{stroke:currentColor;stroke-width:1}.aspect-glyph{font-family:Astronomicon;fill:currentColor;stroke:none;font-size:15px;paint-order:stroke;stroke:var(--wheel-bg);stroke-width:3px}.aspect--conjunction{color:#b6a6d9}.aspect--opposition{color:#ff7b72}.aspect--square{color:#ffad66}.aspect--trine{color:#80ed99}.aspect--sextile{color:#72ddf7}
 .is-hidden{display:none}
-</style>
-<g id="glyph-sun"><path d="m-1,-8 -2.18182,.727268 -2.181819,1.454543 -1.454552,2.18182 -.727268,2.181819 0,2.181819 .727268,2.181819 1.454552,2.18182 2.181819,1.454544 2.18182,.727276 2.18181,0 2.18182,-.727276 2.181819,-1.454544 1.454552,-2.18182 .727268,-2.181819 0,-2.181819 -.727268,-2.181819 -1.454552,-2.18182 -2.181819,-1.454543 -2.18182,-.727268 -2.18181,0 m.727267,6.54545 -.727267,.727276 0,.727275 .727267,.727268 .727276,0 .727267,-.727268 0,-.727275 -.727267,-.727276 -.727276,0"/></g>
-<g id="glyph-moon"><path d="m-2,-7 a7.4969283,7.4969283 0 0 1 0,14.327462 7.4969283,7.4969283 0 1 0 0,-14.327462z"/></g>
-<g id="glyph-mercury"><path d="m-2,7 4.26011,0 m-2.13005,-2.98207 0,5.11213 m4.70312,-9.7983a4.70315,4.70315 0 0 1-4.70315,4.70314 4.70315,4.70315 0 0 1-4.70314,-4.70314 4.70315,4.70315 0 0 1 4.70314,-4.70315 4.70315,4.70315 0 0 1 4.70315,4.70315z"/><path d="m4,-9a3.9717855,3.9717855 0 0 1-3.95541,3.59054 3.9717855,3.9717855 0 0 1-3.95185,-3.59445"/></g>
-<g id="glyph-venus"><path d="m2,7 -4.937669,.03973m2.448972,2.364607 0,-5.79014c-3.109546,-.0085-5.624617,-2.534212-5.620187,-5.64208.0044,-3.107706 2.526514,-5.621689 5.635582,-5.621689 3.109068,0 5.631152,2.513983 5.635582,5.621689.0044,3.107868-2.510641,5.633586-5.620187,5.64208"/></g>
-<g id="glyph-mars"><path d="m2,-2c-5.247438,-4.150623-11.6993,3.205518-7.018807,7.886007 4.680494,4.680488 12.036628,-1.771382 7.885999,-7.018816zm0,0 .433597,.433595 3.996566,-4.217419m-3.239802,-.05521 3.295015,0 .110427,3.681507"/></g>
-<g id="glyph-jupiter"><path d="m-5,-2c-.43473,0-1.30422,-.40572-1.30422,-2.02857 0,-1.62285 1.73897,-3.2457 3.47792,-3.2457 1.73897,0 3.47792,1.21715 3.47792,4.05713 0,2.83999-2.1737,7.30283-6.52108,7.30283m12.17269,0-12.60745,0m9.99902,-11.76567 0,15.82279"/></g>
-<g id="glyph-saturn"><path d="m5,10c-.52222,.52221-1.04445,1.04444-1.56666,1.04444-.52222,0-1.56667,-.52223-1.56667,-1.56667 0,-1.04443.52223,-2.08887 1.56667,-3.13332 1.04444,-1.04443 2.08888,-3.13331 2.08888,-5.22219 0,-2.08888-1.04444,-4.17776-3.13332,-4.17776-1.97566,0-3.65555,1.04444-4.69998,3.13333m-2.55515,-5.87499 6.26664,0m-3.71149,-2.48054 0,15.14438"/></g>
-<g id="glyph-uranus"><path d="m-5,-7 0,10.23824m10.23633,-10.32764 0,10.23824m-10.26606,-4.6394 10.23085,0m-5.06415,-5.51532 0,11.94985"/><path d="m2,7.5a1.8384377,1.8384377 0 0 1-1.83844,1.83843 1.8384377,1.8384377 0 0 1-1.83842,-1.83843 1.8384377,1.8384377 0 0 1 1.83842,-1.83844 1.8384377,1.8384377 0 0 1 1.83844,1.83844z"/></g>
-<g id="glyph-neptune"><path d="m3,-5 1.77059,-2.36312 2.31872,1.8045m-14.44264,-.20006 2.34113,-1.77418 1.74085,2.38595m-1.80013,-1.77265c-1.23776,8.40975.82518,9.67121 4.95106,9.67121 4.12589,0 6.18883,-1.26146 4.95107,-9.67121m-7.05334,3.17005 2.03997,-2.12559 2.08565,2.07903m-5.32406,9.91162 6.60142,0m-3.30071,-12.19414 0,15.55803"/></g>
-<g id="glyph-pluto"><path d="m5,-5a5.7676856,5.7676856 0 0 1-2.88385,4.99496 5.7676856,5.7676856 0 0 1-5.76768,0 5.7676856,5.7676856 0 0 1-2.88385,-4.99496m5.76771,13.93858 0,-8.17088m-3.84512,4.32576 7.69024,0"/><path d="m2.7,-5a3.3644834,3.3644834 0 0 1-3.36448,3.36449 3.3644834,3.3644834 0 0 1-3.36448,-3.36449 3.3644834,3.3644834 0 0 1 3.36448,-3.36448 3.3644834,3.3644834 0 0 1 3.36448,3.36448z"/></g>
-<g id="glyph-chiron"><path d="m3,5a3.8764725,3.0675249 0 0 1-3.876473,3.067525 3.8764725,3.0675249 0 0 1-3.876472,-3.067525 3.8764725,3.0675249 0 0 1 3.876472,-3.067525 3.8764725,3.0675249 0 0 1 3.876473,3.067525z"/><path d="m3,-8-3.942997,4.243844 4.110849,3.656151m-4.867569,-9.009468 0,11.727251"/></g>
-<g id="glyph-north-node"><path d="m-2,3-1.3333334,-.6666667-.6666666,0-1.3333334,.6666667-.6666667,1.3333333 0,.6666667.6666667,1.3333333 1.3333334,.6666667.6666666,0 1.3333334,-.6666667.6666666,-1.3333333 0,-.6666667-.6666666,-1.3333333-2,-2.66666665-.6666667,-1.99999995 0,-1.3333334.6666667,-2 1.3333333,-1.3333333 2,-.6666667 2.6666666,0 2,.6666667 1.3333333,1.3333333.6666667,2 0,1.3333334-.6666667,1.99999995-2,2.66666665-.6666666,1.3333333 0,.6666667.6666666,1.3333333 1.3333334,.6666667.6666666,0 1.3333334,-.6666667.6666667,-1.3333333 0,-.6666667-.6666667,-1.3333333-1.3333334,-.6666667-.6666666,0-1.3333334,.6666667m-8,-6 .6666667,-1.3333333 1.3333333,-1.3333333 2,-.6666667 2.6666666,0 2,.6666667 1.3333333,1.3333333.6666667,1.3333333"/></g>
-<g id="glyph-south-node" transform="rotate(180)"><use href="#glyph-north-node"/></g>
-</defs>"##;
+"##;
 
 #[cfg(test)]
 mod tests {

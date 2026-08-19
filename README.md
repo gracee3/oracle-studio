@@ -60,7 +60,7 @@ See the [Phase 5 plan](docs/PHASE_5_PLAN.md),
 
 `oracle-studio-chart` renders validated physical Astraeus transit-to-natal
 comparison artifacts without opening a vault or recalculating astrology. It can
-produce a deterministic SVG or a self-contained plain-JavaScript HTML player.
+produce a deterministic SVG or a self-contained Rust/WASM HTML player.
 The player displays artifact-grounded natal/transit dates, zodiac, and house
 system, plus optional caller-supplied chart names, local offsets, and location
 labels. See the [renderer boundary, CLI, animation semantics, and privacy

@@ -3,14 +3,15 @@ use astraeus_comparison::{
 };
 use astraeus_core::{ChartAngle, ChartPointSelection, chart_point_positions};
 use chrono::{DateTime, Duration, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub const TRANSIT_TIMELINE_SCHEMA_VERSION: u32 = 2;
 const MAX_INTERPOLATION_GAP: Duration = Duration::hours(24);
 const STATION_EPSILON: f64 = 1.0e-12;
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ChartPoint {
     pub id: String,
     pub longitude_degrees: f64,
@@ -18,7 +19,8 @@ pub struct ChartPoint {
     pub retrograde: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ChartAspect {
     pub id: String,
     pub natal_point_id: String,
@@ -28,7 +30,8 @@ pub struct ChartAspect {
     pub phase: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ChartRing {
     pub timestamp: String,
     pub zodiac: String,
@@ -38,7 +41,8 @@ pub struct ChartRing {
     pub ascendant_degrees: f64,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ChartScene {
     pub timestamp: String,
     pub natal: ChartRing,
@@ -48,14 +52,16 @@ pub struct ChartScene {
     pub aspects: Vec<ChartAspect>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct TransitFrame {
     pub timestamp: String,
     pub points: Vec<ChartPoint>,
     pub aspects: Vec<ChartAspect>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct TransitTimeline {
     pub schema_version: u32,
     pub natal: ChartRing,

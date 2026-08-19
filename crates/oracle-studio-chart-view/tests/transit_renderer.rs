@@ -260,12 +260,12 @@ fn committed_fixtures_cover_full_selected_populations_and_motion_edges() {
     assert!(scene.transit[1].longitude_degrees < 1.0);
     let svg = render_biwheel_svg(&scene, &RenderOptions::default());
     assert_eq!(
-        svg.matches("class=\"chart-point chart-point--natal\"")
+        svg.matches("class=\"chart-point chart-point--natal ")
             .count(),
         11
     );
     assert_eq!(
-        svg.matches("class=\"chart-point chart-point--transit\"")
+        svg.matches("class=\"chart-point chart-point--transit ")
             .count(),
         12
     );
@@ -600,13 +600,8 @@ fn selected_order_structural_angles_and_normalized_lanes_drive_the_svg() {
         4
     );
     assert_eq!(svg.matches("data-role=\"cusp-label\"").count(), 12);
-    assert_eq!(
-        svg.chars()
-            .filter(|character| "♈♉♊♋♌♍♎♏♐♑♒♓".contains(*character))
-            .count(),
-        12
-    );
-    assert!(svg.contains(">00° ♉ 00′</text>"));
+    assert_eq!(svg.matches("data-role=\"cusp-sign\"").count(), 12);
+    assert!(svg.contains("<title>House 1 cusp at 00°00′ Taurus</title>"));
     assert!(svg.contains("id=\"natal-point-vertex\""));
     assert!(!svg.contains("id=\"natal-point-ascendant\""));
     assert!(!svg.contains("id=\"natal-point-midheaven\""));
@@ -618,15 +613,17 @@ fn selected_order_structural_angles_and_normalized_lanes_drive_the_svg() {
     assert!(svg.contains("id=\"transit-point-imumcoeli\""));
     assert!(svg.contains("id=\"transit-point-vertex\""));
     assert!(!svg.contains("id=\"transit-point-jupiter\""));
-    assert!(!svg.contains("data-role=\"sign\""));
-    assert!(!svg.contains("class=\"point-sign"));
+    assert_eq!(svg.matches("data-role=\"sign\"").count(), 10);
+    assert!(svg.contains("class=\"astronomicon point-sign\""));
     assert!(svg.contains("data-role=\"position\""));
     assert!(svg.contains("data-role=\"glyph\""));
     assert!(svg.contains("data-role=\"tick\""));
     assert!(svg.contains("data-role=\"leader\""));
     assert!(svg.contains("data-role=\"aspect-line\""));
     assert!(svg.contains("data-role=\"aspect-glyph\""));
-    assert!(svg.contains("☌"));
+    assert!(svg.contains("class=\"aspect-glyph\""));
+    assert!(!svg.contains('☌'));
+    assert!(!svg.chars().any(|character| character as u32 >= 0x1f000));
     assert!(svg.contains("id=\"aspect--sun--midheaven--square--line\""));
     let endpoint = |visual_longitude: f64| {
         let radians = (visual_longitude - 90.0).to_radians();

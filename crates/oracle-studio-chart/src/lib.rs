@@ -5,6 +5,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use chrono::{DateTime, FixedOffset, Utc};
 use oracle_studio_chart_view::{
     RenderOptions, TransitTimeline, WheelOrientation, render_biwheel_svg,
@@ -13,7 +14,8 @@ use serde::Serialize;
 use thiserror::Error;
 
 const PLAYER_CSS: &str = include_str!("player.css");
-const PLAYER_JS: &str = include_str!("player.js");
+const PLAYER_LOADER: &str = include_str!("../player-dist/oracle_studio_chart_player.js");
+const PLAYER_WASM: &[u8] = include_bytes!("../player-dist/oracle_studio_chart_player_bg.wasm");
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Error)]
@@ -142,8 +144,12 @@ pub fn render_player_html_with_options(
         &timeline.transit_house_system,
         true,
     );
+    let player_wasm = BASE64.encode(PLAYER_WASM);
+    let player_bootstrap = format!(
+        "wasm_bindgen.initSync({{module:Uint8Array.from(atob('{player_wasm}'),character=>character.charCodeAt(0))}});"
+    );
     Ok(format!(
-        "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'\"><title>{title}</title><style>{PLAYER_CSS}</style></head><body><main><header><p class=\"eyebrow\">Oracle Studio</p><h1>{title}</h1><p class=\"privacy-warning\" role=\"note\">This self-contained file contains derived chart positions, houses, timestamps, chart labels, locations, and aspects. Share it as carefully as any chart export.</p><section class=\"chart-information\" aria-label=\"Chart information\">{natal_information}{transit_information}</section></header><section class=\"chart-shell\" aria-label=\"Interactive transit biwheel\"><div id=\"chart-stage\">{svg}</div><div class=\"controls\" aria-label=\"Playback controls\"><div class=\"transport\"><button id=\"previous-frame\" type=\"button\" title=\"Previous exact frame\">Previous</button><button id=\"reverse\" type=\"button\" aria-pressed=\"false\">Reverse</button><button id=\"play-pause\" type=\"button\" aria-pressed=\"false\">Play</button><button id=\"forward\" type=\"button\" aria-pressed=\"true\">Forward</button><button id=\"next-frame\" type=\"button\" title=\"Next exact frame\">Next</button></div><label class=\"scrubber-label\" for=\"scrubber\">Timeline <input id=\"scrubber\" type=\"range\" step=\"1000\"></label><div class=\"readout\"><output id=\"timestamp\" for=\"scrubber\"></output><label for=\"playback-rate\">Speed <select id=\"playback-rate\"><option value=\"900\">15 min/s</option><option value=\"3600\" selected>1 hour/s</option><option value=\"21600\">6 hours/s</option><option value=\"86400\">1 day/s</option></select></label></div><fieldset><legend>Visible layers</legend><label><input id=\"toggle-natal\" type=\"checkbox\" checked> Natal / inner</label><label><input id=\"toggle-transit\" type=\"checkbox\" checked> Transits / outer</label><label><input id=\"toggle-aspects\" type=\"checkbox\" checked> Aspects</label></fieldset></div></section></main><footer><p>Oracle Studio is free software licensed AGPL-3.0-or-later. Source and license: <a href=\"https://github.com/gracee3/oracle-studio\">github.com/gracee3/oracle-studio</a>.</p><p>No astrology is calculated in this player; it displays validated Astraeus comparison artifacts.</p></footer><script id=\"oracle-timeline\" type=\"application/json\">{data}</script><script>{PLAYER_JS}</script></body></html>"
+        "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; connect-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline' 'wasm-unsafe-eval'; img-src data:; font-src data:; base-uri 'none'; form-action 'none'\"><title>{title}</title><style>{PLAYER_CSS}</style></head><body><main><header><p class=\"eyebrow\">Oracle Studio</p><h1>{title}</h1><p class=\"privacy-warning\" role=\"note\">This self-contained file contains derived chart positions, houses, timestamps, chart labels, locations, and aspects. Share it as carefully as any chart export.</p><section class=\"chart-information\" aria-label=\"Chart information\">{natal_information}{transit_information}</section></header><section class=\"chart-shell\" aria-label=\"Interactive transit biwheel\"><div id=\"chart-stage\">{svg}</div><div class=\"controls\" aria-label=\"Playback controls\"><div class=\"transport\"><button id=\"previous-frame\" type=\"button\" title=\"Previous exact frame\">Previous</button><button id=\"reverse\" type=\"button\" aria-pressed=\"false\">Reverse</button><button id=\"play-pause\" type=\"button\" aria-pressed=\"false\">Play</button><button id=\"forward\" type=\"button\" aria-pressed=\"true\">Forward</button><button id=\"next-frame\" type=\"button\" title=\"Next exact frame\">Next</button></div><label class=\"scrubber-label\" for=\"scrubber\">Timeline <input id=\"scrubber\" type=\"range\" step=\"1000\"></label><div class=\"readout\"><output id=\"timestamp\" for=\"scrubber\"></output><label for=\"playback-rate\">Speed <select id=\"playback-rate\"><option value=\"900\">15 min/s</option><option value=\"3600\" selected>1 hour/s</option><option value=\"21600\">6 hours/s</option><option value=\"86400\">1 day/s</option></select></label></div><fieldset><legend>Visible layers</legend><label><input id=\"toggle-natal\" type=\"checkbox\" checked> Natal / inner</label><label><input id=\"toggle-transit\" type=\"checkbox\" checked> Transits / outer</label><label><input id=\"toggle-aspects\" type=\"checkbox\" checked> Aspects</label></fieldset></div></section></main><footer><p>Oracle Studio is free software licensed AGPL-3.0-or-later. Source and license: <a href=\"https://github.com/gracee3/oracle-studio\">github.com/gracee3/oracle-studio</a>.</p><p>No astrology is calculated in this player; Rust compiled to WebAssembly displays validated Astraeus comparison artifacts.</p></footer><script id=\"oracle-timeline\" type=\"application/json\">{data}</script><script>{PLAYER_LOADER}</script><script>{player_bootstrap}</script></body></html>"
     ))
 }
 

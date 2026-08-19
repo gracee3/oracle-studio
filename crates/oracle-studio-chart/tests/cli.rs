@@ -102,7 +102,7 @@ fn svg_cli_is_private_atomic_and_requires_explicit_overwrite() {
     assert_ne!(replacement, original);
     assert!(!replacement.contains("2026-01-01T12:00:00+00:00"));
     assert!(replacement.contains(
-        "id=\"transit-point-sun\" class=\"chart-point chart-point--transit\" data-point-id=\"Sun\" data-longitude=\"0.500000000000\""
+        "id=\"transit-point-sun\" class=\"chart-point chart-point--transit point--sun\" data-point-id=\"Sun\" data-longitude=\"0.500000000000\""
     ));
     assert!(fs::read_dir(&directory.0).unwrap().all(|entry| {
         !entry
@@ -163,8 +163,8 @@ fn timeline_cli_sorts_frames_embeds_only_render_data_and_escapes_titles() {
     assert!(!html.contains("deterministic_mock"));
     assert!(!html.contains("<script src="));
     assert!(!html.contains("<link"));
-    assert!(!html.contains("fetch("));
     assert!(!html.contains("XMLHttpRequest"));
+    assert!(html.contains("connect-src 'none'"));
     assert!(!html.contains("<table"));
     assert!(html.contains("Content-Security-Policy"));
     assert!(html.contains("id=\"play-pause\""));
@@ -177,16 +177,15 @@ fn timeline_cli_sorts_frames_embeds_only_render_data_and_escapes_titles() {
     assert!(html.contains("id=\"toggle-natal\""));
     assert!(html.contains("id=\"toggle-transit\""));
     assert!(html.contains("id=\"toggle-aspects\""));
-    assert!(html.contains("aspects: frames[index].aspects"));
-    assert!(html.contains("Number(svg.dataset.transitInnerRadius)"));
-    assert!(html.contains("function layoutLabels(points, lane)"));
-    assert!(html.contains("precision: 'degree'"));
-    assert!(!html.contains("data-role=\"sign\""));
+    assert!(html.contains("let wasm_bindgen = (function(exports)"));
+    assert!(html.contains("wasm_bindgen.initSync({module:Uint8Array.from(atob("));
+    assert!(html.contains("Rust compiled to WebAssembly"));
+    assert!(!html.contains("function layoutLabels(points, lane)"));
+    assert!(html.contains("data-role=\"sign\""));
     assert!(html.contains("data-role=\"position\""));
     assert!(html.contains("data-role=\"aspect-glyph\""));
-    assert!(html.contains("document.getElementById('natal-structure-layer')"));
-    assert!(html.contains("function formatChartDatetime(milliseconds, offsetSeconds)"));
-    assert!(html.contains("transitChartDatetime.textContent = formatChartDatetime"));
+    assert!(html.contains("font-family:Astronomicon"));
+    assert!(!html.chars().any(|character| character as u32 >= 0x1f000));
     assert!(html.contains("AGPL-3.0-or-later"));
     assert!(html.contains("contains derived chart positions"));
     #[cfg(unix)]

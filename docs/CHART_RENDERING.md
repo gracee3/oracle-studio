@@ -2,8 +2,9 @@
 
 Oracle Studio has a dependency-light presentation slice for validated Astraeus
 comparison artifacts. Rust produces deterministic SVG and a self-contained
-HTML player; the checked-in player uses plain JavaScript and CSS and makes no
-external resource requests.
+HTML player. The player controller is Rust compiled to WebAssembly; only the
+generated `wasm-bindgen` loader and bootstrap are JavaScript. Its CSP blocks
+network connections and it makes no external resource requests.
 
 ## Renderer boundary
 
@@ -47,13 +48,18 @@ MC/IC axes are emphasized, while house numbers and a separate fixed zodiac ring
 are omitted. Each natal cusp is placed at its exact longitude at radius `0.95`
 and displays its rounded degree, zodiac glyph, and minute.
 
-Point labels remain upright and use two radial tokens: the rounded position and
-the point glyph. Natal token radii are approximately `0.51` and `0.61`; transit
-token radii are `0.75` and `0.85`. Zodiac glyphs are limited to the twelve natal
-cusp labels instead of being repeated for every selected point. A point's sign
-is still recoverable from its wheel position, exact-longitude data attribute,
-and accessible title. Exact-longitude ticks sit on each lane's inner boundary,
-and leaders connect those ticks to any displaced label stack.
+Point labels remain upright and use the rounded position, one sign glyph, and
+one point glyph. Natal position and point-glyph radii are approximately `0.51`
+and `0.61`; transit radii are `0.75` and `0.85`. Every visible selected point
+has exactly one monochrome sign glyph, and every natal cusp has exactly one.
+Exact-longitude ticks sit on each lane's inner boundary, and leaders connect
+those ticks to any displaced label stack.
+
+The embedded Astronomicon v1.1 font supplies all point, angle, sign, aspect,
+and retrograde glyphs. Static SVG and HTML exports embed the original TTF, so
+there is no system-font or emoji fallback. Font source, hashes, mapping, OFL
+license, and Reserved Font Name are recorded in `THIRD_PARTY_NOTICES.md` and
+`assets/astronomicon-v1.1/`.
 
 Isolated positions display `DD°MM′`. A wrap-aware collision cluster switches
 as a unit to `DD°`, then receives deterministic variable-width constrained
@@ -144,10 +150,11 @@ comparison envelopes, input paths, calculation provenance, or source
 coordinates. It is still derived chart data and carries an in-file privacy
 warning.
 
-The player reads all geometry constants from the generated SVG. At each sample
-it mirrors Rust's rounding, adaptive precision, wraparound clustering,
-variable-width displacement, upright token placement, ticks, leaders,
-retrograde markers, aspect glyphs, and transit header time. The natal
+At each sample the WASM controller calls the same Rust interpolation and SVG
+renderer used by static export. Rounding, adaptive precision, wraparound
+clustering, variable-width displacement, upright token placement, ticks,
+leaders, retrograde markers, aspect glyphs, and transit header time therefore
+have one implementation. The natal
 visibility control hides both the natal point lane and natal house/cusp
 structure; the other controls remain scoped to transits and aspects.
 
@@ -163,7 +170,9 @@ used only to verify point and aspect semantics.
 - Only physical transit-to-natal comparisons are supported.
 - Collision displacement is presentation-only; exact-position ticks and leader
   lines preserve the artifact coordinates.
-- Existing color tokens are retained pending a separate visual-design pass.
+- The dark presentation palette assigns accessible identity colors to planets;
+  lane backgrounds, leader styles, and filled/hollow exact ticks preserve the
+  natal/transit distinction without relying on color.
 - A companion aspect/position table remains intentionally excluded.
 - The player has no interpretation layer, aspect calculation, ephemeris access,
   network synchronization, or external fonts/assets.

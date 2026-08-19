@@ -1,11 +1,11 @@
 :root {
-  color-scheme: light dark;
+  color-scheme: dark;
   font-family: ui-sans-serif, system-ui, sans-serif;
-  --surface: #f7f1e8;
-  --panel: #fffaf1;
-  --ink: #29222f;
-  --accent: #7b3349;
-  --border: #bcaebe;
+  --surface: #090b11;
+  --panel: #151925;
+  --ink: #f3f5f7;
+  --accent: #c7a6ff;
+  --border: #465168;
 }
 
 * { box-sizing: border-box; }
@@ -17,8 +17,8 @@ h1 { margin: .15rem 0 .5rem; font-family: ui-serif, Georgia, serif; }
 .privacy-warning { max-width: 70ch; padding: .75rem 1rem; border-left: .25rem solid var(--accent); background: color-mix(in srgb, var(--panel) 88%, var(--accent)); }
 .chart-information { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; margin-top: 1.25rem; }
 .chart-information-card { padding: 1rem 1.1rem; border: 1px solid var(--border); border-radius: .75rem; background: var(--panel); }
-.chart-information-card--natal { border-top: .25rem solid #315d86; }
-.chart-information-card--transit { border-top: .25rem solid #a23e48; }
+.chart-information-card--natal { border-top: .25rem solid #a9c7f5; }
+.chart-information-card--transit { border-top: .25rem dashed #e4b6ff; }
 .chart-information-card h2 { margin: .1rem 0 .55rem; font-family: ui-serif, Georgia, serif; }
 .chart-information-card time { display: block; font-variant-numeric: tabular-nums; font-weight: 700; }
 .chart-information-card p { margin: .4rem 0 0; }
@@ -26,7 +26,7 @@ h1 { margin: .15rem 0 .5rem; font-family: ui-serif, Georgia, serif; }
 .chart-location--missing { color: color-mix(in srgb, var(--ink) 62%, transparent); font-style: italic; }
 .chart-system { font-size: .9rem; }
 .chart-shell { display: grid; grid-template-columns: minmax(20rem, 1fr) minmax(16rem, 22rem); gap: 1.25rem; align-items: start; }
-#chart-stage { min-width: 0; border: 1px solid var(--border); border-radius: .75rem; overflow: hidden; background: #fffdf8; }
+#chart-stage { min-width: 0; border: 1px solid var(--border); border-radius: .75rem; overflow: hidden; background: #10131c; }
 #chart-stage svg { display: block; width: 100%; height: auto; }
 .controls { display: grid; gap: 1rem; padding: 1rem; border: 1px solid var(--border); border-radius: .75rem; background: var(--panel); position: sticky; top: 1rem; }
 .transport { display: flex; flex-wrap: wrap; gap: .4rem; }
