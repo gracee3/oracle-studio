@@ -382,6 +382,75 @@ pub struct MutationResult {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct CatalogStatus {
+    pub installed: bool,
+    pub content_id: Option<String>,
+    pub retrieved_at: Option<String>,
+    pub place_count: Option<usize>,
+    pub attribution: String,
+    pub license_name: String,
+    pub license_url: String,
+    pub distribution_url: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InstallCatalogRequest {
+    pub protocol_version: u16,
+}
+
+impl InstallCatalogRequest {
+    pub const fn current() -> Self {
+        Self {
+            protocol_version: PROTOCOL_VERSION,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SearchCatalogRequest {
+    pub protocol_version: u16,
+    pub query: String,
+    pub limit: usize,
+}
+
+impl SearchCatalogRequest {
+    pub fn current(query: impl Into<String>, limit: usize) -> Self {
+        Self {
+            protocol_version: PROTOCOL_VERSION,
+            query: query.into(),
+            limit,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CatalogMatchKind {
+    Exact,
+    Prefix,
+    Substring,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CatalogPlaceSummary {
+    pub geonames_id: u64,
+    pub name: String,
+    pub administrative_names: Vec<String>,
+    pub country_code: String,
+    pub latitude_degrees: f64,
+    pub longitude_degrees: f64,
+    pub elevation_meters: Option<f64>,
+    pub time_zone: String,
+    pub population: u64,
+    pub match_kind: CatalogMatchKind,
+    pub catalog_content_id: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PersonSummary {
     pub id: String,
     pub display_name: String,

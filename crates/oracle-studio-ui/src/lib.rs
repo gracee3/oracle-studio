@@ -9,9 +9,10 @@ use leptos_router::{
     path,
 };
 use oracle_studio_protocol::{
-    ApiError, ApiResponse, ChartSummary, ComparisonSummary, CreateVaultRequest, LocationSummary,
-    PersonSummary, ProtocolRequest, SessionStatus, UnlockVaultRequest, VaultState,
-    WorkspaceSummary,
+    ApiError, ApiResponse, CatalogPlaceSummary, CatalogStatus, ChartSummary, ComparisonSummary,
+    CreateVaultRequest, InstallCatalogRequest, LocationProvenanceInput, LocationSummary,
+    MutationResult, PROTOCOL_VERSION, PersonSummary, ProtocolRequest, SaveLocationRequest,
+    SearchCatalogRequest, SessionStatus, UnlockVaultRequest, VaultState, WorkspaceSummary,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use wasm_bindgen::JsValue;
@@ -28,6 +29,13 @@ pub trait StudioPlatform: Send + Sync {
     fn lock_vault(&self) -> PlatformFuture<'_, SessionStatus>;
     fn people(&self) -> PlatformFuture<'_, Vec<PersonSummary>>;
     fn locations(&self) -> PlatformFuture<'_, Vec<LocationSummary>>;
+    fn save_location(&self, request: SaveLocationRequest) -> PlatformFuture<'_, MutationResult>;
+    fn catalog_status(&self) -> PlatformFuture<'_, CatalogStatus>;
+    fn install_catalog(&self) -> PlatformFuture<'_, CatalogStatus>;
+    fn search_catalog(
+        &self,
+        request: SearchCatalogRequest,
+    ) -> PlatformFuture<'_, Vec<CatalogPlaceSummary>>;
     fn charts(&self) -> PlatformFuture<'_, Vec<ChartSummary>>;
     fn comparisons(&self) -> PlatformFuture<'_, Vec<ComparisonSummary>>;
     fn workspace(&self) -> PlatformFuture<'_, WorkspaceSummary>;
@@ -137,6 +145,25 @@ impl StudioPlatform for HttpStudioPlatform {
 
     fn locations(&self) -> PlatformFuture<'_, Vec<LocationSummary>> {
         Box::pin(self.post("/api/v1/locations/list", ProtocolRequest::current()))
+    }
+
+    fn save_location(&self, request: SaveLocationRequest) -> PlatformFuture<'_, MutationResult> {
+        Box::pin(self.post("/api/v1/locations/save", request))
+    }
+
+    fn catalog_status(&self) -> PlatformFuture<'_, CatalogStatus> {
+        Box::pin(self.post("/api/v1/catalog/status", ProtocolRequest::current()))
+    }
+
+    fn install_catalog(&self) -> PlatformFuture<'_, CatalogStatus> {
+        Box::pin(self.post("/api/v1/catalog/install", InstallCatalogRequest::current()))
+    }
+
+    fn search_catalog(
+        &self,
+        request: SearchCatalogRequest,
+    ) -> PlatformFuture<'_, Vec<CatalogPlaceSummary>> {
+        Box::pin(self.post("/api/v1/catalog/search", request))
     }
 
     fn charts(&self) -> PlatformFuture<'_, Vec<ChartSummary>> {
@@ -388,9 +415,355 @@ fn ChartEditorPage() -> impl IntoView {
 
 #[component]
 fn LocationsPage() -> impl IntoView {
+    let context = expect_context::<StudioContext>();
+    let catalog = RwSignal::new(None::<Result<CatalogStatus, PlatformError>>);
+    let saved = RwSignal::new(None::<Result<Vec<LocationSummary>, PlatformError>>);
+    let results = RwSignal::new(Vec::<CatalogPlaceSummary>::new());
+    let feedback = RwSignal::new(None::<Result<String, String>>);
+    let search_ref = NodeRef::<Input>::new();
+    refresh_catalog_status(Arc::clone(&context.platform), catalog);
+    refresh_saved_locations(Arc::clone(&context.platform), saved);
+
+    let install = {
+        let platform = Arc::clone(&context.platform);
+        move |_| {
+            feedback.set(Some(
+                Ok("Downloading the public GeoNames files…".to_owned()),
+            ));
+            let platform = Arc::clone(&platform);
+            wasm_bindgen_futures::spawn_local(async move {
+                match platform.install_catalog().await {
+                    Ok(status) => {
+                        catalog.set(Some(Ok(status)));
+                        feedback.set(Some(Ok(
+                            "The offline catalog is installed. Searches stay on this computer."
+                                .to_owned(),
+                        )));
+                    }
+                    Err(error) => feedback.set(Some(Err(error.message().to_owned()))),
+                }
+            });
+        }
+    };
+    let search = {
+        let platform = Arc::clone(&context.platform);
+        move |event: SubmitEvent| {
+            event.prevent_default();
+            let Some(input) = search_ref.get() else {
+                return;
+            };
+            let query = input.value();
+            if query.trim().is_empty() {
+                feedback.set(Some(Err("Enter a city or place name.".to_owned())));
+                return;
+            }
+            feedback.set(Some(Ok("Searching the local catalog…".to_owned())));
+            let platform = Arc::clone(&platform);
+            wasm_bindgen_futures::spawn_local(async move {
+                match platform
+                    .search_catalog(SearchCatalogRequest::current(query, 20))
+                    .await
+                {
+                    Ok(matches) => {
+                        let count = matches.len();
+                        results.set(matches);
+                        feedback.set(Some(Ok(format!(
+                            "Found {count} local catalog result{}.",
+                            if count == 1 { "" } else { "s" }
+                        ))));
+                    }
+                    Err(error) => feedback.set(Some(Err(error.message().to_owned()))),
+                }
+            });
+        }
+    };
+
     view! {
         <PageHeader eyebrow="Offline location catalog" title="Locations" description="Saved places are encrypted snapshots. The optional GeoNames catalog remains outside the vault and never sends searches over the network." />
-        <EmptyState title="No catalog installed" body="Manual coordinates and time-zone entry, plus the explicit GeoNames installer, arrive in the offline-catalog milestone." action="Open vault" href="/vault" />
+        <div class="location-layout">
+            <section class="panel catalog-panel" aria-labelledby="catalog-title">
+                <p class="eyebrow">"Optional public data"</p>
+                <h2 id="catalog-title">"GeoNames cities500"</h2>
+                {move || match catalog.get() {
+                    None => view! { <p class="muted">"Checking the local catalog…"</p> }.into_any(),
+                    Some(Err(error)) => view! { <p class="error-text">{error.message().to_owned()}</p> }.into_any(),
+                    Some(Ok(status)) if status.installed => view! {
+                        <div class="catalog-status installed">
+                            <span class="status-dot unlocked" aria-hidden="true"></span>
+                            <strong>"Installed for offline search"</strong>
+                            <span>{status.place_count.map(|count| format!("{count} places")).unwrap_or_default()}</span>
+                            <code>{status.content_id.unwrap_or_default()}</code>
+                        </div>
+                    }.into_any(),
+                    Some(Ok(_)) => view! {
+                        <div class="catalog-status">
+                            <span class="status-dot" aria-hidden="true"></span>
+                            <strong>"Not installed"</strong>
+                        </div>
+                    }.into_any(),
+                }}
+                <p class="muted">
+                    "Installation downloads cities500 and administrative-name files only after you press this button. The files stay outside your vault; later searches use only the local copy."
+                </p>
+                <button class="primary-button" type="button" on:click=install>
+                    "Download and install catalog"
+                </button>
+                <p class="attribution">
+                    "Contains GeoNames geographical data, available under "
+                    <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noreferrer">"CC BY 4.0"</a>
+                    ". Source: "
+                    <a href="https://download.geonames.org/export/dump/" target="_blank" rel="noreferrer">"GeoNames distribution"</a>
+                    "."
+                </p>
+            </section>
+
+            <section class="panel catalog-panel" aria-labelledby="search-title">
+                <p class="eyebrow">"Local-only lookup"</p>
+                <h2 id="search-title">"Search places"</h2>
+                <form class="inline-form" on:submit=search>
+                    <label class="grow-field">
+                        <span>"City or place name"</span>
+                        <input node_ref=search_ref type="search" autocomplete="off" placeholder="Columbia" />
+                    </label>
+                    <button class="secondary-button" type="submit">"Search offline"</button>
+                </form>
+                <div class="catalog-results" aria-live="polite">
+                    <For
+                        each=move || results.get()
+                        key=|place| place.geonames_id
+                        children={
+                            let platform = Arc::clone(&context.platform);
+                            move |place| view! {
+                                <CatalogPlaceCard
+                                    place
+                                    platform=Arc::clone(&platform)
+                                    feedback
+                                    saved
+                                />
+                            }
+                        }
+                    />
+                </div>
+            </section>
+        </div>
+
+        <div class="form-feedback location-feedback" role="status" aria-live="polite">
+            {move || feedback.get().map(|result| match result {
+                Ok(message) => view! { <span>{message}</span> }.into_any(),
+                Err(message) => view! { <span class="error-text">{message}</span> }.into_any(),
+            })}
+        </div>
+
+        <div class="location-layout location-layout-secondary">
+            <ManualLocationForm
+                platform=Arc::clone(&context.platform)
+                feedback
+                saved
+            />
+            <section class="panel catalog-panel" aria-labelledby="saved-locations-title">
+                <p class="eyebrow">"Encrypted snapshots"</p>
+                <h2 id="saved-locations-title">"Saved locations"</h2>
+                {move || match saved.get() {
+                    None => view! { <p class="muted">"Loading saved locations…"</p> }.into_any(),
+                    Some(Err(error)) => view! { <p class="error-text">{error.message().to_owned()}</p> }.into_any(),
+                    Some(Ok(locations)) if locations.is_empty() => view! { <p class="muted">"No saved locations in the unlocked vault."</p> }.into_any(),
+                    Some(Ok(locations)) => view! {
+                        <ul class="saved-location-list">
+                            {locations.into_iter().map(|location| view! {
+                                <li>
+                                    <strong>{location.label}</strong>
+                                    <span>{format!("{} · {}", location.country_code, location.time_zone)}</span>
+                                    <small>{format!("{:.4}, {:.4}", location.latitude_degrees, location.longitude_degrees)}</small>
+                                </li>
+                            }).collect_view()}
+                        </ul>
+                    }.into_any(),
+                }}
+            </section>
+        </div>
+    }
+}
+
+fn refresh_catalog_status(
+    platform: Arc<dyn StudioPlatform>,
+    status: RwSignal<Option<Result<CatalogStatus, PlatformError>>>,
+) {
+    wasm_bindgen_futures::spawn_local(async move {
+        status.set(Some(platform.catalog_status().await));
+    });
+}
+
+fn refresh_saved_locations(
+    platform: Arc<dyn StudioPlatform>,
+    saved: RwSignal<Option<Result<Vec<LocationSummary>, PlatformError>>>,
+) {
+    wasm_bindgen_futures::spawn_local(async move {
+        saved.set(Some(platform.locations().await));
+    });
+}
+
+#[component]
+fn CatalogPlaceCard(
+    place: CatalogPlaceSummary,
+    platform: Arc<dyn StudioPlatform>,
+    feedback: RwSignal<Option<Result<String, String>>>,
+    saved: RwSignal<Option<Result<Vec<LocationSummary>, PlatformError>>>,
+) -> impl IntoView {
+    let details = if place.administrative_names.is_empty() {
+        place.country_code.clone()
+    } else {
+        format!(
+            "{}, {}",
+            place.administrative_names.join(", "),
+            place.country_code
+        )
+    };
+    let save = {
+        let place = place.clone();
+        move |_| {
+            let request = SaveLocationRequest {
+                protocol_version: PROTOCOL_VERSION,
+                id: format!("geonames_{}", place.geonames_id),
+                label: place.name.clone(),
+                administrative_names: place.administrative_names.clone(),
+                country_code: place.country_code.clone(),
+                latitude_degrees: place.latitude_degrees,
+                longitude_degrees: place.longitude_degrees,
+                elevation_meters: place.elevation_meters,
+                time_zone: place.time_zone.clone(),
+                provenance: LocationProvenanceInput::GeoNames {
+                    geonames_id: place.geonames_id,
+                    catalog_content_id: place.catalog_content_id.clone(),
+                },
+            };
+            let platform = Arc::clone(&platform);
+            wasm_bindgen_futures::spawn_local(async move {
+                match platform.save_location(request).await {
+                    Ok(_) => {
+                        feedback.set(Some(Ok("Saved an encrypted location snapshot.".to_owned())));
+                        refresh_saved_locations(Arc::clone(&platform), saved);
+                    }
+                    Err(error) => feedback.set(Some(Err(error.message().to_owned()))),
+                }
+            });
+        }
+    };
+    view! {
+        <article class="catalog-result">
+            <div>
+                <h3>{place.name}</h3>
+                <p>{details}</p>
+                <small>{format!("{} · {:.4}, {:.4} · population {}", place.time_zone, place.latitude_degrees, place.longitude_degrees, place.population)}</small>
+            </div>
+            <button class="quiet-button" type="button" on:click=save>"Save snapshot"</button>
+        </article>
+    }
+}
+
+#[component]
+fn ManualLocationForm(
+    platform: Arc<dyn StudioPlatform>,
+    feedback: RwSignal<Option<Result<String, String>>>,
+    saved: RwSignal<Option<Result<Vec<LocationSummary>, PlatformError>>>,
+) -> impl IntoView {
+    let id_ref = NodeRef::<Input>::new();
+    let label_ref = NodeRef::<Input>::new();
+    let admin_ref = NodeRef::<Input>::new();
+    let country_ref = NodeRef::<Input>::new();
+    let latitude_ref = NodeRef::<Input>::new();
+    let longitude_ref = NodeRef::<Input>::new();
+    let elevation_ref = NodeRef::<Input>::new();
+    let zone_ref = NodeRef::<Input>::new();
+    let submit = move |event: SubmitEvent| {
+        event.prevent_default();
+        let values = (
+            id_ref.get().map(|input| input.value()),
+            label_ref.get().map(|input| input.value()),
+            country_ref.get().map(|input| input.value()),
+            latitude_ref.get().map(|input| input.value()),
+            longitude_ref.get().map(|input| input.value()),
+            zone_ref.get().map(|input| input.value()),
+        );
+        let (Some(id), Some(label), Some(country), Some(latitude), Some(longitude), Some(zone)) =
+            values
+        else {
+            return;
+        };
+        let latitude = match latitude.parse::<f64>() {
+            Ok(value) => value,
+            Err(_) => {
+                feedback.set(Some(Err("Latitude must be a number.".to_owned())));
+                return;
+            }
+        };
+        let longitude = match longitude.parse::<f64>() {
+            Ok(value) => value,
+            Err(_) => {
+                feedback.set(Some(Err("Longitude must be a number.".to_owned())));
+                return;
+            }
+        };
+        let elevation = elevation_ref
+            .get()
+            .map(|input| input.value())
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| value.parse::<f64>());
+        let elevation = match elevation.transpose() {
+            Ok(value) => value,
+            Err(_) => {
+                feedback.set(Some(Err("Elevation must be blank or a number.".to_owned())));
+                return;
+            }
+        };
+        let administrative_names = admin_ref
+            .get()
+            .map(|input| input.value())
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+            .collect();
+        let request = SaveLocationRequest {
+            protocol_version: PROTOCOL_VERSION,
+            id,
+            label,
+            administrative_names,
+            country_code: country.trim().to_uppercase(),
+            latitude_degrees: latitude,
+            longitude_degrees: longitude,
+            elevation_meters: elevation,
+            time_zone: zone,
+            provenance: LocationProvenanceInput::Manual,
+        };
+        let platform = Arc::clone(&platform);
+        wasm_bindgen_futures::spawn_local(async move {
+            match platform.save_location(request).await {
+                Ok(_) => {
+                    feedback.set(Some(Ok("Saved the manual location.".to_owned())));
+                    refresh_saved_locations(Arc::clone(&platform), saved);
+                }
+                Err(error) => feedback.set(Some(Err(error.message().to_owned()))),
+            }
+        });
+    };
+    view! {
+        <form class="panel catalog-panel manual-location-form" on:submit=submit>
+            <p class="eyebrow">"Always available"</p>
+            <h2>"Manual location"</h2>
+            <p class="muted">"Enter explicit coordinates and an IANA time zone when no catalog is installed or the place is absent."</p>
+            <div class="form-grid">
+                <label><span>"Record ID"</span><input node_ref=id_ref required type="text" placeholder="home_city" /></label>
+                <label><span>"Label"</span><input node_ref=label_ref required type="text" placeholder="Home city" /></label>
+                <label class="wide-field"><span>"Administrative names (comma-separated)"</span><input node_ref=admin_ref type="text" placeholder="County, State" /></label>
+                <label><span>"Country code"</span><input node_ref=country_ref required maxlength="2" type="text" placeholder="US" /></label>
+                <label><span>"IANA time zone"</span><input node_ref=zone_ref required type="text" placeholder="America/New_York" /></label>
+                <label><span>"Latitude"</span><input node_ref=latitude_ref required inputmode="decimal" type="text" placeholder="38.9072" /></label>
+                <label><span>"Longitude"</span><input node_ref=longitude_ref required inputmode="decimal" type="text" placeholder="-77.0369" /></label>
+                <label><span>"Elevation meters (optional)"</span><input node_ref=elevation_ref inputmode="decimal" type="text" /></label>
+            </div>
+            <button class="secondary-button" type="submit">"Save manual location"</button>
+        </form>
     }
 }
 

@@ -19,7 +19,7 @@ The application is split into four boundaries:
 - `oracle-studio-server` is the initial `StudioPlatform` provider. It owns vault
   paths, authenticated persistence, decrypted records, passwords, and native
   services. The current browser adapter calls it over same-origin loopback HTTP.
-- A separate offline location-catalog crate will own GeoNames parsing, indexing,
+- `oracle-studio-location-catalog` owns GeoNames parsing, indexing,
   content addressing, retrieval metadata, and attribution. Catalog bytes stay
   outside both Git and encrypted vault documents; selected places become
   encrypted snapshots.
@@ -71,10 +71,12 @@ The CSR shell owns these stable route families:
 - `/locations` — saved locations and offline catalog settings;
 - `/workspace` — the active natal/transit comparison.
 
-The native protocol already exposes schema-v3 list, save, calculate, and
-workspace operations. The foundation views remain explicit empty states until
-the chart-first form and renderer integration land. They are responsive,
-keyboard-focusable, and use live regions for vault and form errors.
+The native protocol exposes schema-v3 list, save, calculate, and workspace
+operations plus catalog status, explicit install, and local-only search. The
+Locations route includes the installer, catalog search, encrypted snapshot
+save, manual fallback, attribution, and saved-location list. Other foundation
+views remain explicit empty states until the chart-first form and renderer
+integration land.
 
 ## Build and run
 
@@ -91,3 +93,8 @@ cargo run --locked -p oracle-studio-server --bin oracle-studio-host -- \
 Open only the complete per-launch URL printed by the host. The host is the
 supported way to serve the UI; opening `index.html` directly cannot satisfy the
 origin or bearer checks.
+
+The host stores public catalog files beneath
+`$XDG_DATA_HOME/oracle-studio/geonames`, falling back to
+`$HOME/.local/share/oracle-studio/geonames`. `--catalog-dir` selects another
+explicit location. No catalog path or catalog byte enters the encrypted vault.
