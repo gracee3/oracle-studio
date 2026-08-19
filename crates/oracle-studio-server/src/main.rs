@@ -10,6 +10,9 @@ use oracle_studio_server::{
 struct Args {
     #[arg(long, default_value = "crates/oracle-studio-ui/dist")]
     dist: PathBuf,
+    /// Loopback port to use. Zero asks the operating system for a random port.
+    #[arg(long, default_value_t = 0)]
+    port: u16,
     /// Store the unencrypted public GeoNames catalog here instead of the XDG data directory.
     #[arg(long)]
     catalog_dir: Option<PathBuf>,
@@ -28,7 +31,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .into());
     }
-    let listener = bind_loopback(0).await?;
+    let listener = bind_loopback(args.port).await?;
     let address = listener.local_addr()?;
     validate_loopback(address)?;
     let origin = format!("http://{address}");
@@ -49,4 +52,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     axum::serve(listener, app(state, args.dist)).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepts_an_explicit_loopback_port_for_managed_tunnels() {
+        let args = Args::try_parse_from([
+            "oracle-studio-host",
+            "--port",
+            "40369",
+            "--dist",
+            "studio-dist",
+        ])
+        .unwrap();
+
+        assert_eq!(args.port, 40_369);
+        assert_eq!(args.dist, PathBuf::from("studio-dist"));
+    }
+
+    #[test]
+    fn keeps_random_port_selection_as_the_default() {
+        let args = Args::try_parse_from(["oracle-studio-host"]).unwrap();
+        assert_eq!(args.port, 0);
+    }
 }

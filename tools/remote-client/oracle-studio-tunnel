@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+umask 077
+
+program=${0##*/}
+runtime_root=${XDG_RUNTIME_DIR:-}
+runtime_dir=${runtime_root:+${runtime_root}/oracle-studio}
+port_file=${runtime_dir:+${runtime_dir}/port}
+launch_log=${runtime_dir:+${runtime_dir}/launch.log}
+
+die() {
+    printf '%s: %s\n' "$program" "$*" >&2
+    exit 1
+}
+
+require_runtime_dir() {
+    [[ -n $runtime_dir ]] || die 'XDG_RUNTIME_DIR is not set'
+    /usr/bin/mkdir -p -- "$runtime_dir"
+    /usr/bin/chmod 0700 -- "$runtime_dir"
+}
+
+choose_port() {
+    /usr/bin/python3 -c 'import socket
+with socket.socket() as sock:
+    sock.bind(("127.0.0.1", 0))
+    print(sock.getsockname()[1])'
+}
+
+run_tunnel() {
+    require_runtime_dir
+    : "${ORACLE_STUDIO_SSH_TARGET:?set ORACLE_STUDIO_SSH_TARGET in tunnel.env}"
+    : "${ORACLE_STUDIO_REMOTE_ROOT:?set ORACLE_STUDIO_REMOTE_ROOT in tunnel.env}"
+
+    [[ $ORACLE_STUDIO_SSH_TARGET != -* ]] || die 'SSH target may not begin with a dash'
+    [[ $ORACLE_STUDIO_REMOTE_ROOT = /* ]] || die 'remote root must be an absolute path'
+    [[ -x /usr/bin/python3 ]] || die '/usr/bin/python3 is required'
+    [[ -x /usr/bin/ssh ]] || die '/usr/bin/ssh is required'
+
+    local port remote_bin remote_dist remote_command
+    port=$(choose_port)
+    remote_bin=${ORACLE_STUDIO_REMOTE_ROOT%/}/target/release/oracle-studio-host
+    remote_dist=${ORACLE_STUDIO_REMOTE_ROOT%/}/crates/oracle-studio-ui/dist
+    remote_command=$(printf 'exec %q --port %q --dist %q' "$remote_bin" "$port" "$remote_dist")
+
+    printf '%s\n' "$port" >"$port_file"
+    : >"$launch_log"
+
+    exec /usr/bin/ssh -T \
+        -o BatchMode=yes \
+        -o ExitOnForwardFailure=yes \
+        -o ServerAliveInterval=30 \
+        -o ServerAliveCountMax=3 \
+        -L "127.0.0.1:${port}:127.0.0.1:${port}" \
+        -- "$ORACLE_STUDIO_SSH_TARGET" "$remote_command" \
+        >"$launch_log" 2>&1
+}
+
+show_port() {
+    [[ -r $port_file ]] || die 'the tunnel has not published a port'
+    /usr/bin/cat -- "$port_file"
+}
+
+show_url() {
+    [[ -r $launch_log ]] || die 'the tunnel has not published a launch log'
+    local url
+    url=$(/usr/bin/sed -n 's/^Oracle Studio is ready at //p' "$launch_log" | /usr/bin/head -n 1)
+    [[ -n $url ]] || die 'the launch URL is not ready; inspect diagnostics'
+    printf '%s\n' "$url"
+}
+
+show_diagnostics() {
+    [[ -r $launch_log ]] || die 'the tunnel has not published diagnostics'
+    /usr/bin/sed -E 's/(#token=)[[:xdigit:]]+/\1[REDACTED]/g' "$launch_log"
+}
+
+case ${1:-} in
+    run)
+        run_tunnel
+        ;;
+    port)
+        show_port
+        ;;
+    url)
+        show_url
+        ;;
+    diagnostics)
+        show_diagnostics
+        ;;
+    *)
+        printf 'usage: %s {port|url|diagnostics}\n' "$program" >&2
+        exit 2
+        ;;
+esac

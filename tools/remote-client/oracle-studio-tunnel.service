@@ -1,0 +1,22 @@
+[Unit]
+Description=Oracle Studio loopback tunnel to the Supermicro
+Documentation=https://github.com/gracee3/oracle-studio/blob/main/docs/REMOTE_CLIENT.md
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/oracle-studio/tunnel.env
+RuntimeDirectory=oracle-studio
+RuntimeDirectoryMode=0700
+UMask=0077
+ExecStart=%h/.local/bin/oracle-studio-tunnel run
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=10
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target

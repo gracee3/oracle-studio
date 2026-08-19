@@ -61,6 +61,56 @@ Do not use SSH `-g`, `GatewayPorts`, a reverse proxy, a `0.0.0.0` bind, or a
 different local forwarding port. Those variants are outside the reviewed
 same-origin and loopback security model.
 
+## Managed ThinkPad tunnel
+
+The repository includes a `systemd --user` service for the ThinkPad. It chooses
+a free local port, starts the native host on that same loopback port through
+SSH, and keeps the forward alive. The service uses key-only, non-interactive
+SSH and stores the per-launch URL under the user's private runtime directory;
+the bearer token does not enter the systemd journal.
+
+First, build the Supermicro artifacts used by the remote service:
+
+```bash
+(cd crates/oracle-studio-ui && trunk build --release)
+cargo build --locked --release -p oracle-studio-server --bin oracle-studio-host
+```
+
+Confirm that the ThinkPad can connect without an interactive password prompt:
+
+```bash
+ssh emmy@SUPERMICRO true
+```
+
+From an Oracle Studio checkout copied to the ThinkPad, install and start the
+user service. The second argument is the absolute Oracle Studio checkout path
+on the Supermicro:
+
+```bash
+scripts/install-thinkpad-tunnel.sh \
+  emmy@SUPERMICRO /absolute/path/on/supermicro/oracle-studio
+```
+
+Manage the session with ordinary user-service commands:
+
+```bash
+systemctl --user status oracle-studio-tunnel.service
+systemctl --user restart oracle-studio-tunnel.service
+systemctl --user stop oracle-studio-tunnel.service
+oracle-studio-tunnel port
+oracle-studio-tunnel url
+oracle-studio-tunnel diagnostics
+```
+
+`oracle-studio-tunnel url` intentionally prints the private, one-use launch URL
+so it can be opened in the ThinkPad browser. Do not paste that URL into chat,
+logs, issue trackers, or shell history. Diagnostics redact the bearer token.
+Stopping the service closes the forward and terminates the native server that
+belongs to that SSH session. Restarting it chooses a new port and launch token.
+
+There is no companion Astraeus tunnel service: Astraeus remains an in-process
+Rust dependency of the native Oracle Studio host, not a network listener.
+
 ## Containerized browser acceptance
 
 Chrome for Testing is validation tooling, not an Oracle Studio runtime
