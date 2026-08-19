@@ -9,15 +9,22 @@ use leptos_router::{
     path,
 };
 use oracle_studio_protocol::{
-    ApiError, ApiResponse, CatalogPlaceSummary, CatalogStatus, ChartSummary, ComparisonSummary,
-    CreateVaultRequest, InstallCatalogRequest, LocationProvenanceInput, LocationSummary,
-    MutationResult, PROTOCOL_VERSION, PersonSummary, ProtocolRequest, SaveLocationRequest,
-    SearchCatalogRequest, SessionStatus, UnlockVaultRequest, VaultState, WorkspaceSummary,
+    ApiError, ApiResponse, CalculateChartRequest, CalculateComparisonRequest, CatalogPlaceSummary,
+    CatalogStatus, ChartSummary, ComparisonSummary, CreateVaultRequest, InstallCatalogRequest,
+    LocalTimeResolutionSummary, LocationProvenanceInput, LocationSummary, MutationResult,
+    PROTOCOL_VERSION, PersonSummary, ProtocolRequest, ResolveChartTimeRequest, SaveChartRequest,
+    SaveComparisonRequest, SaveLocationRequest, SavePersonRequest, SearchCatalogRequest,
+    SessionStatus, SetWorkspaceRequest, UnlockVaultRequest, VaultState, WorkspacePresentation,
+    WorkspaceSummary,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use wasm_bindgen::JsValue;
 
 pub type PlatformFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, PlatformError>> + 'a>>;
+
+mod charts;
+mod people;
+mod workspace;
 
 /// Native capabilities consumed by components. HTTP is one implementation, not
 /// part of the component contract, so a future Tauri or browser-local adapter
@@ -28,6 +35,7 @@ pub trait StudioPlatform: Send + Sync {
     fn unlock_vault(&self, request: UnlockVaultRequest) -> PlatformFuture<'_, SessionStatus>;
     fn lock_vault(&self) -> PlatformFuture<'_, SessionStatus>;
     fn people(&self) -> PlatformFuture<'_, Vec<PersonSummary>>;
+    fn save_person(&self, request: SavePersonRequest) -> PlatformFuture<'_, MutationResult>;
     fn locations(&self) -> PlatformFuture<'_, Vec<LocationSummary>>;
     fn save_location(&self, request: SaveLocationRequest) -> PlatformFuture<'_, MutationResult>;
     fn catalog_status(&self) -> PlatformFuture<'_, CatalogStatus>;
@@ -37,8 +45,23 @@ pub trait StudioPlatform: Send + Sync {
         request: SearchCatalogRequest,
     ) -> PlatformFuture<'_, Vec<CatalogPlaceSummary>>;
     fn charts(&self) -> PlatformFuture<'_, Vec<ChartSummary>>;
+    fn save_chart(&self, request: SaveChartRequest) -> PlatformFuture<'_, MutationResult>;
+    fn resolve_chart_time(
+        &self,
+        request: ResolveChartTimeRequest,
+    ) -> PlatformFuture<'_, LocalTimeResolutionSummary>;
+    fn calculate_chart(&self, request: CalculateChartRequest)
+    -> PlatformFuture<'_, MutationResult>;
     fn comparisons(&self) -> PlatformFuture<'_, Vec<ComparisonSummary>>;
+    fn save_comparison(&self, request: SaveComparisonRequest)
+    -> PlatformFuture<'_, MutationResult>;
+    fn calculate_comparison(
+        &self,
+        request: CalculateComparisonRequest,
+    ) -> PlatformFuture<'_, MutationResult>;
     fn workspace(&self) -> PlatformFuture<'_, WorkspaceSummary>;
+    fn workspace_presentation(&self) -> PlatformFuture<'_, Option<WorkspacePresentation>>;
+    fn set_workspace(&self, request: SetWorkspaceRequest) -> PlatformFuture<'_, MutationResult>;
 }
 
 #[derive(Clone)]
@@ -143,6 +166,10 @@ impl StudioPlatform for HttpStudioPlatform {
         Box::pin(self.post("/api/v1/people/list", ProtocolRequest::current()))
     }
 
+    fn save_person(&self, request: SavePersonRequest) -> PlatformFuture<'_, MutationResult> {
+        Box::pin(self.post("/api/v1/people/save", request))
+    }
+
     fn locations(&self) -> PlatformFuture<'_, Vec<LocationSummary>> {
         Box::pin(self.post("/api/v1/locations/list", ProtocolRequest::current()))
     }
@@ -170,12 +197,52 @@ impl StudioPlatform for HttpStudioPlatform {
         Box::pin(self.post("/api/v1/charts/list", ProtocolRequest::current()))
     }
 
+    fn save_chart(&self, request: SaveChartRequest) -> PlatformFuture<'_, MutationResult> {
+        Box::pin(self.post("/api/v1/charts/save", request))
+    }
+
+    fn resolve_chart_time(
+        &self,
+        request: ResolveChartTimeRequest,
+    ) -> PlatformFuture<'_, LocalTimeResolutionSummary> {
+        Box::pin(self.post("/api/v1/charts/time-resolution", request))
+    }
+
+    fn calculate_chart(
+        &self,
+        request: CalculateChartRequest,
+    ) -> PlatformFuture<'_, MutationResult> {
+        Box::pin(self.post("/api/v1/charts/calculate", request))
+    }
+
     fn comparisons(&self) -> PlatformFuture<'_, Vec<ComparisonSummary>> {
         Box::pin(self.post("/api/v1/comparisons/list", ProtocolRequest::current()))
     }
 
+    fn save_comparison(
+        &self,
+        request: SaveComparisonRequest,
+    ) -> PlatformFuture<'_, MutationResult> {
+        Box::pin(self.post("/api/v1/comparisons/save", request))
+    }
+
+    fn calculate_comparison(
+        &self,
+        request: CalculateComparisonRequest,
+    ) -> PlatformFuture<'_, MutationResult> {
+        Box::pin(self.post("/api/v1/comparisons/calculate", request))
+    }
+
     fn workspace(&self) -> PlatformFuture<'_, WorkspaceSummary> {
         Box::pin(self.post("/api/v1/workspace/get", ProtocolRequest::current()))
+    }
+
+    fn workspace_presentation(&self) -> PlatformFuture<'_, Option<WorkspacePresentation>> {
+        Box::pin(self.post("/api/v1/workspace/view", ProtocolRequest::current()))
+    }
+
+    fn set_workspace(&self, request: SetWorkspaceRequest) -> PlatformFuture<'_, MutationResult> {
+        Box::pin(self.post("/api/v1/workspace/set", request))
     }
 }
 
@@ -196,10 +263,18 @@ impl PlatformError {
     }
 }
 
+pub(crate) fn new_id(prefix: &str) -> Result<String, PlatformError> {
+    let window = web_sys::window().ok_or_else(|| PlatformError::new("window unavailable"))?;
+    let crypto = window
+        .crypto()
+        .map_err(|_| PlatformError::new("secure browser randomness unavailable"))?;
+    Ok(format!("{prefix}_{}", crypto.random_uuid()))
+}
+
 #[derive(Clone)]
-struct StudioContext {
-    platform: Arc<dyn StudioPlatform>,
-    status: RwSignal<Option<Result<SessionStatus, PlatformError>>>,
+pub(crate) struct StudioContext {
+    pub(crate) platform: Arc<dyn StudioPlatform>,
+    pub(crate) status: RwSignal<Option<Result<SessionStatus, PlatformError>>>,
 }
 
 #[component]
@@ -231,11 +306,11 @@ pub fn App(platform: Arc<dyn StudioPlatform>) -> impl IntoView {
                     <Routes fallback=|| view! { <NotFound /> }>
                         <Route path=path!("") view=HomePage />
                         <Route path=path!("vault") view=VaultPage />
-                        <Route path=path!("people") view=PeoplePage />
-                        <Route path=path!("people/:id") view=PersonPage />
-                        <Route path=path!("charts/:id") view=ChartEditorPage />
+                        <Route path=path!("people") view=people::PeoplePage />
+                        <Route path=path!("people/:id") view=people::PersonPage />
+                        <Route path=path!("charts/:id") view=charts::ChartEditorPage />
                         <Route path=path!("locations") view=LocationsPage />
-                        <Route path=path!("workspace") view=WorkspacePage />
+                        <Route path=path!("workspace") view=workspace::WorkspacePage />
                     </Routes>
                 </main>
             </div>
@@ -386,30 +461,6 @@ fn VaultForm(create: bool) -> impl IntoView {
                 })}
             </div>
         </form>
-    }
-}
-
-#[component]
-fn PeoplePage() -> impl IntoView {
-    view! {
-        <PageHeader eyebrow="Encrypted records" title="People" description="Create a person, attach natal charts, and choose one default natal chart per person." />
-        <EmptyState title="No people loaded" body="Unlock a vault to load people. Person editing arrives with the chart workspace milestone." action="Open vault" href="/vault" />
-    }
-}
-
-#[component]
-fn PersonPage() -> impl IntoView {
-    view! {
-        <PageHeader eyebrow="Person detail" title="Charts and history" description="This route is reserved for one person’s natal charts, events, and calculation history." />
-        <EmptyState title="Person details are not loaded" body="The platform boundary is ready; the schema-v3 person and chart services follow next." action="Back to people" href="/people" />
-    }
-}
-
-#[component]
-fn ChartEditorPage() -> impl IntoView {
-    view! {
-        <PageHeader eyebrow="Chart entry" title="Chart editor" description="Local civil time, location, calculation options, and ordered point selection will be edited here." />
-        <EmptyState title="Chart editor foundation" body="Time-zone resolution and immutable calculation snapshots arrive with vault schema v3." action="Open locations" href="/locations" />
     }
 }
 
@@ -768,18 +819,7 @@ fn ManualLocationForm(
 }
 
 #[component]
-fn WorkspacePage() -> impl IntoView {
-    view! {
-        <PageHeader eyebrow="Natal + transit" title="Chart workspace" description="The active comparison will place chart information above a deterministic, accessible biwheel." />
-        <div class="chart-placeholder panel" role="img" aria-label="Empty biwheel workspace">
-            <div class="orbit orbit-outer"></div><div class="orbit orbit-inner"></div><div class="orbit orbit-core"></div>
-            <span>"Choose two calculated charts"</span>
-        </div>
-    }
-}
-
-#[component]
-fn PageHeader(
+pub(crate) fn PageHeader(
     #[prop(into)] eyebrow: String,
     #[prop(into)] title: String,
     #[prop(into)] description: String,
@@ -790,21 +830,6 @@ fn PageHeader(
             <h1>{title}</h1>
             <p>{description}</p>
         </header>
-    }
-}
-
-#[component]
-fn EmptyState(
-    #[prop(into)] title: String,
-    #[prop(into)] body: String,
-    #[prop(into)] action: String,
-    #[prop(into)] href: String,
-) -> impl IntoView {
-    view! {
-        <section class="panel empty-state">
-            <div class="empty-mark" aria-hidden="true">"✦"</div>
-            <h2>{title}</h2><p>{body}</p><A attr:class="secondary-button" href=href>{action}</A>
-        </section>
     }
 }
 

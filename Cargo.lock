@@ -1710,6 +1710,7 @@ dependencies = [
  "clap",
  "getrandom 0.3.4",
  "oracle-studio-app",
+ "oracle-studio-chart-view",
  "oracle-studio-core",
  "oracle-studio-location-catalog",
  "oracle-studio-protocol",
@@ -1742,9 +1743,11 @@ dependencies = [
 name = "oracle-studio-ui"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "gloo-net",
  "leptos",
  "leptos_router",
+ "oracle-studio-chart-view",
  "oracle-studio-protocol",
  "serde",
  "serde_json",
