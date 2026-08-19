@@ -510,11 +510,11 @@ fn parse_places(
             .chain(fields[3].split(',').filter(|value| !value.is_empty()))
         {
             let normalized = candidate.trim().to_lowercase();
-            if !normalized.is_empty() && !normalized_names.contains(&normalized) {
+            if !normalized.is_empty()
+                && normalized_names.len() < MAX_ALIASES_PER_PLACE
+                && !normalized_names.contains(&normalized)
+            {
                 normalized_names.push(normalized);
-            }
-            if normalized_names.len() > MAX_ALIASES_PER_PLACE {
-                return Err(CatalogError::AliasLimit);
             }
         }
         places.push(CatalogPlace {
@@ -735,8 +735,6 @@ pub enum CatalogError {
     RowLimit,
     #[error("catalog line exceeds its configured size bound")]
     LineLimit,
-    #[error("place contains too many alternate names")]
-    AliasLimit,
     #[error("GeoNames input is not valid UTF-8")]
     InvalidUtf8,
     #[error("GeoNames administrative-code record is invalid")]
@@ -990,6 +988,45 @@ mod tests {
             }),
             Err(CatalogError::InvalidTimestamp | CatalogError::InvalidPlaceRecord)
         ));
+    }
+
+    #[test]
+    fn excessive_official_aliases_are_bounded_without_rejecting_the_pack() {
+        let alternates = (0..MAX_ALIASES_PER_PLACE + 20)
+            .map(|index| format!("alias-{index}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let crowded = row(
+            77,
+            "Crowded Name",
+            "Crowded Name",
+            &alternates,
+            "42.0",
+            "-73.0",
+            "US",
+            "NY",
+            "001",
+            1_000,
+            "20",
+            "America/New_York",
+        );
+        let catalog = LocationCatalog::from_distribution(&install_input(
+            &(crowded + "\n"),
+            "2026-08-19T04:45:00Z",
+        ))
+        .unwrap();
+
+        assert_eq!(
+            catalog.places[0].normalized_names.len(),
+            MAX_ALIASES_PER_PLACE
+        );
+        assert_eq!(catalog.search("alias-0", 10).unwrap().len(), 1);
+        assert!(
+            catalog
+                .search(&format!("alias-{}", MAX_ALIASES_PER_PLACE + 19), 10)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     struct TestDirectory(PathBuf);
