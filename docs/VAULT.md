@@ -13,6 +13,12 @@ The binary format has explicit magic and version bytes, bounded lengths, and
 fixed accepted KDF parameters. Unknown versions and parameters fail rather than
 being guessed or silently migrated.
 
+The binary envelope version and the encrypted document schema are separate.
+The current pre-1.0 document is schema v3. Authenticated v1/v2 document
+plaintext is deliberately rejected without migration, while the envelope
+format, authenticated header, Argon2id policy, and XChaCha20-Poly1305 contract
+remain unchanged.
+
 ## Threat model
 
 The vault protects confidentiality and detects modification when an attacker
@@ -23,6 +29,12 @@ attacker who has both the file and password.
 
 Passwords are never stored. Derived key buffers are zeroized on drop. Callers
 remain responsible for protecting and zeroizing their password input.
+
+The native Studio host retains a zeroizing password allocation only while a
+vault is unlocked so each accepted mutation can be resealed. It saves with the
+current encrypted revision and replaces in-memory state only after optimistic,
+atomic persistence succeeds. Explicit lock or 15 minutes of inactivity drops
+the decrypted document and password allocation.
 
 ## Durable filesystem repository
 

@@ -3,13 +3,18 @@
 use std::collections::BTreeSet;
 
 use astraeus_artifacts::CalculationArtifact;
+use astraeus_comparison::ComparisonArtifact;
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use sibylla_artifacts::{Artifact as SibyllaArtifact, ArtifactKind as SibyllaKind};
 use thiserror::Error;
 
-pub const VAULT_DOCUMENT_SCHEMA_VERSION: u32 = 2;
-pub const ASTRAEUS_REVISION: &str = "eb9a756d0d2814f55fcb6f29bdc99c8bb28df85a";
+mod studio;
+
+pub use studio::*;
+
+pub const VAULT_DOCUMENT_SCHEMA_VERSION: u32 = 3;
+pub const ASTRAEUS_REVISION: &str = "e5d295222018178c46fb882a302a57c810bf8bd1";
 pub const SIBYLLA_REVISION: &str = "a154c32b83b110d2568a9ab10828b4f8b3dba7c7";
 pub const ENGINE_ARTIFACT_SCHEMA_VERSION: u32 = 1;
 
@@ -35,6 +40,15 @@ impl StableId {
 
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for StableId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Self::new("stable_id", String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
     }
 }
 
@@ -146,6 +160,7 @@ impl Session {
 #[serde(rename_all = "snake_case")]
 pub enum ArtifactKind {
     AstraeusCalculation,
+    AstraeusComparison,
     SibyllaDeck,
     SibyllaReading,
 }
@@ -214,6 +229,32 @@ impl ArtifactRecord {
                 .content_id()
                 .map_err(|error| ModelError::InvalidArtifact(error.to_string()))?
                 .to_string(),
+            canonical_json: artifact
+                .to_json()
+                .map_err(|error| ModelError::InvalidArtifact(error.to_string()))?,
+            deck_pack_id: None,
+            deck_pack_content_id: None,
+        })
+    }
+
+    pub fn from_astraeus_comparison(
+        id: StableId,
+        person_id: Option<StableId>,
+        session_id: Option<StableId>,
+        json: &str,
+    ) -> Result<Self, ModelError> {
+        let artifact = ComparisonArtifact::from_json(json)
+            .map_err(|error| ModelError::InvalidArtifact(error.to_string()))?;
+        Ok(Self {
+            id,
+            person_id,
+            session_id,
+            kind: ArtifactKind::AstraeusComparison,
+            artifact_schema_version: ENGINE_ARTIFACT_SCHEMA_VERSION,
+            producer_revision: ASTRAEUS_REVISION.into(),
+            content_id: artifact
+                .content_id()
+                .map_err(|error| ModelError::InvalidArtifact(error.to_string()))?,
             canonical_json: artifact
                 .to_json()
                 .map_err(|error| ModelError::InvalidArtifact(error.to_string()))?,
@@ -350,12 +391,17 @@ impl JournalEntry {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct VaultDocument {
     people: Vec<PersonProfile>,
     sessions: Vec<Session>,
     artifacts: Vec<ArtifactRecord>,
     journal_entries: Vec<JournalEntry>,
+    saved_locations: Vec<SavedLocation>,
+    chart_definitions: Vec<ChartDefinition>,
+    chart_calculations: Vec<ChartCalculation>,
+    comparison_presets: Vec<ComparisonPreset>,
+    workspace_state: WorkspaceState,
 }
 
 #[derive(Serialize)]
@@ -365,6 +411,11 @@ struct VaultDocumentRef<'a> {
     sessions: &'a [Session],
     artifacts: &'a [ArtifactRecord],
     journal_entries: &'a [JournalEntry],
+    saved_locations: &'a [SavedLocation],
+    chart_definitions: &'a [ChartDefinition],
+    chart_calculations: &'a [ChartCalculation],
+    comparison_presets: &'a [ComparisonPreset],
+    workspace_state: &'a WorkspaceState,
 }
 
 #[derive(Deserialize)]
@@ -374,7 +425,17 @@ struct VaultDocumentWire {
     people: Vec<PersonWire>,
     sessions: Vec<SessionWire>,
     artifacts: Vec<ArtifactWire>,
-    journal_entries: Option<Vec<JournalEntryWire>>,
+    journal_entries: Vec<JournalEntryWire>,
+    saved_locations: Vec<SavedLocation>,
+    chart_definitions: Vec<ChartDefinition>,
+    chart_calculations: Vec<ChartCalculation>,
+    comparison_presets: Vec<ComparisonPreset>,
+    workspace_state: WorkspaceState,
+}
+
+#[derive(Deserialize)]
+struct VaultSchemaProbe {
+    schema_version: u32,
 }
 
 #[derive(Deserialize)]
@@ -432,6 +493,31 @@ impl VaultDocument {
         sessions: Vec<Session>,
         artifacts: Vec<ArtifactRecord>,
         journal_entries: Vec<JournalEntry>,
+    ) -> Result<Self, ModelError> {
+        Self::with_studio_records(
+            people,
+            sessions,
+            artifacts,
+            journal_entries,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            WorkspaceState::default(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_studio_records(
+        people: Vec<PersonProfile>,
+        sessions: Vec<Session>,
+        artifacts: Vec<ArtifactRecord>,
+        journal_entries: Vec<JournalEntry>,
+        saved_locations: Vec<SavedLocation>,
+        chart_definitions: Vec<ChartDefinition>,
+        chart_calculations: Vec<ChartCalculation>,
+        comparison_presets: Vec<ComparisonPreset>,
+        workspace_state: WorkspaceState,
     ) -> Result<Self, ModelError> {
         validate_unique(people.iter().map(PersonProfile::id), "person")?;
         validate_unique(sessions.iter().map(Session::id), "session")?;
@@ -526,11 +612,25 @@ impl VaultDocument {
                 }
             }
         }
+        validate_studio_records(
+            &person_ids,
+            &artifacts,
+            &saved_locations,
+            &chart_definitions,
+            &chart_calculations,
+            &comparison_presets,
+            &workspace_state,
+        )?;
         Ok(Self {
             people,
             sessions,
             artifacts,
             journal_entries,
+            saved_locations,
+            chart_definitions,
+            chart_calculations,
+            comparison_presets,
+            workspace_state,
         })
     }
 
@@ -540,6 +640,11 @@ impl VaultDocument {
             sessions: Vec::new(),
             artifacts: Vec::new(),
             journal_entries: Vec::new(),
+            saved_locations: Vec::new(),
+            chart_definitions: Vec::new(),
+            chart_calculations: Vec::new(),
+            comparison_presets: Vec::new(),
+            workspace_state: WorkspaceState::default(),
         }
     }
 
@@ -555,6 +660,21 @@ impl VaultDocument {
     pub fn journal_entries(&self) -> &[JournalEntry] {
         &self.journal_entries
     }
+    pub fn saved_locations(&self) -> &[SavedLocation] {
+        &self.saved_locations
+    }
+    pub fn chart_definitions(&self) -> &[ChartDefinition] {
+        &self.chart_definitions
+    }
+    pub fn chart_calculations(&self) -> &[ChartCalculation] {
+        &self.chart_calculations
+    }
+    pub fn comparison_presets(&self) -> &[ComparisonPreset] {
+        &self.comparison_presets
+    }
+    pub const fn workspace_state(&self) -> &WorkspaceState {
+        &self.workspace_state
+    }
 
     pub fn to_json(&self) -> Result<String, ModelError> {
         Ok(serde_json::to_string(&VaultDocumentRef {
@@ -563,20 +683,28 @@ impl VaultDocument {
             sessions: &self.sessions,
             artifacts: &self.artifacts,
             journal_entries: &self.journal_entries,
+            saved_locations: &self.saved_locations,
+            chart_definitions: &self.chart_definitions,
+            chart_calculations: &self.chart_calculations,
+            comparison_presets: &self.comparison_presets,
+            workspace_state: &self.workspace_state,
         })?)
     }
 
     pub fn from_json(input: &str) -> Result<Self, ModelError> {
+        let probe: VaultSchemaProbe = serde_json::from_str(input)?;
+        if probe.schema_version != VAULT_DOCUMENT_SCHEMA_VERSION {
+            return Err(ModelError::UnsupportedSchema(probe.schema_version));
+        }
         let wire: VaultDocumentWire = serde_json::from_str(input)?;
-        let journal_entries = match (wire.schema_version, wire.journal_entries) {
-            (1, None) => Vec::new(),
-            (2, Some(entries)) => entries
-                .into_iter()
-                .map(JournalEntryWire::into_model)
-                .collect::<Result<_, _>>()?,
-            (1 | 2, _) => return Err(ModelError::InvalidSchemaShape(wire.schema_version)),
-            (version, _) => return Err(ModelError::UnsupportedSchema(version)),
-        };
+        if wire.schema_version != VAULT_DOCUMENT_SCHEMA_VERSION {
+            return Err(ModelError::UnsupportedSchema(wire.schema_version));
+        }
+        let journal_entries = wire
+            .journal_entries
+            .into_iter()
+            .map(JournalEntryWire::into_model)
+            .collect::<Result<_, _>>()?;
         let people = wire
             .people
             .into_iter()
@@ -592,7 +720,17 @@ impl VaultDocument {
             .into_iter()
             .map(ArtifactWire::into_model)
             .collect::<Result<_, _>>()?;
-        Self::new(people, sessions, artifacts, journal_entries)
+        Self::with_studio_records(
+            people,
+            sessions,
+            artifacts,
+            journal_entries,
+            wire.saved_locations,
+            wire.chart_definitions,
+            wire.chart_calculations,
+            wire.comparison_presets,
+            wire.workspace_state,
+        )
     }
 }
 
@@ -635,6 +773,12 @@ impl ArtifactWire {
             .transpose()?;
         let rebuilt = match self.kind {
             ArtifactKind::AstraeusCalculation => ArtifactRecord::from_astraeus_calculation(
+                id,
+                person_id,
+                session_id,
+                &self.canonical_json,
+            )?,
+            ArtifactKind::AstraeusComparison => ArtifactRecord::from_astraeus_comparison(
                 id,
                 person_id,
                 session_id,
@@ -730,6 +874,26 @@ pub enum ModelError {
     UnsupportedSchema(u32),
     #[error("invalid field set for vault document schema version {0}")]
     InvalidSchemaShape(u32),
+    #[error("invalid value in {0}")]
+    InvalidValue(&'static str),
+    #[error("a person may have only one default natal chart")]
+    DuplicateDefaultNatal,
+    #[error("a default natal chart must have a person and natal role")]
+    InvalidDefaultNatal,
+    #[error("chart current calculation does not belong to that chart")]
+    CalculationChartMismatch,
+    #[error("chart calculation does not reference an Astraeus calculation artifact")]
+    CalculationArtifactMismatch,
+    #[error("comparison preset sources are inconsistent")]
+    InvalidComparisonSources,
+    #[error("comparison preset does not reference an Astraeus comparison artifact")]
+    ComparisonArtifactMismatch,
+    #[error("ambiguous local time requires an explicit earlier or later choice")]
+    AmbiguousLocalTime,
+    #[error("local time does not exist in the selected time zone")]
+    NonexistentLocalTime,
+    #[error("an ambiguity choice was supplied for a unique local time")]
+    UnexpectedAmbiguousTimeChoice,
     #[error("invalid vault document JSON: {0}")]
     Json(#[from] serde_json::Error),
 }

@@ -10,8 +10,8 @@ not recalculate astrology or reinterpret tarot domain records.
 ## Status
 
 **Lifecycle:** Active pre-1.0 application. The CLI, storage contracts, chart
-renderer, and first Rust/WASM graphical foundation are implemented; chart data
-entry and workspace services may evolve.
+renderer, Rust/WASM graphical foundation, and schema-v3 chart services are
+implemented; the chart-first forms and workspace presentation are next.
 
 Phase 5C/5D integration checkpoint: validated composition records, encrypted
 atomic persistence, reusable tarot/chart/journal services, validated local
@@ -20,6 +20,12 @@ and a stateless SVG/HTML transit-biwheel renderer. A Leptos CSR shell now runs
 through an authenticated, loopback-only Rust host with vault create/unlock and
 routes for people, locations, charts, and the comparison workspace. There is no
 synchronization, account system, AI layer, or camera recognition.
+
+Schema v3 adds encrypted saved-location snapshots, editable chart definitions,
+immutable calculation history, comparison presets with exact source IDs, and
+active workspace state. The native API resolves IANA local times explicitly,
+rejects nonexistent wall times, requires a choice for ambiguous wall times, and
+persists accepted mutations with optimistic atomic storage.
 
 ## CLI
 

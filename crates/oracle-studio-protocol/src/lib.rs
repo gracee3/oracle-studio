@@ -157,6 +157,229 @@ impl fmt::Debug for UnlockVaultRequest {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PersonKindInput {
+    Personal,
+    ProfessionalClient,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SavePersonRequest {
+    pub protocol_version: u16,
+    pub id: String,
+    pub display_name: String,
+    pub kind: PersonKindInput,
+    pub notes: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum LocationProvenanceInput {
+    Manual,
+    GeoNames {
+        geonames_id: u64,
+        catalog_content_id: String,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SaveLocationRequest {
+    pub protocol_version: u16,
+    pub id: String,
+    pub label: String,
+    pub administrative_names: Vec<String>,
+    pub country_code: String,
+    pub latitude_degrees: f64,
+    pub longitude_degrees: f64,
+    pub elevation_meters: Option<f64>,
+    pub time_zone: String,
+    pub provenance: LocationProvenanceInput,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChartRoleInput {
+    Natal,
+    Event,
+    Transit,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ZodiacInput {
+    Tropical,
+    Sidereal,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AyanamsaInput {
+    FaganBradley,
+    Lahiri,
+    DeLuce,
+    Raman,
+    Krishnamurti,
+    Yukteshwar,
+    JnBhasin,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HouseSystemInput {
+    Placidus,
+    Koch,
+    Porphyry,
+    Regiomontanus,
+    Campanus,
+    Equal,
+    WholeSign,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CelestialObjectInput {
+    Moon,
+    Sun,
+    Mercury,
+    Venus,
+    Mars,
+    Jupiter,
+    Saturn,
+    Uranus,
+    Neptune,
+    Pluto,
+    MeanNode,
+    TrueNode,
+    Chiron,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChartPointInput {
+    Moon,
+    Sun,
+    Mercury,
+    Venus,
+    Mars,
+    Jupiter,
+    Saturn,
+    Uranus,
+    Neptune,
+    Pluto,
+    MeanNode,
+    TrueNode,
+    Chiron,
+    MeanSouthNode,
+    TrueSouthNode,
+    Ascendant,
+    Midheaven,
+    Descendant,
+    ImumCoeli,
+    Vertex,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SaveChartRequest {
+    pub protocol_version: u16,
+    pub id: String,
+    pub label: String,
+    pub role: ChartRoleInput,
+    pub person_id: Option<String>,
+    pub local_date: String,
+    pub local_time: String,
+    pub time_zone: String,
+    pub zodiac: ZodiacInput,
+    pub ayanamsa: Option<AyanamsaInput>,
+    pub house_system: HouseSystemInput,
+    pub ordered_objects: Vec<CelestialObjectInput>,
+    pub ordered_points: Vec<ChartPointInput>,
+    pub default_natal: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AmbiguousTimeChoiceInput {
+    Earlier,
+    Later,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CalculateChartRequest {
+    pub protocol_version: u16,
+    pub chart_calculation_id: String,
+    pub calculation_artifact_id: String,
+    pub chart_definition_id: String,
+    pub saved_location_id: String,
+    pub ambiguous_time_choice: Option<AmbiguousTimeChoiceInput>,
+    pub calculated_at: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AspectKindInput {
+    Conjunction,
+    Opposition,
+    Square,
+    Trine,
+    Sextile,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AspectDefinitionInput {
+    pub kind: AspectKindInput,
+    pub orb_degrees: f64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WheelOrientationInput {
+    AscendantLeft,
+    AriesTop,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SaveComparisonRequest {
+    pub protocol_version: u16,
+    pub id: String,
+    pub label: String,
+    pub inner_chart_definition_id: String,
+    pub outer_chart_definition_id: String,
+    pub inner_points: Vec<ChartPointInput>,
+    pub outer_points: Vec<ChartPointInput>,
+    pub aspects: Vec<AspectDefinitionInput>,
+    pub orientation: WheelOrientationInput,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CalculateComparisonRequest {
+    pub protocol_version: u16,
+    pub comparison_artifact_id: String,
+    pub comparison_preset_id: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetWorkspaceRequest {
+    pub protocol_version: u16,
+    pub active_person_id: Option<String>,
+    pub active_comparison_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MutationResult {
+    pub revision: String,
+    pub record_id: String,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PersonSummary {
@@ -165,13 +388,15 @@ pub struct PersonSummary {
     pub kind: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LocationSummary {
     pub id: String,
     pub label: String,
     pub country_code: String,
     pub time_zone: String,
+    pub latitude_degrees: f64,
+    pub longitude_degrees: f64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -181,6 +406,8 @@ pub struct ChartSummary {
     pub label: String,
     pub role: String,
     pub person_id: Option<String>,
+    pub default_natal: bool,
+    pub current_calculation_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -190,6 +417,7 @@ pub struct ComparisonSummary {
     pub label: String,
     pub inner_chart_id: String,
     pub outer_chart_id: String,
+    pub current_comparison_artifact_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]

@@ -304,17 +304,19 @@ mod tests {
     }
 
     #[test]
-    fn authenticated_schema_one_plaintext_migrates_after_decryption() {
-        let legacy = br#"{"schema_version":1,"people":[],"sessions":[],"artifacts":[]}"#;
-        let envelope =
-            seal_plaintext_with_material(legacy, b"test password", [9; 16], [10; 24]).unwrap();
-        let migrated = open(&envelope, b"test password").unwrap();
-        assert!(migrated.journal_entries().is_empty());
-        assert!(
-            migrated
-                .to_json()
-                .unwrap()
-                .starts_with("{\"schema_version\":2,")
-        );
+    fn authenticated_pre_v3_plaintext_is_rejected_without_migration() {
+        for (version, salt) in [(1, [9; 16]), (2, [10; 16])] {
+            let legacy = format!(
+                "{{\"schema_version\":{version},\"people\":[],\"sessions\":[],\"artifacts\":[],\"journal_entries\":[]}}"
+            );
+            let envelope =
+                seal_plaintext_with_material(legacy.as_bytes(), b"test password", salt, [11; 24])
+                    .unwrap();
+            assert!(matches!(
+                open(&envelope, b"test password"),
+                Err(VaultError::InvalidDocument(ModelError::UnsupportedSchema(rejected)))
+                    if rejected == version
+            ));
+        }
     }
 }

@@ -1,11 +1,22 @@
 //! Reusable offline use-case services for Oracle Studio.
 
 use astraeus_artifacts::CalculationArtifact;
-use astraeus_core::{CalculationRequest, EphemerisAdapter};
+use astraeus_comparison::{ComparisonArtifact, ComparisonKind, ComparisonSpecification};
+use astraeus_core::{
+    AspectDefinition as AstraeusAspectDefinition, AspectDefinitions,
+    AspectKind as AstraeusAspectKind, Ayanamsa, CalculationOptions, CalculationRequest,
+    CelestialObject, ChartPointId as AstraeusChartPointId, ChartPointSelection, EphemerisAdapter,
+    GeographicLocation, HouseSystem, UtcInstant as AstraeusInstant, Zodiac,
+};
+use astraeus_derived::DerivedChartArtifact;
+use astraeus_specifications::ChartSpecification;
 use astraeus_swiss::SwissEphemerisAdapter;
 use oracle_studio_assets::{DeckPackManifest, VerifiedAsset};
 use oracle_studio_core::{
-    ArtifactKind, ArtifactRecord, JournalEntry, PersonProfile, Session, StableId, VaultDocument,
+    AmbiguousTimeChoice, ArtifactKind, ArtifactRecord, AspectDefinition, AspectKindId, AyanamsaId,
+    CelestialObjectId, ChartCalculation, ChartCalculationOptions, ChartDefinition, ChartPointId,
+    ChartRole, ComparisonPreset, HouseSystemId, JournalEntry, PersonProfile, SavedLocation,
+    Session, StableId, VaultDocument, WorkspaceState, ZodiacId, select_local_time,
 };
 use sibylla_artifacts::{Artifact, DeckArtifact, ReadingArtifact};
 use sibylla_core::{
@@ -15,6 +26,22 @@ use sibylla_core::{
 use thiserror::Error;
 
 pub struct StudioService;
+
+#[derive(Clone, Debug)]
+pub struct ChartCalculationRequest {
+    pub chart_calculation_id: StableId,
+    pub calculation_artifact_id: StableId,
+    pub chart_definition_id: StableId,
+    pub saved_location_id: StableId,
+    pub ambiguous_time_choice: Option<AmbiguousTimeChoice>,
+    pub calculated_at: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct ComparisonCalculationRequest {
+    pub comparison_artifact_id: StableId,
+    pub comparison_preset_id: StableId,
+}
 
 #[derive(Clone, Debug)]
 pub struct ManualPlacementInput {
@@ -192,6 +219,312 @@ impl StudioService {
             sessions,
             document.artifacts().to_vec(),
             document.journal_entries().to_vec(),
+        )
+    }
+
+    pub fn add_saved_location(
+        document: &VaultDocument,
+        location: SavedLocation,
+    ) -> Result<VaultDocument, AppError> {
+        let mut locations = document.saved_locations().to_vec();
+        locations.push(location);
+        rebuild_studio(
+            document,
+            document.artifacts().to_vec(),
+            locations,
+            document.chart_definitions().to_vec(),
+            document.chart_calculations().to_vec(),
+            document.comparison_presets().to_vec(),
+            document.workspace_state().clone(),
+        )
+    }
+
+    pub fn replace_saved_location(
+        document: &VaultDocument,
+        location: SavedLocation,
+    ) -> Result<VaultDocument, AppError> {
+        let mut locations = document.saved_locations().to_vec();
+        let existing = locations
+            .iter_mut()
+            .find(|existing| existing.id() == location.id())
+            .ok_or(AppError::NotFound("saved location"))?;
+        *existing = location;
+        rebuild_studio(
+            document,
+            document.artifacts().to_vec(),
+            locations,
+            document.chart_definitions().to_vec(),
+            document.chart_calculations().to_vec(),
+            document.comparison_presets().to_vec(),
+            document.workspace_state().clone(),
+        )
+    }
+
+    pub fn add_chart_definition(
+        document: &VaultDocument,
+        chart: ChartDefinition,
+    ) -> Result<VaultDocument, AppError> {
+        let mut charts = document.chart_definitions().to_vec();
+        charts.push(chart);
+        rebuild_studio(
+            document,
+            document.artifacts().to_vec(),
+            document.saved_locations().to_vec(),
+            charts,
+            document.chart_calculations().to_vec(),
+            document.comparison_presets().to_vec(),
+            document.workspace_state().clone(),
+        )
+    }
+
+    pub fn replace_chart_definition(
+        document: &VaultDocument,
+        mut chart: ChartDefinition,
+    ) -> Result<VaultDocument, AppError> {
+        let mut charts = document.chart_definitions().to_vec();
+        let existing = charts
+            .iter_mut()
+            .find(|existing| existing.id() == chart.id())
+            .ok_or(AppError::NotFound("chart definition"))?;
+        if let Some(calculation_id) = existing.current_calculation_id()
+            && chart.current_calculation_id().is_none()
+        {
+            chart.set_current_calculation(calculation_id.clone());
+        }
+        *existing = chart;
+        rebuild_studio(
+            document,
+            document.artifacts().to_vec(),
+            document.saved_locations().to_vec(),
+            charts,
+            document.chart_calculations().to_vec(),
+            document.comparison_presets().to_vec(),
+            document.workspace_state().clone(),
+        )
+    }
+
+    /// Resolve a chart's local wall time, calculate it, and append an immutable snapshot.
+    ///
+    /// Recalculation never edits an earlier [`ChartCalculation`]. It appends a new
+    /// calculation and artifact, then advances only the chart's current-result pointer.
+    pub fn calculate_chart_definition(
+        document: &VaultDocument,
+        request: ChartCalculationRequest,
+    ) -> Result<VaultDocument, AppError> {
+        let chart = document
+            .chart_definitions()
+            .iter()
+            .find(|chart| chart.id() == &request.chart_definition_id)
+            .ok_or(AppError::NotFound("chart definition"))?;
+        let location = document
+            .saved_locations()
+            .iter()
+            .find(|location| location.id() == &request.saved_location_id)
+            .ok_or(AppError::NotFound("saved location"))?;
+        if chart.local_input().time_zone() != location.time_zone() {
+            return Err(AppError::ChartLocationTimeZoneMismatch);
+        }
+
+        let resolved = select_local_time(chart.local_input(), request.ambiguous_time_choice)?;
+        let options = astraeus_options(chart.calculation_options())?;
+        let calculation_request = CalculationRequest::from_options(
+            AstraeusInstant::parse_rfc3339(resolved.utc_instant())
+                .map_err(|error| AppError::Astraeus(error.to_string()))?,
+            GeographicLocation::new(
+                location.latitude_degrees(),
+                location.longitude_degrees(),
+                location.elevation_meters().unwrap_or(0.0),
+            )
+            .map_err(|error| AppError::Astraeus(error.to_string()))?,
+            options,
+        );
+        let result = SwissEphemerisAdapter::moshier()
+            .calculate(&calculation_request)
+            .map_err(|error| AppError::Astraeus(error.to_string()))?;
+        let artifact = CalculationArtifact::new(calculation_request, result)
+            .map_err(|error| AppError::Astraeus(error.to_string()))?;
+        let artifact_json = artifact
+            .to_json()
+            .map_err(|error| AppError::Astraeus(error.to_string()))?;
+        let artifact_record = ArtifactRecord::from_astraeus_calculation(
+            request.calculation_artifact_id.clone(),
+            chart.person_id().cloned(),
+            None,
+            &artifact_json,
+        )?;
+        let calculation = ChartCalculation::new(
+            request.chart_calculation_id.clone(),
+            chart.id().clone(),
+            chart.local_input().clone(),
+            resolved,
+            location.clone(),
+            request.calculation_artifact_id,
+            request.calculated_at,
+        )?;
+
+        let mut artifacts = document.artifacts().to_vec();
+        artifacts.push(artifact_record);
+        let mut calculations = document.chart_calculations().to_vec();
+        calculations.push(calculation);
+        let mut charts = document.chart_definitions().to_vec();
+        charts
+            .iter_mut()
+            .find(|candidate| candidate.id() == &request.chart_definition_id)
+            .expect("chart was resolved from the same document")
+            .set_current_calculation(request.chart_calculation_id);
+        rebuild_studio(
+            document,
+            artifacts,
+            document.saved_locations().to_vec(),
+            charts,
+            calculations,
+            document.comparison_presets().to_vec(),
+            document.workspace_state().clone(),
+        )
+    }
+
+    pub fn add_comparison_preset(
+        document: &VaultDocument,
+        preset: ComparisonPreset,
+    ) -> Result<VaultDocument, AppError> {
+        let mut presets = document.comparison_presets().to_vec();
+        presets.push(preset);
+        rebuild_studio(
+            document,
+            document.artifacts().to_vec(),
+            document.saved_locations().to_vec(),
+            document.chart_definitions().to_vec(),
+            document.chart_calculations().to_vec(),
+            presets,
+            document.workspace_state().clone(),
+        )
+    }
+
+    pub fn replace_comparison_preset(
+        document: &VaultDocument,
+        mut preset: ComparisonPreset,
+    ) -> Result<VaultDocument, AppError> {
+        let mut presets = document.comparison_presets().to_vec();
+        let existing = presets
+            .iter_mut()
+            .find(|existing| existing.id() == preset.id())
+            .ok_or(AppError::NotFound("comparison preset"))?;
+        if preset.current_comparison_artifact_id().is_none()
+            && let (Some(inner), Some(outer), Some(artifact)) = (
+                existing.current_inner_calculation_id(),
+                existing.current_outer_calculation_id(),
+                existing.current_comparison_artifact_id(),
+            )
+        {
+            preset.set_current_comparison(inner.clone(), outer.clone(), artifact.clone());
+        }
+        *existing = preset;
+        rebuild_studio(
+            document,
+            document.artifacts().to_vec(),
+            document.saved_locations().to_vec(),
+            document.chart_definitions().to_vec(),
+            document.chart_calculations().to_vec(),
+            presets,
+            document.workspace_state().clone(),
+        )
+    }
+
+    /// Build a comparison from the exact immutable calculations currently selected by its charts.
+    pub fn calculate_comparison(
+        document: &VaultDocument,
+        request: ComparisonCalculationRequest,
+    ) -> Result<VaultDocument, AppError> {
+        let preset = document
+            .comparison_presets()
+            .iter()
+            .find(|preset| preset.id() == &request.comparison_preset_id)
+            .ok_or(AppError::NotFound("comparison preset"))?;
+        let inner_chart = chart_for(document, preset.inner_chart_definition_id())?;
+        let outer_chart = chart_for(document, preset.outer_chart_definition_id())?;
+        let inner_calculation = current_calculation(document, inner_chart)?;
+        let outer_calculation = current_calculation(document, outer_chart)?;
+        let inner_artifact = calculation_artifact(document, inner_calculation)?;
+        let outer_artifact = calculation_artifact(document, outer_calculation)?;
+        let aspects = astraeus_aspects(preset.aspects())?;
+        let inner_points = astraeus_points(preset.inner_points())?;
+        let outer_points = astraeus_points(preset.outer_points())?;
+        let inner_specification = ChartSpecification::with_aspect_points(
+            astraeus_options(inner_chart.calculation_options())?,
+            aspects.clone(),
+            inner_points.clone(),
+        )
+        .map_err(|error| AppError::Astraeus(error.to_string()))?;
+        let outer_specification = ChartSpecification::with_aspect_points(
+            astraeus_options(outer_chart.calculation_options())?,
+            aspects.clone(),
+            outer_points.clone(),
+        )
+        .map_err(|error| AppError::Astraeus(error.to_string()))?;
+        let inner_derived = DerivedChartArtifact::new(inner_artifact, inner_specification)
+            .map_err(|error| AppError::Astraeus(error.to_string()))?;
+        let outer_derived = DerivedChartArtifact::new(outer_artifact, outer_specification)
+            .map_err(|error| AppError::Astraeus(error.to_string()))?;
+        let comparison_specification =
+            if inner_chart.role() == ChartRole::Natal && outer_chart.role() == ChartRole::Natal {
+                ComparisonSpecification::synastry(aspects, inner_points, outer_points)
+            } else {
+                ComparisonSpecification::moving_second(
+                    comparison_kind(inner_chart.role(), outer_chart.role()),
+                    aspects,
+                    inner_points,
+                    outer_points,
+                )
+            }
+            .map_err(|error| AppError::Astraeus(error.to_string()))?;
+        let comparison =
+            ComparisonArtifact::new(inner_derived, outer_derived, comparison_specification)
+                .map_err(|error| AppError::Astraeus(error.to_string()))?;
+        let json = comparison
+            .to_json()
+            .map_err(|error| AppError::Astraeus(error.to_string()))?;
+        let artifact = ArtifactRecord::from_astraeus_comparison(
+            request.comparison_artifact_id.clone(),
+            None,
+            None,
+            &json,
+        )?;
+
+        let mut artifacts = document.artifacts().to_vec();
+        artifacts.push(artifact);
+        let mut presets = document.comparison_presets().to_vec();
+        presets
+            .iter_mut()
+            .find(|candidate| candidate.id() == &request.comparison_preset_id)
+            .expect("preset was resolved from the same document")
+            .set_current_comparison(
+                inner_calculation.id().clone(),
+                outer_calculation.id().clone(),
+                request.comparison_artifact_id,
+            );
+        rebuild_studio(
+            document,
+            artifacts,
+            document.saved_locations().to_vec(),
+            document.chart_definitions().to_vec(),
+            document.chart_calculations().to_vec(),
+            presets,
+            document.workspace_state().clone(),
+        )
+    }
+
+    pub fn set_workspace_state(
+        document: &VaultDocument,
+        workspace: WorkspaceState,
+    ) -> Result<VaultDocument, AppError> {
+        rebuild_studio(
+            document,
+            document.artifacts().to_vec(),
+            document.saved_locations().to_vec(),
+            document.chart_definitions().to_vec(),
+            document.chart_calculations().to_vec(),
+            document.comparison_presets().to_vec(),
+            workspace,
         )
     }
 
@@ -486,14 +819,197 @@ fn add_artifact(
     )
 }
 
+fn chart_for<'a>(
+    document: &'a VaultDocument,
+    id: &StableId,
+) -> Result<&'a ChartDefinition, AppError> {
+    document
+        .chart_definitions()
+        .iter()
+        .find(|chart| chart.id() == id)
+        .ok_or(AppError::NotFound("chart definition"))
+}
+
+fn current_calculation<'a>(
+    document: &'a VaultDocument,
+    chart: &ChartDefinition,
+) -> Result<&'a ChartCalculation, AppError> {
+    let id = chart
+        .current_calculation_id()
+        .ok_or(AppError::MissingCurrentCalculation)?;
+    document
+        .chart_calculations()
+        .iter()
+        .find(|calculation| calculation.id() == id)
+        .ok_or(AppError::NotFound("chart calculation"))
+}
+
+fn calculation_artifact(
+    document: &VaultDocument,
+    calculation: &ChartCalculation,
+) -> Result<CalculationArtifact, AppError> {
+    let record = document
+        .artifacts()
+        .iter()
+        .find(|artifact| artifact.id() == calculation.calculation_artifact_id())
+        .ok_or(AppError::NotFound("calculation artifact"))?;
+    if record.kind() != ArtifactKind::AstraeusCalculation {
+        return Err(AppError::ExpectedCalculation);
+    }
+    CalculationArtifact::from_json(record.canonical_json())
+        .map_err(|error| AppError::Astraeus(error.to_string()))
+}
+
+fn astraeus_options(options: &ChartCalculationOptions) -> Result<CalculationOptions, AppError> {
+    CalculationOptions::new(
+        options
+            .ordered_objects()
+            .iter()
+            .copied()
+            .map(astraeus_object)
+            .collect(),
+        match options.zodiac() {
+            ZodiacId::Tropical => Zodiac::Tropical,
+            ZodiacId::Sidereal => Zodiac::Sidereal,
+        },
+        options.ayanamsa().map(|ayanamsa| match ayanamsa {
+            AyanamsaId::FaganBradley => Ayanamsa::FaganBradley,
+            AyanamsaId::Lahiri => Ayanamsa::Lahiri,
+            AyanamsaId::DeLuce => Ayanamsa::DeLuce,
+            AyanamsaId::Raman => Ayanamsa::Raman,
+            AyanamsaId::Krishnamurti => Ayanamsa::Krishnamurti,
+            AyanamsaId::Yukteshwar => Ayanamsa::Yukteshwar,
+            AyanamsaId::JnBhasin => Ayanamsa::JnBhasin,
+        }),
+        match options.house_system() {
+            HouseSystemId::Placidus => HouseSystem::Placidus,
+            HouseSystemId::Koch => HouseSystem::Koch,
+            HouseSystemId::Porphyry => HouseSystem::Porphyry,
+            HouseSystemId::Regiomontanus => HouseSystem::Regiomontanus,
+            HouseSystemId::Campanus => HouseSystem::Campanus,
+            HouseSystemId::Equal => HouseSystem::Equal,
+            HouseSystemId::WholeSign => HouseSystem::WholeSign,
+        },
+    )
+    .map_err(|error| AppError::Astraeus(error.to_string()))
+}
+
+fn astraeus_object(object: CelestialObjectId) -> CelestialObject {
+    match object {
+        CelestialObjectId::Moon => CelestialObject::Moon,
+        CelestialObjectId::Sun => CelestialObject::Sun,
+        CelestialObjectId::Mercury => CelestialObject::Mercury,
+        CelestialObjectId::Venus => CelestialObject::Venus,
+        CelestialObjectId::Mars => CelestialObject::Mars,
+        CelestialObjectId::Jupiter => CelestialObject::Jupiter,
+        CelestialObjectId::Saturn => CelestialObject::Saturn,
+        CelestialObjectId::Uranus => CelestialObject::Uranus,
+        CelestialObjectId::Neptune => CelestialObject::Neptune,
+        CelestialObjectId::Pluto => CelestialObject::Pluto,
+        CelestialObjectId::MeanNode => CelestialObject::MeanNode,
+        CelestialObjectId::TrueNode => CelestialObject::TrueNode,
+        CelestialObjectId::Chiron => CelestialObject::Chiron,
+    }
+}
+
+fn astraeus_point(point: ChartPointId) -> AstraeusChartPointId {
+    match point {
+        ChartPointId::Moon => AstraeusChartPointId::Moon,
+        ChartPointId::Sun => AstraeusChartPointId::Sun,
+        ChartPointId::Mercury => AstraeusChartPointId::Mercury,
+        ChartPointId::Venus => AstraeusChartPointId::Venus,
+        ChartPointId::Mars => AstraeusChartPointId::Mars,
+        ChartPointId::Jupiter => AstraeusChartPointId::Jupiter,
+        ChartPointId::Saturn => AstraeusChartPointId::Saturn,
+        ChartPointId::Uranus => AstraeusChartPointId::Uranus,
+        ChartPointId::Neptune => AstraeusChartPointId::Neptune,
+        ChartPointId::Pluto => AstraeusChartPointId::Pluto,
+        ChartPointId::MeanNode => AstraeusChartPointId::MeanNode,
+        ChartPointId::TrueNode => AstraeusChartPointId::TrueNode,
+        ChartPointId::Chiron => AstraeusChartPointId::Chiron,
+        ChartPointId::MeanSouthNode => AstraeusChartPointId::MeanSouthNode,
+        ChartPointId::TrueSouthNode => AstraeusChartPointId::TrueSouthNode,
+        ChartPointId::Ascendant => AstraeusChartPointId::Ascendant,
+        ChartPointId::Midheaven => AstraeusChartPointId::Midheaven,
+        ChartPointId::Descendant => AstraeusChartPointId::Descendant,
+        ChartPointId::ImumCoeli => AstraeusChartPointId::ImumCoeli,
+        ChartPointId::Vertex => AstraeusChartPointId::Vertex,
+    }
+}
+
+fn astraeus_points(points: &[ChartPointId]) -> Result<ChartPointSelection, AppError> {
+    ChartPointSelection::new(points.iter().copied().map(astraeus_point).collect())
+        .map_err(|error| AppError::Astraeus(error.to_string()))
+}
+
+fn astraeus_aspects(aspects: &[AspectDefinition]) -> Result<AspectDefinitions, AppError> {
+    let definitions = aspects
+        .iter()
+        .map(|aspect| {
+            let kind = match aspect.kind() {
+                AspectKindId::Conjunction => AstraeusAspectKind::Conjunction,
+                AspectKindId::Opposition => AstraeusAspectKind::Opposition,
+                AspectKindId::Square => AstraeusAspectKind::Square,
+                AspectKindId::Trine => AstraeusAspectKind::Trine,
+                AspectKindId::Sextile => AstraeusAspectKind::Sextile,
+            };
+            AstraeusAspectDefinition::new(kind, aspect.orb_degrees())
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| AppError::Astraeus(error.to_string()))?;
+    AspectDefinitions::new(definitions).map_err(|error| AppError::Astraeus(error.to_string()))
+}
+
+fn comparison_kind(inner: ChartRole, outer: ChartRole) -> ComparisonKind {
+    match (inner, outer) {
+        (ChartRole::Natal, ChartRole::Transit) => ComparisonKind::TransitToNatal,
+        (ChartRole::Natal, ChartRole::Event) => ComparisonKind::EventToNatal,
+        (ChartRole::Transit, ChartRole::Transit) => ComparisonKind::TransitToTransit,
+        _ => ComparisonKind::Generic,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn rebuild_studio(
+    document: &VaultDocument,
+    artifacts: Vec<ArtifactRecord>,
+    locations: Vec<SavedLocation>,
+    charts: Vec<ChartDefinition>,
+    calculations: Vec<ChartCalculation>,
+    comparisons: Vec<ComparisonPreset>,
+    workspace: WorkspaceState,
+) -> Result<VaultDocument, AppError> {
+    Ok(VaultDocument::with_studio_records(
+        document.people().to_vec(),
+        document.sessions().to_vec(),
+        artifacts,
+        document.journal_entries().to_vec(),
+        locations,
+        charts,
+        calculations,
+        comparisons,
+        workspace,
+    )?)
+}
+
 fn rebuild(
-    _document: &VaultDocument,
+    document: &VaultDocument,
     people: Vec<PersonProfile>,
     sessions: Vec<Session>,
     artifacts: Vec<ArtifactRecord>,
     entries: Vec<JournalEntry>,
 ) -> Result<VaultDocument, AppError> {
-    Ok(VaultDocument::new(people, sessions, artifacts, entries)?)
+    Ok(VaultDocument::with_studio_records(
+        people,
+        sessions,
+        artifacts,
+        entries,
+        document.saved_locations().to_vec(),
+        document.chart_definitions().to_vec(),
+        document.chart_calculations().to_vec(),
+        document.comparison_presets().to_vec(),
+        document.workspace_state().clone(),
+    )?)
 }
 
 fn push_hit<'a>(
@@ -523,6 +1039,12 @@ pub enum AppError {
     NotFound(&'static str),
     #[error("expected a Sibylla deck artifact")]
     ExpectedDeck,
+    #[error("expected an Astraeus calculation artifact")]
+    ExpectedCalculation,
+    #[error("chart has no current calculation")]
+    MissingCurrentCalculation,
+    #[error("chart and saved location must use the same IANA time zone")]
+    ChartLocationTimeZoneMismatch,
     #[error("reading placement count does not match the spread or deck")]
     PlacementCount,
     #[error("reading references an unknown deck card")]

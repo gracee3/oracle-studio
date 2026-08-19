@@ -11,6 +11,7 @@ rust-version.workspace = true
 axum.workspace = true
 clap.workspace = true
 getrandom.workspace = true
+oracle-studio-app = { version = "0.1.0", path = "../oracle-studio-app" }
 oracle-studio-core = { version = "0.1.0", path = "../oracle-studio-core" }
 oracle-studio-protocol = { version = "0.1.0", path = "../oracle-studio-protocol" }
 oracle-studio-storage = { version = "0.1.0", path = "../oracle-studio-storage" }

@@ -52,9 +52,10 @@ bootstrap.
 
 After unlock, the native session owns the decrypted document, optimistic vault
 revision, and a zeroizing password allocation. Explicit lock drops that state.
-Any API access first expires state that has been idle for 15 minutes. Accepted
-future mutations must save through `FileVault::save` with the session revision,
-then replace the in-memory revision only after the atomic write succeeds.
+Any API access first expires state that has been idle for 15 minutes. Every
+accepted person, location, chart, comparison, or workspace mutation saves
+through `FileVault::save` with the session revision, then replaces the in-memory
+document and revision only after the atomic write succeeds.
 
 The browser necessarily handles the password while the user fills and submits
 the unlock form. The input is cleared immediately after submission; no browser
@@ -70,9 +71,10 @@ The CSR shell owns these stable route families:
 - `/locations` — saved locations and offline catalog settings;
 - `/workspace` — the active natal/transit comparison.
 
-The foundation routes use explicit empty states until schema-v3 services and the
-chart workspace land. They are responsive, keyboard-focusable, and use live
-regions for vault and form errors.
+The native protocol already exposes schema-v3 list, save, calculate, and
+workspace operations. The foundation views remain explicit empty states until
+the chart-first form and renderer integration land. They are responsive,
+keyboard-focusable, and use live regions for vault and form errors.
 
 ## Build and run
 

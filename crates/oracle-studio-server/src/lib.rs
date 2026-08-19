@@ -16,11 +16,21 @@ use axum::{
     response::{IntoResponse, Response},
     routing::post,
 };
-use oracle_studio_core::{PersonKind, VaultDocument};
+use oracle_studio_app::{ChartCalculationRequest, ComparisonCalculationRequest, StudioService};
+use oracle_studio_core::{
+    AmbiguousTimeChoice, AspectDefinition, AspectKindId, AyanamsaId, CelestialObjectId,
+    ChartCalculationOptions, ChartDefinition, ChartPointId, ChartRole, ComparisonPreset,
+    HouseSystemId, LocalDateTimeInput, LocationProvenance, PersonKind, PersonProfile,
+    SavedLocation, StableId, VaultDocument, WheelOrientation, WorkspaceState, ZodiacId,
+};
 use oracle_studio_protocol::{
-    ApiError, ApiErrorCode, ApiResponse, ChartSummary, ComparisonSummary, CreateVaultRequest,
-    LocationSummary, PROTOCOL_VERSION, PersonSummary, ProtocolRequest, SessionStatus,
-    UnlockVaultRequest, VaultState, WorkspaceSummary,
+    AmbiguousTimeChoiceInput, ApiError, ApiErrorCode, ApiResponse, AspectKindInput, AyanamsaInput,
+    CalculateChartRequest, CalculateComparisonRequest, CelestialObjectInput, ChartPointInput,
+    ChartRoleInput, ChartSummary, ComparisonSummary, CreateVaultRequest, HouseSystemInput,
+    LocationProvenanceInput, LocationSummary, MutationResult, PROTOCOL_VERSION, PersonKindInput,
+    PersonSummary, ProtocolRequest, SaveChartRequest, SaveComparisonRequest, SaveLocationRequest,
+    SavePersonRequest, SessionStatus, SetWorkspaceRequest, UnlockVaultRequest, VaultState,
+    WheelOrientationInput, WorkspaceSummary, ZodiacInput,
 };
 use oracle_studio_storage::{ExpectedState, FileVault, StorageError, VaultRevision};
 use subtle::ConstantTimeEq;
@@ -74,7 +84,7 @@ struct VaultSession {
     vault: FileVault,
     document: VaultDocument,
     revision: VaultRevision,
-    _password: Zeroizing<Vec<u8>>,
+    password: Zeroizing<Vec<u8>>,
     last_activity: Instant,
 }
 
@@ -103,7 +113,7 @@ impl SessionStore {
             vault,
             document,
             revision,
-            _password: password,
+            password,
             last_activity: now,
         });
     }
@@ -147,10 +157,17 @@ pub fn app(state: AppState, distribution: impl AsRef<Path>) -> Router {
         .route("/vault/unlock", post(unlock_vault))
         .route("/vault/lock", post(lock_vault))
         .route("/people/list", post(list_people))
+        .route("/people/save", post(save_person))
         .route("/locations/list", post(list_locations))
+        .route("/locations/save", post(save_location))
         .route("/charts/list", post(list_charts))
+        .route("/charts/save", post(save_chart))
+        .route("/charts/calculate", post(calculate_chart))
         .route("/comparisons/list", post(list_comparisons))
+        .route("/comparisons/save", post(save_comparison))
+        .route("/comparisons/calculate", post(calculate_comparison))
         .route("/workspace/get", post(get_workspace))
+        .route("/workspace/set", post(set_workspace))
         .route_layer(middleware::from_fn_with_state(state.clone(), authorize_api))
         .with_state(state);
     let distribution = distribution.as_ref().to_owned();
@@ -364,35 +381,92 @@ async fn list_locations(
     State(state): State<AppState>,
     Json(request): Json<ProtocolRequest>,
 ) -> Response {
-    empty_unlocked_list::<LocationSummary>(&state, request).await
+    if let Err(response) = require_protocol(request.protocol_version) {
+        return response.into_response();
+    }
+    let mut session = state.0.session.lock().await;
+    let current = match active_session(&mut session) {
+        Ok(current) => current,
+        Err(response) => return response.into_response(),
+    };
+    let locations = current
+        .document
+        .saved_locations()
+        .iter()
+        .map(|location| LocationSummary {
+            id: location.id().as_str().to_owned(),
+            label: location.label().to_owned(),
+            country_code: location.country_code().to_owned(),
+            time_zone: location.time_zone().to_owned(),
+            latitude_degrees: location.latitude_degrees(),
+            longitude_degrees: location.longitude_degrees(),
+        })
+        .collect::<Vec<_>>();
+    Json(ApiResponse::current(locations)).into_response()
 }
 
 async fn list_charts(
     State(state): State<AppState>,
     Json(request): Json<ProtocolRequest>,
 ) -> Response {
-    empty_unlocked_list::<ChartSummary>(&state, request).await
+    if let Err(response) = require_protocol(request.protocol_version) {
+        return response.into_response();
+    }
+    let mut session = state.0.session.lock().await;
+    let current = match active_session(&mut session) {
+        Ok(current) => current,
+        Err(response) => return response.into_response(),
+    };
+    let charts = current
+        .document
+        .chart_definitions()
+        .iter()
+        .map(|chart| ChartSummary {
+            id: chart.id().as_str().to_owned(),
+            label: chart.label().to_owned(),
+            role: match chart.role() {
+                ChartRole::Natal => "natal",
+                ChartRole::Event => "event",
+                ChartRole::Transit => "transit",
+            }
+            .to_owned(),
+            person_id: chart.person_id().map(|id| id.as_str().to_owned()),
+            default_natal: chart.default_natal(),
+            current_calculation_id: chart
+                .current_calculation_id()
+                .map(|id| id.as_str().to_owned()),
+        })
+        .collect::<Vec<_>>();
+    Json(ApiResponse::current(charts)).into_response()
 }
 
 async fn list_comparisons(
     State(state): State<AppState>,
     Json(request): Json<ProtocolRequest>,
 ) -> Response {
-    empty_unlocked_list::<ComparisonSummary>(&state, request).await
-}
-
-async fn empty_unlocked_list<T>(state: &AppState, request: ProtocolRequest) -> Response
-where
-    T: serde::Serialize,
-{
     if let Err(response) = require_protocol(request.protocol_version) {
         return response.into_response();
     }
     let mut session = state.0.session.lock().await;
-    if let Err(response) = active_session(&mut session) {
-        return response.into_response();
-    }
-    Json(ApiResponse::current(Vec::<T>::new())).into_response()
+    let current = match active_session(&mut session) {
+        Ok(current) => current,
+        Err(response) => return response.into_response(),
+    };
+    let comparisons = current
+        .document
+        .comparison_presets()
+        .iter()
+        .map(|comparison| ComparisonSummary {
+            id: comparison.id().as_str().to_owned(),
+            label: comparison.label().to_owned(),
+            inner_chart_id: comparison.inner_chart_definition_id().as_str().to_owned(),
+            outer_chart_id: comparison.outer_chart_definition_id().as_str().to_owned(),
+            current_comparison_artifact_id: comparison
+                .current_comparison_artifact_id()
+                .map(|id| id.as_str().to_owned()),
+        })
+        .collect::<Vec<_>>();
+    Json(ApiResponse::current(comparisons)).into_response()
 }
 
 async fn get_workspace(
@@ -403,15 +477,484 @@ async fn get_workspace(
         return response.into_response();
     }
     let mut session = state.0.session.lock().await;
-    if let Err(response) = active_session(&mut session) {
+    let current = match active_session(&mut session) {
+        Ok(current) => current,
+        Err(response) => return response.into_response(),
+    };
+    let workspace = current.document.workspace_state();
+    Json(ApiResponse::current(WorkspaceSummary {
+        active_person_id: workspace
+            .active_person_id()
+            .map(|id| id.as_str().to_owned()),
+        active_comparison_id: workspace
+            .active_comparison_preset_id()
+            .map(|id| id.as_str().to_owned()),
+    }))
+    .into_response()
+}
+
+async fn save_person(
+    State(state): State<AppState>,
+    Json(request): Json<SavePersonRequest>,
+) -> Response {
+    if let Err(response) = require_protocol(request.protocol_version) {
         return response.into_response();
     }
-    Json(ApiResponse::current(WorkspaceSummary::default())).into_response()
+    let id = match StableId::new("person.id", request.id) {
+        Ok(id) => id,
+        Err(error) => return app_error(error),
+    };
+    let person = match PersonProfile::new(
+        id.clone(),
+        request.display_name,
+        match request.kind {
+            PersonKindInput::Personal => PersonKind::Personal,
+            PersonKindInput::ProfessionalClient => PersonKind::ProfessionalClient,
+        },
+        request.notes,
+    ) {
+        Ok(person) => person,
+        Err(error) => return app_error(error),
+    };
+    let mut session = state.0.session.lock().await;
+    let current = match active_session_mut(&mut session) {
+        Ok(current) => current,
+        Err(response) => return response.into_response(),
+    };
+    let next = if current
+        .document
+        .people()
+        .iter()
+        .any(|item| item.id() == &id)
+    {
+        StudioService::replace_person(&current.document, person)
+    } else {
+        StudioService::add_person(&current.document, person)
+    };
+    persist_result(current, next, id.as_str())
+}
+
+async fn save_location(
+    State(state): State<AppState>,
+    Json(request): Json<SaveLocationRequest>,
+) -> Response {
+    if let Err(response) = require_protocol(request.protocol_version) {
+        return response.into_response();
+    }
+    let id = match StableId::new("saved_location.id", request.id) {
+        Ok(id) => id,
+        Err(error) => return app_error(error),
+    };
+    let provenance = match request.provenance {
+        LocationProvenanceInput::Manual => LocationProvenance::Manual,
+        LocationProvenanceInput::GeoNames {
+            geonames_id,
+            catalog_content_id,
+        } => LocationProvenance::GeoNames {
+            geonames_id,
+            catalog_content_id,
+        },
+    };
+    let location = match SavedLocation::new(
+        id.clone(),
+        request.label,
+        request.administrative_names,
+        request.country_code,
+        request.latitude_degrees,
+        request.longitude_degrees,
+        request.elevation_meters,
+        request.time_zone,
+        provenance,
+    ) {
+        Ok(location) => location,
+        Err(error) => return app_error(error),
+    };
+    let mut session = state.0.session.lock().await;
+    let current = match active_session_mut(&mut session) {
+        Ok(current) => current,
+        Err(response) => return response.into_response(),
+    };
+    let next = if current
+        .document
+        .saved_locations()
+        .iter()
+        .any(|item| item.id() == &id)
+    {
+        StudioService::replace_saved_location(&current.document, location)
+    } else {
+        StudioService::add_saved_location(&current.document, location)
+    };
+    persist_result(current, next, id.as_str())
+}
+
+async fn save_chart(
+    State(state): State<AppState>,
+    Json(request): Json<SaveChartRequest>,
+) -> Response {
+    if let Err(response) = require_protocol(request.protocol_version) {
+        return response.into_response();
+    }
+    let id = match StableId::new("chart_definition.id", request.id) {
+        Ok(id) => id,
+        Err(error) => return app_error(error),
+    };
+    let person_id = match optional_id("chart_definition.person_id", request.person_id) {
+        Ok(id) => id,
+        Err(error) => return app_error(error),
+    };
+    let local_input =
+        match LocalDateTimeInput::new(request.local_date, request.local_time, request.time_zone) {
+            Ok(input) => input,
+            Err(error) => return app_error(error),
+        };
+    let options = match ChartCalculationOptions::new(
+        match request.zodiac {
+            ZodiacInput::Tropical => ZodiacId::Tropical,
+            ZodiacInput::Sidereal => ZodiacId::Sidereal,
+        },
+        request.ayanamsa.map(map_ayanamsa),
+        match request.house_system {
+            HouseSystemInput::Placidus => HouseSystemId::Placidus,
+            HouseSystemInput::Koch => HouseSystemId::Koch,
+            HouseSystemInput::Porphyry => HouseSystemId::Porphyry,
+            HouseSystemInput::Regiomontanus => HouseSystemId::Regiomontanus,
+            HouseSystemInput::Campanus => HouseSystemId::Campanus,
+            HouseSystemInput::Equal => HouseSystemId::Equal,
+            HouseSystemInput::WholeSign => HouseSystemId::WholeSign,
+        },
+        request
+            .ordered_objects
+            .into_iter()
+            .map(map_object)
+            .collect(),
+    ) {
+        Ok(options) => options,
+        Err(error) => return app_error(error),
+    };
+    let chart = match ChartDefinition::new(
+        id.clone(),
+        request.label,
+        match request.role {
+            ChartRoleInput::Natal => ChartRole::Natal,
+            ChartRoleInput::Event => ChartRole::Event,
+            ChartRoleInput::Transit => ChartRole::Transit,
+        },
+        person_id,
+        local_input,
+        options,
+        request.ordered_points.into_iter().map(map_point).collect(),
+        request.default_natal,
+    ) {
+        Ok(chart) => chart,
+        Err(error) => return app_error(error),
+    };
+    let mut session = state.0.session.lock().await;
+    let current = match active_session_mut(&mut session) {
+        Ok(current) => current,
+        Err(response) => return response.into_response(),
+    };
+    let next = if current
+        .document
+        .chart_definitions()
+        .iter()
+        .any(|item| item.id() == &id)
+    {
+        StudioService::replace_chart_definition(&current.document, chart)
+    } else {
+        StudioService::add_chart_definition(&current.document, chart)
+    };
+    persist_result(current, next, id.as_str())
+}
+
+async fn calculate_chart(
+    State(state): State<AppState>,
+    Json(request): Json<CalculateChartRequest>,
+) -> Response {
+    if let Err(response) = require_protocol(request.protocol_version) {
+        return response.into_response();
+    }
+    let calculation_id =
+        match StableId::new("chart_calculation.id", request.chart_calculation_id.clone()) {
+            Ok(id) => id,
+            Err(error) => return app_error(error),
+        };
+    let service_request = match chart_calculation_request(request, calculation_id.clone()) {
+        Ok(request) => request,
+        Err(error) => return app_error(error),
+    };
+    let mut session = state.0.session.lock().await;
+    let current = match active_session_mut(&mut session) {
+        Ok(current) => current,
+        Err(response) => return response.into_response(),
+    };
+    let next = StudioService::calculate_chart_definition(&current.document, service_request);
+    persist_result(current, next, calculation_id.as_str())
+}
+
+async fn save_comparison(
+    State(state): State<AppState>,
+    Json(request): Json<SaveComparisonRequest>,
+) -> Response {
+    if let Err(response) = require_protocol(request.protocol_version) {
+        return response.into_response();
+    }
+    let id = match StableId::new("comparison_preset.id", request.id) {
+        Ok(id) => id,
+        Err(error) => return app_error(error),
+    };
+    let preset = ComparisonPreset::new(
+        id.clone(),
+        request.label,
+        match StableId::new(
+            "comparison_preset.inner_chart_definition_id",
+            request.inner_chart_definition_id,
+        ) {
+            Ok(id) => id,
+            Err(error) => return app_error(error),
+        },
+        match StableId::new(
+            "comparison_preset.outer_chart_definition_id",
+            request.outer_chart_definition_id,
+        ) {
+            Ok(id) => id,
+            Err(error) => return app_error(error),
+        },
+        request.inner_points.into_iter().map(map_point).collect(),
+        request.outer_points.into_iter().map(map_point).collect(),
+        match request
+            .aspects
+            .into_iter()
+            .map(|aspect| {
+                AspectDefinition::new(
+                    match aspect.kind {
+                        AspectKindInput::Conjunction => AspectKindId::Conjunction,
+                        AspectKindInput::Opposition => AspectKindId::Opposition,
+                        AspectKindInput::Square => AspectKindId::Square,
+                        AspectKindInput::Trine => AspectKindId::Trine,
+                        AspectKindInput::Sextile => AspectKindId::Sextile,
+                    },
+                    aspect.orb_degrees,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()
+        {
+            Ok(aspects) => aspects,
+            Err(error) => return app_error(error),
+        },
+        match request.orientation {
+            WheelOrientationInput::AscendantLeft => WheelOrientation::AscendantLeft,
+            WheelOrientationInput::AriesTop => WheelOrientation::AriesTop,
+        },
+    );
+    let preset = match preset {
+        Ok(preset) => preset,
+        Err(error) => return app_error(error),
+    };
+    let mut session = state.0.session.lock().await;
+    let current = match active_session_mut(&mut session) {
+        Ok(current) => current,
+        Err(response) => return response.into_response(),
+    };
+    let next = if current
+        .document
+        .comparison_presets()
+        .iter()
+        .any(|item| item.id() == &id)
+    {
+        StudioService::replace_comparison_preset(&current.document, preset)
+    } else {
+        StudioService::add_comparison_preset(&current.document, preset)
+    };
+    persist_result(current, next, id.as_str())
+}
+
+async fn calculate_comparison(
+    State(state): State<AppState>,
+    Json(request): Json<CalculateComparisonRequest>,
+) -> Response {
+    if let Err(response) = require_protocol(request.protocol_version) {
+        return response.into_response();
+    }
+    let artifact_id = match StableId::new("artifact.id", request.comparison_artifact_id) {
+        Ok(id) => id,
+        Err(error) => return app_error(error),
+    };
+    let service_request = ComparisonCalculationRequest {
+        comparison_artifact_id: artifact_id.clone(),
+        comparison_preset_id: match StableId::new(
+            "comparison_preset.id",
+            request.comparison_preset_id,
+        ) {
+            Ok(id) => id,
+            Err(error) => return app_error(error),
+        },
+    };
+    let mut session = state.0.session.lock().await;
+    let current = match active_session_mut(&mut session) {
+        Ok(current) => current,
+        Err(response) => return response.into_response(),
+    };
+    let next = StudioService::calculate_comparison(&current.document, service_request);
+    persist_result(current, next, artifact_id.as_str())
+}
+
+async fn set_workspace(
+    State(state): State<AppState>,
+    Json(request): Json<SetWorkspaceRequest>,
+) -> Response {
+    if let Err(response) = require_protocol(request.protocol_version) {
+        return response.into_response();
+    }
+    let workspace = match (
+        optional_id("workspace.active_person_id", request.active_person_id),
+        optional_id(
+            "workspace.active_comparison_preset_id",
+            request.active_comparison_id,
+        ),
+    ) {
+        (Ok(person), Ok(comparison)) => WorkspaceState::new(person, comparison),
+        (Err(error), _) | (_, Err(error)) => return app_error(error),
+    };
+    let mut session = state.0.session.lock().await;
+    let current = match active_session_mut(&mut session) {
+        Ok(current) => current,
+        Err(response) => return response.into_response(),
+    };
+    let next = StudioService::set_workspace_state(&current.document, workspace);
+    persist_result(current, next, "workspace")
+}
+
+fn chart_calculation_request(
+    request: CalculateChartRequest,
+    chart_calculation_id: StableId,
+) -> Result<ChartCalculationRequest, oracle_studio_core::ModelError> {
+    Ok(ChartCalculationRequest {
+        chart_calculation_id,
+        calculation_artifact_id: StableId::new("artifact.id", request.calculation_artifact_id)?,
+        chart_definition_id: StableId::new("chart_definition.id", request.chart_definition_id)?,
+        saved_location_id: StableId::new("saved_location.id", request.saved_location_id)?,
+        ambiguous_time_choice: request.ambiguous_time_choice.map(|choice| match choice {
+            AmbiguousTimeChoiceInput::Earlier => AmbiguousTimeChoice::Earlier,
+            AmbiguousTimeChoiceInput::Later => AmbiguousTimeChoice::Later,
+        }),
+        calculated_at: request.calculated_at,
+    })
+}
+
+fn optional_id(
+    field: &'static str,
+    value: Option<String>,
+) -> Result<Option<StableId>, oracle_studio_core::ModelError> {
+    value.map(|value| StableId::new(field, value)).transpose()
+}
+
+fn map_object(value: CelestialObjectInput) -> CelestialObjectId {
+    match value {
+        CelestialObjectInput::Moon => CelestialObjectId::Moon,
+        CelestialObjectInput::Sun => CelestialObjectId::Sun,
+        CelestialObjectInput::Mercury => CelestialObjectId::Mercury,
+        CelestialObjectInput::Venus => CelestialObjectId::Venus,
+        CelestialObjectInput::Mars => CelestialObjectId::Mars,
+        CelestialObjectInput::Jupiter => CelestialObjectId::Jupiter,
+        CelestialObjectInput::Saturn => CelestialObjectId::Saturn,
+        CelestialObjectInput::Uranus => CelestialObjectId::Uranus,
+        CelestialObjectInput::Neptune => CelestialObjectId::Neptune,
+        CelestialObjectInput::Pluto => CelestialObjectId::Pluto,
+        CelestialObjectInput::MeanNode => CelestialObjectId::MeanNode,
+        CelestialObjectInput::TrueNode => CelestialObjectId::TrueNode,
+        CelestialObjectInput::Chiron => CelestialObjectId::Chiron,
+    }
+}
+
+fn map_point(value: ChartPointInput) -> ChartPointId {
+    match value {
+        ChartPointInput::Moon => ChartPointId::Moon,
+        ChartPointInput::Sun => ChartPointId::Sun,
+        ChartPointInput::Mercury => ChartPointId::Mercury,
+        ChartPointInput::Venus => ChartPointId::Venus,
+        ChartPointInput::Mars => ChartPointId::Mars,
+        ChartPointInput::Jupiter => ChartPointId::Jupiter,
+        ChartPointInput::Saturn => ChartPointId::Saturn,
+        ChartPointInput::Uranus => ChartPointId::Uranus,
+        ChartPointInput::Neptune => ChartPointId::Neptune,
+        ChartPointInput::Pluto => ChartPointId::Pluto,
+        ChartPointInput::MeanNode => ChartPointId::MeanNode,
+        ChartPointInput::TrueNode => ChartPointId::TrueNode,
+        ChartPointInput::Chiron => ChartPointId::Chiron,
+        ChartPointInput::MeanSouthNode => ChartPointId::MeanSouthNode,
+        ChartPointInput::TrueSouthNode => ChartPointId::TrueSouthNode,
+        ChartPointInput::Ascendant => ChartPointId::Ascendant,
+        ChartPointInput::Midheaven => ChartPointId::Midheaven,
+        ChartPointInput::Descendant => ChartPointId::Descendant,
+        ChartPointInput::ImumCoeli => ChartPointId::ImumCoeli,
+        ChartPointInput::Vertex => ChartPointId::Vertex,
+    }
+}
+
+fn map_ayanamsa(value: AyanamsaInput) -> AyanamsaId {
+    match value {
+        AyanamsaInput::FaganBradley => AyanamsaId::FaganBradley,
+        AyanamsaInput::Lahiri => AyanamsaId::Lahiri,
+        AyanamsaInput::DeLuce => AyanamsaId::DeLuce,
+        AyanamsaInput::Raman => AyanamsaId::Raman,
+        AyanamsaInput::Krishnamurti => AyanamsaId::Krishnamurti,
+        AyanamsaInput::Yukteshwar => AyanamsaId::Yukteshwar,
+        AyanamsaInput::JnBhasin => AyanamsaId::JnBhasin,
+    }
+}
+
+fn persist_result(
+    current: &mut VaultSession,
+    next: Result<VaultDocument, oracle_studio_app::AppError>,
+    record_id: &str,
+) -> Response {
+    let next = match next {
+        Ok(next) => next,
+        Err(error) => return app_error(error),
+    };
+    let revision = match current.vault.save(
+        &next,
+        &current.password,
+        &ExpectedState::Revision(current.revision.clone()),
+    ) {
+        Ok(revision) => revision,
+        Err(error) => return storage_error(error),
+    };
+    current.document = next;
+    current.revision = revision;
+    current.last_activity = Instant::now();
+    Json(ApiResponse::current(MutationResult {
+        revision: current.revision.as_str().to_owned(),
+        record_id: record_id.to_owned(),
+    }))
+    .into_response()
+}
+
+fn app_error(error: impl std::fmt::Display) -> Response {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(ApiError::current(
+            ApiErrorCode::BadRequest,
+            error.to_string(),
+        )),
+    )
+        .into_response()
 }
 
 fn active_session(session: &mut SessionStore) -> Result<&VaultSession, ApiFailure> {
     session.expire_and_touch(Instant::now());
     session.current.as_ref().ok_or_else(|| {
+        ApiFailure::new(
+            StatusCode::LOCKED,
+            ApiErrorCode::Locked,
+            "unlock a vault before using this operation",
+        )
+    })
+}
+
+fn active_session_mut(session: &mut SessionStore) -> Result<&mut VaultSession, ApiFailure> {
+    session.expire_and_touch(Instant::now());
+    session.current.as_mut().ok_or_else(|| {
         ApiFailure::new(
             StatusCode::LOCKED,
             ApiErrorCode::Locked,
@@ -520,13 +1063,13 @@ mod tests {
         )
     }
 
-    fn api_request(path: &str, token: &str, origin: &str, body: &'static str) -> Request<Body> {
+    fn api_request(path: &str, token: &str, origin: &str, body: impl Into<Body>) -> Request<Body> {
         Request::post(path)
             .header(header::HOST, HOST)
             .header(header::ORIGIN, origin)
             .header(header::AUTHORIZATION, format!("Bearer {token}"))
             .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(body))
+            .body(body.into())
             .unwrap()
     }
 
@@ -616,6 +1159,98 @@ mod tests {
         let body = String::from_utf8(body.to_vec()).unwrap();
         assert!(!body.contains("/secret/path"));
         assert!(!body.contains("secret"));
+    }
+
+    #[tokio::test]
+    async fn accepted_mutations_are_atomically_persisted_in_the_encrypted_vault() {
+        let suffix = launch_token().unwrap();
+        let test_directory =
+            std::env::temp_dir().join(format!("oracle-studio-{}", suffix.as_str()));
+        std::fs::create_dir(&test_directory).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&test_directory, std::fs::Permissions::from_mode(0o700))
+                .unwrap();
+        }
+        let vault_path = test_directory.join("test.oracle");
+        let file_name = vault_path.file_name().unwrap().to_string_lossy();
+        let lock_path = vault_path.with_file_name(format!(".{file_name}.lock"));
+        let router = test_app(DEFAULT_IDLE_TIMEOUT);
+        let create = serde_json::json!({
+            "protocol_version": 1,
+            "vault_path": vault_path.to_string_lossy(),
+            "password": "test-only-password"
+        })
+        .to_string();
+        let response = router
+            .clone()
+            .oneshot(api_request("/api/v1/vault/create", TOKEN, ORIGIN, create))
+            .await
+            .unwrap();
+        let status = response.status();
+        let body = to_bytes(response.into_body(), 16 * 1024).await.unwrap();
+        assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+
+        let save_person = serde_json::json!({
+            "protocol_version": 1,
+            "id": "fictional_person",
+            "display_name": "Fictional <script>person</script>",
+            "kind": "personal",
+            "notes": null
+        })
+        .to_string();
+        let response = router
+            .clone()
+            .oneshot(api_request(
+                "/api/v1/people/save",
+                TOKEN,
+                ORIGIN,
+                save_person,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let save_location = serde_json::json!({
+            "protocol_version": 1,
+            "id": "fictional_location",
+            "label": "Fictional City",
+            "administrative_names": ["Example County"],
+            "country_code": "US",
+            "latitude_degrees": 42.65,
+            "longitude_degrees": -73.75,
+            "elevation_meters": 84.0,
+            "time_zone": "America/New_York",
+            "provenance": {"kind": "manual"}
+        })
+        .to_string();
+        let response = router
+            .clone()
+            .oneshot(api_request(
+                "/api/v1/locations/save",
+                TOKEN,
+                ORIGIN,
+                save_location,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let loaded = FileVault::new(&vault_path)
+            .unwrap()
+            .load(b"test-only-password")
+            .unwrap();
+        assert_eq!(loaded.document().people().len(), 1);
+        assert_eq!(loaded.document().saved_locations().len(), 1);
+        assert_eq!(
+            loaded.document().people()[0].display_name(),
+            "Fictional <script>person</script>"
+        );
+
+        std::fs::remove_file(&vault_path).unwrap();
+        std::fs::remove_file(&lock_path).unwrap();
+        std::fs::remove_dir(&test_directory).unwrap();
     }
 
     #[test]

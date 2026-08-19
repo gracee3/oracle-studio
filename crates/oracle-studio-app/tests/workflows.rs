@@ -6,10 +6,15 @@ use astraeus_core::{
     EphemerisAdapter, GeographicLocation, HouseCusps, HouseSystem, Position,
     UtcInstant as AstraeusInstant, Zodiac,
 };
-use oracle_studio_app::{ManualPlacementInput, ReadingRequest, SearchEntity, StudioService};
+use oracle_studio_app::{
+    ChartCalculationRequest, ComparisonCalculationRequest, ManualPlacementInput, ReadingRequest,
+    SearchEntity, StudioService,
+};
 use oracle_studio_core::{
-    ArtifactKind, JournalEntry, JournalEntryKind, PersonKind, PersonProfile, Session, StableId,
-    VaultDocument,
+    ArtifactKind, ChartCalculationOptions, ChartDefinition, ChartPointId, ChartRole,
+    ComparisonPreset, JournalEntry, JournalEntryKind, LocalDateTimeInput, LocationProvenance,
+    PersonKind, PersonProfile, SavedLocation, Session, StableId, VaultDocument, WheelOrientation,
+    WorkspaceState, default_aspects, default_chart_points,
 };
 use sibylla_artifacts::{Artifact, ReadingArtifact};
 use sibylla_core::{Orientation, RandomnessSource, SpreadDefinition, UtcInstant};
@@ -228,5 +233,218 @@ fn calculation_artifacts_are_validated_and_associated_without_recalculation() {
     assert_eq!(
         document.artifacts()[0].kind(),
         ArtifactKind::AstraeusCalculation
+    );
+}
+
+fn fictional_location(label: &str, latitude: f64) -> SavedLocation {
+    SavedLocation::new(
+        id("saved_location.id", "fictional_city"),
+        label,
+        vec!["Example County".into(), "New York".into()],
+        "US",
+        latitude,
+        -73.7562,
+        Some(84.0),
+        "America/New_York",
+        LocationProvenance::Manual,
+    )
+    .unwrap()
+}
+
+fn fictional_chart(
+    chart_id: &str,
+    label: &str,
+    role: ChartRole,
+    date: &str,
+    time: &str,
+    default_natal: bool,
+) -> ChartDefinition {
+    ChartDefinition::new(
+        id("chart_definition.id", chart_id),
+        label,
+        role,
+        (role == ChartRole::Natal).then(|| id("person.id", "fictional_client")),
+        LocalDateTimeInput::new(date, time, "America/New_York").unwrap(),
+        ChartCalculationOptions::default(),
+        default_chart_points(),
+        default_natal,
+    )
+    .unwrap()
+}
+
+#[test]
+fn schema_v3_chart_history_and_comparison_sources_are_immutable_and_canonical() {
+    let document = StudioService::add_saved_location(
+        &composed(),
+        fictional_location("Fictional Albany", 42.6526),
+    )
+    .unwrap();
+    let document = StudioService::add_chart_definition(
+        &document,
+        fictional_chart(
+            "fictional_natal",
+            "Fictional natal",
+            ChartRole::Natal,
+            "1990-05-12",
+            "08:30",
+            true,
+        ),
+    )
+    .unwrap();
+    let document = StudioService::add_chart_definition(
+        &document,
+        fictional_chart(
+            "fictional_transit",
+            "Fictional transit",
+            ChartRole::Transit,
+            "2026-08-18",
+            "14:15",
+            false,
+        ),
+    )
+    .unwrap();
+    let document = StudioService::calculate_chart_definition(
+        &document,
+        ChartCalculationRequest {
+            chart_calculation_id: id("chart_calculation.id", "natal_calculation_1"),
+            calculation_artifact_id: id("artifact.id", "natal_artifact_1"),
+            chart_definition_id: id("chart_definition.id", "fictional_natal"),
+            saved_location_id: id("saved_location.id", "fictional_city"),
+            ambiguous_time_choice: None,
+            calculated_at: "2026-08-18T18:00:00Z".into(),
+        },
+    )
+    .unwrap();
+    let first_snapshot = document.chart_calculations()[0].clone();
+
+    let document = StudioService::replace_saved_location(
+        &document,
+        fictional_location("Fictional Albany, edited", 42.7000),
+    )
+    .unwrap();
+    assert_eq!(
+        first_snapshot.location_snapshot().label(),
+        "Fictional Albany"
+    );
+    assert_eq!(
+        document.chart_calculations()[0].location_snapshot(),
+        first_snapshot.location_snapshot()
+    );
+
+    let document = StudioService::calculate_chart_definition(
+        &document,
+        ChartCalculationRequest {
+            chart_calculation_id: id("chart_calculation.id", "natal_calculation_2"),
+            calculation_artifact_id: id("artifact.id", "natal_artifact_2"),
+            chart_definition_id: id("chart_definition.id", "fictional_natal"),
+            saved_location_id: id("saved_location.id", "fictional_city"),
+            ambiguous_time_choice: None,
+            calculated_at: "2026-08-18T18:01:00Z".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(document.chart_calculations().len(), 2);
+    assert_eq!(document.chart_calculations()[0], first_snapshot);
+    assert_eq!(
+        document.chart_definitions()[0]
+            .current_calculation_id()
+            .unwrap()
+            .as_str(),
+        "natal_calculation_2"
+    );
+
+    let document = StudioService::calculate_chart_definition(
+        &document,
+        ChartCalculationRequest {
+            chart_calculation_id: id("chart_calculation.id", "transit_calculation_1"),
+            calculation_artifact_id: id("artifact.id", "transit_artifact_1"),
+            chart_definition_id: id("chart_definition.id", "fictional_transit"),
+            saved_location_id: id("saved_location.id", "fictional_city"),
+            ambiguous_time_choice: None,
+            calculated_at: "2026-08-18T18:02:00Z".into(),
+        },
+    )
+    .unwrap();
+    let preset = ComparisonPreset::new(
+        id("comparison_preset.id", "fictional_biwheel"),
+        "Fictional biwheel",
+        id("chart_definition.id", "fictional_natal"),
+        id("chart_definition.id", "fictional_transit"),
+        vec![
+            ChartPointId::Moon,
+            ChartPointId::Sun,
+            ChartPointId::Ascendant,
+        ],
+        vec![
+            ChartPointId::Moon,
+            ChartPointId::Sun,
+            ChartPointId::Ascendant,
+        ],
+        default_aspects(),
+        WheelOrientation::AscendantLeft,
+    )
+    .unwrap();
+    let document = StudioService::add_comparison_preset(&document, preset).unwrap();
+    let document = StudioService::calculate_comparison(
+        &document,
+        ComparisonCalculationRequest {
+            comparison_artifact_id: id("artifact.id", "comparison_artifact_1"),
+            comparison_preset_id: id("comparison_preset.id", "fictional_biwheel"),
+        },
+    )
+    .unwrap();
+    let comparison = &document.comparison_presets()[0];
+    assert_eq!(
+        comparison.current_inner_calculation_id().unwrap().as_str(),
+        "natal_calculation_2"
+    );
+    assert_eq!(
+        comparison.current_outer_calculation_id().unwrap().as_str(),
+        "transit_calculation_1"
+    );
+    assert_eq!(
+        document.artifacts().last().unwrap().kind(),
+        ArtifactKind::AstraeusComparison
+    );
+
+    let document = StudioService::set_workspace_state(
+        &document,
+        WorkspaceState::new(
+            Some(id("person.id", "fictional_client")),
+            Some(id("comparison_preset.id", "fictional_biwheel")),
+        ),
+    )
+    .unwrap();
+    let reopened = VaultDocument::from_json(&document.to_json().unwrap()).unwrap();
+    assert_eq!(reopened, document);
+}
+
+#[test]
+fn schema_v3_enforces_one_default_natal_per_person() {
+    let first = StudioService::add_chart_definition(
+        &composed(),
+        fictional_chart(
+            "first_default",
+            "First default",
+            ChartRole::Natal,
+            "1990-01-01",
+            "12:00",
+            true,
+        ),
+    )
+    .unwrap();
+    assert!(
+        StudioService::add_chart_definition(
+            &first,
+            fictional_chart(
+                "second_default",
+                "Second default",
+                ChartRole::Natal,
+                "1991-01-01",
+                "12:00",
+                true,
+            ),
+        )
+        .is_err()
     );
 }
