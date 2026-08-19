@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/oracle-studio-core",
+    "crates/oracle-studio-location-catalog",
     "crates/oracle-studio-app",
     "crates/oracle-studio-assets",
     "crates/oracle-studio-chart-view",
@@ -43,7 +44,9 @@ tokio = "1.47.1"
 tower = "0.5.2"
 tower-http = "0.6.6"
 uuid = { version = "1.18.1", features = ["v7"] }
+ureq = { version = "3.4.0", default-features = false, features = ["rustls"] }
 wasm-bindgen = "0.2.126"
 wasm-bindgen-futures = "0.4.53"
 web-sys = "0.3.103"
 zeroize = "1.8.1"
+zip = { version = "8.4.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }

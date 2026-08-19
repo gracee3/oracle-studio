@@ -10,6 +10,9 @@ use oracle_studio_server::{
 struct Args {
     #[arg(long, default_value = "crates/oracle-studio-ui/dist")]
     dist: PathBuf,
+    /// Store the unencrypted public GeoNames catalog here instead of the XDG data directory.
+    #[arg(long)]
+    catalog_dir: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -30,7 +33,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     validate_loopback(address)?;
     let origin = format!("http://{address}");
     let token = launch_token()?;
-    let state = AppState::new(&origin, token.as_str(), DEFAULT_IDLE_TIMEOUT)?;
+    let state = match args.catalog_dir {
+        Some(catalog_dir) => {
+            AppState::with_catalog_root(&origin, token.as_str(), DEFAULT_IDLE_TIMEOUT, catalog_dir)?
+        }
+        None => AppState::new(&origin, token.as_str(), DEFAULT_IDLE_TIMEOUT)?,
+    };
     println!(
         "Oracle Studio is ready at {origin}/#token={}",
         token.as_str()

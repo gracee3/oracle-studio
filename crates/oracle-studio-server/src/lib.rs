@@ -16,6 +16,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::post,
 };
+use chrono::{SecondsFormat, Utc};
 use oracle_studio_app::{ChartCalculationRequest, ComparisonCalculationRequest, StudioService};
 use oracle_studio_core::{
     AmbiguousTimeChoice, AspectDefinition, AspectKindId, AyanamsaId, CelestialObjectId,
@@ -23,14 +24,20 @@ use oracle_studio_core::{
     HouseSystemId, LocalDateTimeInput, LocationProvenance, PersonKind, PersonProfile,
     SavedLocation, StableId, VaultDocument, WheelOrientation, WorkspaceState, ZodiacId,
 };
+use oracle_studio_location_catalog::{
+    ADMIN1_CODES_URL, ADMIN2_CODES_URL, ATTRIBUTION, CITIES500_URL, CatalogInstallInput,
+    CatalogMetadata, CatalogStore, DISTRIBUTION_URL, LICENSE_NAME, LICENSE_URL, LocationCatalog,
+    MAX_ARCHIVE_BYTES, MatchKind,
+};
 use oracle_studio_protocol::{
     AmbiguousTimeChoiceInput, ApiError, ApiErrorCode, ApiResponse, AspectKindInput, AyanamsaInput,
-    CalculateChartRequest, CalculateComparisonRequest, CelestialObjectInput, ChartPointInput,
-    ChartRoleInput, ChartSummary, ComparisonSummary, CreateVaultRequest, HouseSystemInput,
+    CalculateChartRequest, CalculateComparisonRequest, CatalogMatchKind, CatalogPlaceSummary,
+    CatalogStatus, CelestialObjectInput, ChartPointInput, ChartRoleInput, ChartSummary,
+    ComparisonSummary, CreateVaultRequest, HouseSystemInput, InstallCatalogRequest,
     LocationProvenanceInput, LocationSummary, MutationResult, PROTOCOL_VERSION, PersonKindInput,
     PersonSummary, ProtocolRequest, SaveChartRequest, SaveComparisonRequest, SaveLocationRequest,
-    SavePersonRequest, SessionStatus, SetWorkspaceRequest, UnlockVaultRequest, VaultState,
-    WheelOrientationInput, WorkspaceSummary, ZodiacInput,
+    SavePersonRequest, SearchCatalogRequest, SessionStatus, SetWorkspaceRequest,
+    UnlockVaultRequest, VaultState, WheelOrientationInput, WorkspaceSummary, ZodiacInput,
 };
 use oracle_studio_storage::{ExpectedState, FileVault, StorageError, VaultRevision};
 use subtle::ConstantTimeEq;
@@ -50,6 +57,7 @@ struct AppStateInner {
     expected_host: String,
     bearer_token: Zeroizing<String>,
     session: Mutex<SessionStore>,
+    catalog: Mutex<CatalogRuntime>,
 }
 
 impl AppState {
@@ -57,6 +65,20 @@ impl AppState {
         expected_origin: impl Into<String>,
         bearer_token: impl Into<String>,
         idle_timeout: Duration,
+    ) -> Result<Self, HostError> {
+        Self::with_catalog_root(
+            expected_origin,
+            bearer_token,
+            idle_timeout,
+            default_catalog_root()?,
+        )
+    }
+
+    pub fn with_catalog_root(
+        expected_origin: impl Into<String>,
+        bearer_token: impl Into<String>,
+        idle_timeout: Duration,
+        catalog_root: impl Into<PathBuf>,
     ) -> Result<Self, HostError> {
         let expected_origin = expected_origin.into();
         let expected_host = expected_origin
@@ -76,8 +98,17 @@ impl AppState {
             expected_host,
             bearer_token: Zeroizing::new(bearer_token.into()),
             session: Mutex::new(SessionStore::new(idle_timeout)),
+            catalog: Mutex::new(CatalogRuntime {
+                store: CatalogStore::new(catalog_root),
+                loaded: None,
+            }),
         })))
     }
+}
+
+struct CatalogRuntime {
+    store: CatalogStore,
+    loaded: Option<Arc<LocationCatalog>>,
 }
 
 struct VaultSession {
@@ -160,6 +191,9 @@ pub fn app(state: AppState, distribution: impl AsRef<Path>) -> Router {
         .route("/people/save", post(save_person))
         .route("/locations/list", post(list_locations))
         .route("/locations/save", post(save_location))
+        .route("/catalog/status", post(catalog_status))
+        .route("/catalog/install", post(install_catalog))
+        .route("/catalog/search", post(search_catalog))
         .route("/charts/list", post(list_charts))
         .route("/charts/save", post(save_chart))
         .route("/charts/calculate", post(calculate_chart))
@@ -180,6 +214,26 @@ pub fn app(state: AppState, distribution: impl AsRef<Path>) -> Router {
 
 pub async fn bind_loopback(port: u16) -> io::Result<TcpListener> {
     TcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port)).await
+}
+
+fn default_catalog_root() -> Result<PathBuf, HostError> {
+    if let Some(path) = std::env::var_os("XDG_DATA_HOME").filter(|value| !value.is_empty()) {
+        let path = PathBuf::from(path);
+        if path.is_absolute() {
+            return Ok(path.join("oracle-studio").join("geonames"));
+        }
+    }
+    if let Some(path) = std::env::var_os("HOME").filter(|value| !value.is_empty()) {
+        let path = PathBuf::from(path);
+        if path.is_absolute() {
+            return Ok(path
+                .join(".local")
+                .join("share")
+                .join("oracle-studio")
+                .join("geonames"));
+        }
+    }
+    Err(HostError::CatalogRootUnavailable)
 }
 
 pub fn validate_loopback(address: SocketAddr) -> Result<(), HostError> {
@@ -403,6 +457,125 @@ async fn list_locations(
         })
         .collect::<Vec<_>>();
     Json(ApiResponse::current(locations)).into_response()
+}
+
+async fn catalog_status(
+    State(state): State<AppState>,
+    Json(request): Json<ProtocolRequest>,
+) -> Response {
+    if let Err(response) = require_protocol(request.protocol_version) {
+        return response.into_response();
+    }
+    let catalog = state.0.catalog.lock().await;
+    let metadata = match &catalog.loaded {
+        Some(loaded) => Some(loaded.metadata().clone()),
+        None => match catalog.store.active_metadata() {
+            Ok(metadata) => metadata,
+            Err(error) => return catalog_error(error),
+        },
+    };
+    Json(ApiResponse::current(catalog_status_summary(
+        metadata.as_ref(),
+    )))
+    .into_response()
+}
+
+async fn install_catalog(
+    State(state): State<AppState>,
+    Json(request): Json<InstallCatalogRequest>,
+) -> Response {
+    if let Err(response) = require_protocol(request.protocol_version) {
+        return response.into_response();
+    }
+    let store = state.0.catalog.lock().await.store.clone();
+    let installed = tokio::task::spawn_blocking(move || {
+        let input = download_geonames_catalog()?;
+        store
+            .install(input)
+            .map_err(|error| CatalogOperationError::Catalog(error.to_string()))
+    })
+    .await;
+    let catalog = match installed {
+        Ok(Ok(catalog)) => Arc::new(catalog),
+        Ok(Err(error)) => return catalog_error(error),
+        Err(_) => {
+            return api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                ApiErrorCode::Unavailable,
+                "the catalog installer stopped unexpectedly",
+            );
+        }
+    };
+    let status = catalog_status_summary(Some(catalog.metadata()));
+    state.0.catalog.lock().await.loaded = Some(catalog);
+    Json(ApiResponse::current(status)).into_response()
+}
+
+async fn search_catalog(
+    State(state): State<AppState>,
+    Json(request): Json<SearchCatalogRequest>,
+) -> Response {
+    if let Err(response) = require_protocol(request.protocol_version) {
+        return response.into_response();
+    }
+    let loaded = state.0.catalog.lock().await.loaded.clone();
+    let catalog = match loaded {
+        Some(catalog) => catalog,
+        None => {
+            let store = state.0.catalog.lock().await.store.clone();
+            let loaded = tokio::task::spawn_blocking(move || store.load_active()).await;
+            let catalog = match loaded {
+                Ok(Ok(Some(catalog))) => Arc::new(catalog),
+                Ok(Ok(None)) => {
+                    return api_error(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        ApiErrorCode::Unavailable,
+                        "install the offline GeoNames catalog before searching",
+                    );
+                }
+                Ok(Err(error)) => return catalog_error(error),
+                Err(_) => {
+                    return api_error(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        ApiErrorCode::Unavailable,
+                        "the catalog loader stopped unexpectedly",
+                    );
+                }
+            };
+            let mut runtime = state.0.catalog.lock().await;
+            let catalog = runtime.loaded.get_or_insert(catalog);
+            Arc::clone(catalog)
+        }
+    };
+    let matches = match catalog.search(&request.query, request.limit) {
+        Ok(matches) => matches,
+        Err(error) => return app_error(error),
+    };
+    let content_id = catalog.metadata().content_id.clone();
+    let results = matches
+        .into_iter()
+        .map(|result| {
+            let place = result.place();
+            CatalogPlaceSummary {
+                geonames_id: place.geonames_id(),
+                name: place.name().to_owned(),
+                administrative_names: place.administrative_names().to_vec(),
+                country_code: place.country_code().to_owned(),
+                latitude_degrees: place.latitude_degrees(),
+                longitude_degrees: place.longitude_degrees(),
+                elevation_meters: place.elevation_meters(),
+                time_zone: place.time_zone().to_owned(),
+                population: place.population(),
+                match_kind: match result.match_kind() {
+                    MatchKind::Exact => CatalogMatchKind::Exact,
+                    MatchKind::Prefix => CatalogMatchKind::Prefix,
+                    MatchKind::Substring => CatalogMatchKind::Substring,
+                },
+                catalog_content_id: content_id.clone(),
+            }
+        })
+        .collect::<Vec<_>>();
+    Json(ApiResponse::current(results)).into_response()
 }
 
 async fn list_charts(
@@ -941,6 +1114,66 @@ fn app_error(error: impl std::fmt::Display) -> Response {
         .into_response()
 }
 
+fn catalog_status_summary(metadata: Option<&CatalogMetadata>) -> CatalogStatus {
+    CatalogStatus {
+        installed: metadata.is_some(),
+        content_id: metadata.map(|metadata| metadata.content_id.clone()),
+        retrieved_at: metadata.map(|metadata| metadata.retrieved_at.clone()),
+        place_count: metadata.map(|metadata| metadata.place_count),
+        attribution: ATTRIBUTION.into(),
+        license_name: LICENSE_NAME.into(),
+        license_url: LICENSE_URL.into(),
+        distribution_url: DISTRIBUTION_URL.into(),
+    }
+}
+
+fn download_geonames_catalog() -> Result<CatalogInstallInput, CatalogOperationError> {
+    let config = ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(180)))
+        .build();
+    let agent: ureq::Agent = config.into();
+    let cities500_zip = download_catalog_file(&agent, CITIES500_URL, MAX_ARCHIVE_BYTES)?;
+    let admin1_codes = download_catalog_file(&agent, ADMIN1_CODES_URL, 64 * 1024 * 1024)?;
+    let admin2_codes = download_catalog_file(&agent, ADMIN2_CODES_URL, 64 * 1024 * 1024)?;
+    Ok(CatalogInstallInput {
+        cities500_zip,
+        admin1_codes,
+        admin2_codes,
+        retrieved_at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+    })
+}
+
+fn download_catalog_file(
+    agent: &ureq::Agent,
+    url: &'static str,
+    limit: usize,
+) -> Result<Vec<u8>, CatalogOperationError> {
+    agent
+        .get(url)
+        .header(
+            "User-Agent",
+            "Oracle-Studio/0.1 (offline GeoNames catalog installer)",
+        )
+        .call()
+        .map_err(|error| CatalogOperationError::Download(error.to_string()))?
+        .body_mut()
+        .with_config()
+        .limit(limit as u64)
+        .read_to_vec()
+        .map_err(|error| CatalogOperationError::Download(error.to_string()))
+}
+
+fn catalog_error(error: impl std::fmt::Display) -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(ApiError::current(
+            ApiErrorCode::Unavailable,
+            error.to_string(),
+        )),
+    )
+        .into_response()
+}
+
 fn active_session(session: &mut SessionStore) -> Result<&VaultSession, ApiFailure> {
     session.expire_and_touch(Instant::now());
     session.current.as_ref().ok_or_else(|| {
@@ -1040,15 +1273,28 @@ pub enum HostError {
     InvalidOrigin,
     #[error("operating-system randomness failed: {0}")]
     Randomness(String),
+    #[error("a catalog root requires an absolute XDG_DATA_HOME or HOME directory")]
+    CatalogRootUnavailable,
+}
+
+#[derive(Debug, thiserror::Error)]
+enum CatalogOperationError {
+    #[error("GeoNames download failed: {0}")]
+    Download(String),
+    #[error("GeoNames catalog installation failed: {0}")]
+    Catalog(String),
 }
 
 #[cfg(test)]
 mod tests {
+    use std::io::Write;
+
     use axum::{
         body::{Body, to_bytes},
         http::Request,
     };
     use tower::ServiceExt;
+    use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
 
     use super::*;
 
@@ -1059,6 +1305,13 @@ mod tests {
     fn test_app(timeout: Duration) -> Router {
         app(
             AppState::new(ORIGIN, TOKEN, timeout).unwrap(),
+            Path::new("missing-test-distribution"),
+        )
+    }
+
+    fn test_app_with_catalog(timeout: Duration, catalog_root: &Path) -> Router {
+        app(
+            AppState::with_catalog_root(ORIGIN, TOKEN, timeout, catalog_root).unwrap(),
             Path::new("missing-test-distribution"),
         )
     }
@@ -1251,6 +1504,92 @@ mod tests {
         std::fs::remove_file(&vault_path).unwrap();
         std::fs::remove_file(&lock_path).unwrap();
         std::fs::remove_dir(&test_directory).unwrap();
+    }
+
+    #[tokio::test]
+    async fn catalog_status_and_search_use_only_the_installed_local_pack() {
+        let suffix = launch_token().unwrap();
+        let test_directory =
+            std::env::temp_dir().join(format!("oracle-catalog-api-{}", suffix.as_str()));
+        let fields = [
+            "99",
+            "Fictional City",
+            "Fictional City",
+            "Example Place",
+            "42.6500",
+            "-73.7500",
+            "P",
+            "PPL",
+            "US",
+            "",
+            "NY",
+            "001",
+            "",
+            "",
+            "12345",
+            "84",
+            "80",
+            "America/New_York",
+            "2026-01-01",
+        ];
+        let mut archive = ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        archive
+            .start_file(
+                "cities500.txt",
+                SimpleFileOptions::default().compression_method(CompressionMethod::Stored),
+            )
+            .unwrap();
+        archive.write_all(fields.join("\t").as_bytes()).unwrap();
+        archive.write_all(b"\n").unwrap();
+        let cities500_zip = archive.finish().unwrap().into_inner();
+        CatalogStore::new(&test_directory)
+            .install(CatalogInstallInput {
+                cities500_zip,
+                admin1_codes: b"US.NY\tNew York\tNew York\t1\n".to_vec(),
+                admin2_codes: b"US.NY.001\tExample County\tExample County\t2\n".to_vec(),
+                retrieved_at: "2026-08-18T12:00:00Z".into(),
+            })
+            .unwrap();
+        let router = test_app_with_catalog(DEFAULT_IDLE_TIMEOUT, &test_directory);
+
+        let response = router
+            .clone()
+            .oneshot(api_request(
+                "/api/v1/catalog/status",
+                TOKEN,
+                ORIGIN,
+                r#"{"protocol_version":1}"#,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let status: ApiResponse<CatalogStatus> = serde_json::from_slice(&body).unwrap();
+        assert!(status.data.installed);
+        assert_eq!(status.data.place_count, Some(1));
+        assert_eq!(status.data.attribution, ATTRIBUTION);
+
+        let response = router
+            .oneshot(api_request(
+                "/api/v1/catalog/search",
+                TOKEN,
+                ORIGIN,
+                r#"{"protocol_version":1,"query":"example place","limit":10}"#,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+        let results: ApiResponse<Vec<CatalogPlaceSummary>> = serde_json::from_slice(&body).unwrap();
+        assert_eq!(results.data.len(), 1);
+        assert_eq!(results.data[0].geonames_id, 99);
+        assert_eq!(
+            results.data[0].administrative_names,
+            ["Example County", "New York"]
+        );
+        assert_eq!(results.data[0].match_kind, CatalogMatchKind::Exact);
+
+        std::fs::remove_dir_all(&test_directory).unwrap();
     }
 
     #[test]

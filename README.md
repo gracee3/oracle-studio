@@ -4,14 +4,17 @@ Oracle Studio is the local-first composition application for Astraeus astrology
 artifacts and Sibylla tarot artifacts. It owns people and professional-client
 profiles, cross-domain sessions, journaling, and encrypted private storage.
 
-The application is independent of Magnolia and remains useful offline. It does
-not recalculate astrology or reinterpret tarot domain records.
+The application is independent of Magnolia and remains useful offline. Astraeus
+owns astrology calculations while Oracle Studio validates and persists the
+exact requests and immutable results; Studio does not reinterpret tarot domain
+records.
 
 ## Status
 
 **Lifecycle:** Active pre-1.0 application. The CLI, storage contracts, chart
 renderer, Rust/WASM graphical foundation, and schema-v3 chart services are
-implemented; the chart-first forms and workspace presentation are next.
+implemented. The optional content-addressed GeoNames catalog and manual location
+entry are available; the chart-first forms and workspace presentation are next.
 
 Phase 5C/5D integration checkpoint: validated composition records, encrypted
 atomic persistence, reusable tarot/chart/journal services, validated local
@@ -26,6 +29,12 @@ immutable calculation history, comparison presets with exact source IDs, and
 active workspace state. The native API resolves IANA local times explicitly,
 rejects nonexistent wall times, requires a choice for ambiguous wall times, and
 persists accepted mutations with optimistic atomic storage.
+
+Location searches are local-only. The Locations screen can explicitly download
+the public GeoNames cities500 distribution into the standard application data
+directory, or save manual coordinates and an IANA time zone without a catalog.
+Selected places become encrypted snapshots; catalog bytes and metadata remain
+outside the vault and Git. See the [offline location catalog contract](docs/LOCATION_CATALOG.md).
 
 ## CLI
 
