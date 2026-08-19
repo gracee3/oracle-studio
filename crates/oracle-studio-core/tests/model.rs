@@ -100,13 +100,13 @@ fn identifiers_text_timeline_and_references_are_validated() {
 fn deserialization_rejects_unknown_fields_and_bad_versions() {
     let json = VaultDocument::empty().to_json().unwrap();
     assert!(matches!(
-        VaultDocument::from_json(&json.replacen("\"schema_version\":2", "\"schema_version\":3", 1)),
-        Err(ModelError::UnsupportedSchema(3))
+        VaultDocument::from_json(&json.replacen("\"schema_version\":3", "\"schema_version\":4", 1)),
+        Err(ModelError::UnsupportedSchema(4))
     ));
     assert!(matches!(
         VaultDocument::from_json(&json.replacen(
-            "\"schema_version\":2",
-            "\"schema_version\":2,\"unexpected\":true",
+            "\"schema_version\":3",
+            "\"schema_version\":3,\"unexpected\":true",
             1
         )),
         Err(ModelError::Json(_))
@@ -173,20 +173,16 @@ fn artifact_schema_lineage_is_revalidated_when_a_document_reopens() {
 }
 
 #[test]
-fn schema_one_documents_migrate_to_schema_two_with_an_empty_journal() {
+fn pre_v3_documents_are_rejected_without_migration() {
     let current = VaultDocument::empty().to_json().unwrap();
-    let mut value: serde_json::Value = serde_json::from_str(&current).unwrap();
-    value["schema_version"] = 1.into();
-    value.as_object_mut().unwrap().remove("journal_entries");
-
-    let migrated = VaultDocument::from_json(&serde_json::to_string(&value).unwrap()).unwrap();
-    assert!(migrated.journal_entries().is_empty());
-    assert!(
-        migrated
-            .to_json()
-            .unwrap()
-            .starts_with("{\"schema_version\":2,")
-    );
+    for version in [1, 2] {
+        let mut value: serde_json::Value = serde_json::from_str(&current).unwrap();
+        value["schema_version"] = version.into();
+        assert!(matches!(
+            VaultDocument::from_json(&serde_json::to_string(&value).unwrap()),
+            Err(ModelError::UnsupportedSchema(rejected)) if rejected == version
+        ));
+    }
 }
 
 #[test]

@@ -34,6 +34,28 @@ JournalEntry
 - optional person, session, and artifact sources
 - annotation | outcome
 - content and caller-supplied timestamp
+
+SavedLocation
+- encrypted place snapshot with label, administrative names, country, coordinates,
+  optional elevation, and IANA time zone
+- manual or GeoNames provenance; GeoNames snapshots retain the catalog content ID
+
+ChartDefinition
+- natal | event | transit role and optional person
+- editable local date, local time, IANA zone, calculation policy, and ordered points
+- optional current calculation and a per-person default-natal marker
+
+ChartCalculation
+- immutable local-input, resolved-offset, exact-UTC, and saved-location snapshots
+- exact Astraeus calculation artifact and calculation timestamp
+
+ComparisonPreset
+- ordered inner/outer chart sources and point selections
+- editable aspect definitions and wheel orientation
+- exact calculation IDs and Astraeus comparison artifact for its current result
+
+WorkspaceState
+- active person and active comparison preset
 ```
 
 The application validates all references before creating a vault document.
@@ -41,14 +63,21 @@ Engine artifacts remain immutable snapshots; annotations and outcomes are
 separate application records. Updating an artifact creates a new record rather
 than rewriting its identity.
 
-Vault document schema v2 adds ordered journal entries. Schema v1 documents are
-accepted only through an explicit migration that supplies an empty journal;
-all subsequent serialization writes schema v2. Journal sources must exist and
-must not contradict the people or sessions attached to their source artifact.
+Vault document schema v3 is an intentional pre-1.0 reset. It adds saved
+locations, chart definitions, immutable calculations, comparison presets, and
+workspace state. Schema v1 and v2 documents are rejected without migration;
+all serialization writes canonical schema v3. The authenticated-encryption
+envelope is unchanged.
+
+References, unique IDs, one-default-natal-per-person, current calculation
+ownership, comparison source calculations, and artifact kinds are validated on
+construction and reopen. Editing a saved location cannot mutate a calculation's
+embedded location snapshot. Recalculation appends a new calculation and
+canonical artifact, then advances only the chart's current-result pointer.
 
 Initial engine pins:
 
-- Astraeus: `952a143b700ea5cad960498e7d8916a49ebb3691`
+- Astraeus: `e5d295222018178c46fb882a302a57c810bf8bd1`
 - Sibylla: `a154c32b83b110d2568a9ab10828b4f8b3dba7c7`
 
 No sibling path dependency is permitted. The producing revision is stored per

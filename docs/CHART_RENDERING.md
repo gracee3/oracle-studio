@@ -29,9 +29,8 @@ The renderer projects only the comparison specification's ordered
 `first_points` and `second_points` populations. A calculated but unselected
 body or angle is never added to either visible lane. The dependency revision
 adds getter-only access to those existing schema-v1 fields; canonical JSON and
-content identities are unchanged. The separate historical
-`oracle-studio-core` provenance pin remains at `eb9a756…` pending an explicit
-reader/migration design.
+content identities are unchanged. All active Oracle Studio Astraeus crates use
+the same `e5d295222018178c46fb882a302a57c810bf8bd1` revision.
 
 ## Biwheel geometry
 
@@ -166,7 +165,8 @@ used only to verify point and aspect semantics.
 
 ## Current limitations
 
-- This slice is SVG/HTML export, not a native GUI or vault migration.
+- This slice remains the stateless SVG/HTML export boundary; the native host
+  now stores schema-v3 chart and comparison artifacts separately.
 - Only physical transit-to-natal comparisons are supported.
 - Collision displacement is presentation-only; exact-position ticks and leader
   lines preserve the artifact coordinates.

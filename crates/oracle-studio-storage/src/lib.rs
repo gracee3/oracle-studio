@@ -46,7 +46,7 @@ pub enum ExpectedState {
     Revision(VaultRevision),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct LoadedVault {
     document: VaultDocument,
     revision: VaultRevision,
