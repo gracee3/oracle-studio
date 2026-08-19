@@ -114,3 +114,8 @@ The host stores public catalog files beneath
 `$XDG_DATA_HOME/oracle-studio/geonames`, falling back to
 `$HOME/.local/share/oracle-studio/geonames`. `--catalog-dir` selects another
 explicit location. No catalog path or catalog byte enters the encrypted vault.
+
+For a browser on another trusted workstation, keep the service on loopback and
+use the documented same-port SSH local-forward. This preserves the exact
+authority/origin contract without adding a LAN listener or turning Astraeus
+into a network service. See [ThinkPad client and Supermicro service](REMOTE_CLIENT.md).

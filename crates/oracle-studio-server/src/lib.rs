@@ -16,6 +16,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::post,
 };
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use chrono::{SecondsFormat, Utc};
 use oracle_studio_app::{ChartCalculationRequest, ComparisonCalculationRequest, StudioService};
 use oracle_studio_chart_view::{ChartPoint, ChartScene};
@@ -45,6 +46,7 @@ use oracle_studio_protocol::{
     WorkspacePresentation, WorkspaceSummary, ZodiacInput,
 };
 use oracle_studio_storage::{ExpectedState, FileVault, StorageError, VaultRevision};
+use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 use tokio::{net::TcpListener, sync::Mutex};
 use tower_http::services::{ServeDir, ServeFile};
@@ -53,6 +55,26 @@ use zeroize::Zeroizing;
 pub const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
 const CSP: &str = "default-src 'self'; connect-src 'self'; font-src 'self' data:; img-src 'self' data:; style-src 'self'; script-src 'self' 'wasm-unsafe-eval'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+const CSP_SCRIPT_PREFIX: &str = "default-src 'self'; connect-src 'self'; font-src 'self' data:; img-src 'self' data:; style-src 'self'; script-src 'self' 'wasm-unsafe-eval'";
+const CSP_SCRIPT_SUFFIX: &str =
+    "; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+
+#[derive(Clone)]
+struct SecurityHeaders {
+    content_security_policy: HeaderValue,
+}
+
+impl SecurityHeaders {
+    fn for_distribution(distribution: &Path) -> Self {
+        let content_security_policy = std::fs::read_to_string(distribution.join("index.html"))
+            .ok()
+            .map(|index| content_security_policy(&index))
+            .unwrap_or_else(|| HeaderValue::from_static(CSP));
+        Self {
+            content_security_policy,
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct AppState(Arc<AppStateInner>);
@@ -187,6 +209,8 @@ impl SessionStore {
 }
 
 pub fn app(state: AppState, distribution: impl AsRef<Path>) -> Router {
+    let distribution = distribution.as_ref().to_owned();
+    let security_headers = SecurityHeaders::for_distribution(&distribution);
     let api = Router::new()
         .route("/session/status", post(session_status))
         .route("/vault/create", post(create_vault))
@@ -211,12 +235,51 @@ pub fn app(state: AppState, distribution: impl AsRef<Path>) -> Router {
         .route("/workspace/set", post(set_workspace))
         .route_layer(middleware::from_fn_with_state(state.clone(), authorize_api))
         .with_state(state);
-    let distribution = distribution.as_ref().to_owned();
     let index = distribution.join("index.html");
     Router::new()
         .nest("/api/v1", api)
         .fallback_service(ServeDir::new(distribution).not_found_service(ServeFile::new(index)))
-        .layer(middleware::from_fn(security_headers))
+        .layer(middleware::from_fn_with_state(
+            security_headers,
+            apply_security_headers,
+        ))
+}
+
+fn content_security_policy(index: &str) -> HeaderValue {
+    let hashes = inline_script_hash_sources(index);
+    if hashes.is_empty() {
+        return HeaderValue::from_static(CSP);
+    }
+    HeaderValue::from_str(&format!(
+        "{CSP_SCRIPT_PREFIX} {}{CSP_SCRIPT_SUFFIX}",
+        hashes.join(" ")
+    ))
+    .expect("SHA-256 CSP sources contain only valid header bytes")
+}
+
+fn inline_script_hash_sources(index: &str) -> Vec<String> {
+    let mut sources = Vec::new();
+    let mut remaining = index;
+    while let Some(script_start) = remaining.find("<script") {
+        let after_name = &remaining[script_start + "<script".len()..];
+        let Some(tag_end) = after_name.find('>') else {
+            break;
+        };
+        let opening_tag = &after_name[..tag_end];
+        let content_and_rest = &after_name[tag_end + 1..];
+        let Some(script_end) = content_and_rest.find("</script>") else {
+            break;
+        };
+        if !opening_tag
+            .split_ascii_whitespace()
+            .any(|attribute| attribute.starts_with("src="))
+        {
+            let digest = Sha256::digest(&content_and_rest.as_bytes()[..script_end]);
+            sources.push(format!("'sha256-{}'", BASE64_STANDARD.encode(digest)));
+        }
+        remaining = &content_and_rest[script_end + "</script>".len()..];
+    }
+    sources
 }
 
 pub async fn bind_loopback(port: u16) -> io::Result<TcpListener> {
@@ -294,12 +357,16 @@ async fn authorize_api(
     }
 }
 
-async fn security_headers(request: Request, next: Next) -> Response {
+async fn apply_security_headers(
+    State(security): State<SecurityHeaders>,
+    request: Request,
+    next: Next,
+) -> Response {
     let mut response = next.run(request).await;
     let headers = response.headers_mut();
     headers.insert(
         header::CONTENT_SECURITY_POLICY,
-        HeaderValue::from_static(CSP),
+        security.content_security_policy,
     );
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     headers.insert(
@@ -1731,6 +1798,19 @@ mod tests {
         assert!(AppState::new("http://0.0.0.0:4567", TOKEN, DEFAULT_IDLE_TIMEOUT).is_err());
         assert!(AppState::new("https://127.0.0.1:4567", TOKEN, DEFAULT_IDLE_TIMEOUT).is_err());
         assert!(AppState::new("http://127.0.0.1:0", TOKEN, DEFAULT_IDLE_TIMEOUT).is_err());
+    }
+
+    #[test]
+    fn csp_hashes_generated_inline_bootstrap_without_allowing_all_inline_code() {
+        let index = "<script src=\"/external.js\"></script><script>console.log('ok');</script>";
+        assert_eq!(
+            inline_script_hash_sources(index),
+            vec!["'sha256-FrqULMBzC5wUFutTLAFbXSa/hBlhjjFaviVEuHrmOhY='"]
+        );
+        let header = content_security_policy(index);
+        let policy = header.to_str().unwrap();
+        assert!(policy.contains("'wasm-unsafe-eval' 'sha256-"));
+        assert!(!policy.contains("'unsafe-inline'"));
     }
 
     #[tokio::test]

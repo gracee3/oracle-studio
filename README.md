@@ -108,6 +108,13 @@ headers above the Rust-rendered biwheel and can export the same deterministic,
 self-contained static SVG. See [Studio application architecture](docs/STUDIO_ARCHITECTURE.md)
 for the protocol, platform-service boundary, CSP, and inactivity-lock contract.
 
+The native host may remain on a Supermicro while the browser runs on a
+ThinkPad, without opening the vault API to the LAN. The supported remote-client
+shape is a same-port SSH local-forward that preserves the exact loopback
+`Host`, `Origin`, bearer, and CSP checks. Astraeus remains an in-process native
+dependency behind the Oracle Studio protocol. See the
+[ThinkPad/Supermicro boundary and containerized browser acceptance](docs/REMOTE_CLIENT.md).
+
 ## License
 
 AGPL-3.0-or-later.

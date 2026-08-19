@@ -9,6 +9,7 @@ rust-version.workspace = true
 
 [dependencies]
 axum.workspace = true
+base64.workspace = true
 clap.workspace = true
 chrono.workspace = true
 getrandom.workspace = true
@@ -19,6 +20,7 @@ oracle-studio-location-catalog = { version = "0.1.0", path = "../oracle-studio-l
 oracle-studio-protocol = { version = "0.1.0", path = "../oracle-studio-protocol" }
 oracle-studio-storage = { version = "0.1.0", path = "../oracle-studio-storage" }
 serde.workspace = true
+sha2.workspace = true
 subtle.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "sync"] }
