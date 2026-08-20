@@ -4,6 +4,7 @@ yanked = "deny"
 ignore = [
   { id = "RUSTSEC-2024-0436", reason = "Leptos 0.8.20 transitively uses paste; this is an unmaintained-only advisory with no safe upgrade, and no project code invokes paste directly." },
   { id = "RUSTSEC-2026-0173", reason = "Leptos 0.8.20 macros transitively use proc-macro-error2; this is an unmaintained-only advisory with no safe upgrade, and the crate runs only at build time." },
+  { id = "RUSTSEC-2025-0141", reason = "gloo-worker 0.6.0 unconditionally depends on bincode, but Oracle Studio selects StudioCodec on both worker endpoints and never invokes gloo-worker's default bincode codec." },
 ]
 
 [licenses]
@@ -34,5 +35,4 @@ unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 allow-git = [
   "https://github.com/gracee3/astraeus",
-  "https://github.com/gracee3/sibylla",
 ]

@@ -1,7 +1,7 @@
 [package]
 name = "oracle-studio-core"
 version = "0.1.0"
-description = "Validated composition records for Oracle Studio"
+description = "Validated chart-only records for Oracle Studio"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -14,6 +14,4 @@ chrono.workspace = true
 chrono-tz.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-sha2.workspace = true
-sibylla-artifacts = { version = "0.1.0", git = "https://github.com/gracee3/sibylla", rev = "a154c32b83b110d2568a9ab10828b4f8b3dba7c7" }
 thiserror.workspace = true

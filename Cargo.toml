@@ -1,18 +1,15 @@
 [workspace]
 members = [
+    "crates/oracle-studio-app",
+    "crates/oracle-studio-browser",
+    "crates/oracle-studio-chart-player",
+    "crates/oracle-studio-chart-view",
     "crates/oracle-studio-core",
     "crates/oracle-studio-location-catalog",
-    "crates/oracle-studio-app",
-    "crates/oracle-studio-assets",
-    "crates/oracle-studio-chart-view",
-    "crates/oracle-studio-chart",
-    "crates/oracle-studio-chart-player",
-    "crates/oracle-studio-cli",
-    "crates/oracle-studio-storage",
-    "crates/oracle-studio-protocol",
-    "crates/oracle-studio-server",
+    "crates/oracle-studio-platform",
     "crates/oracle-studio-ui",
     "crates/oracle-studio-vault",
+    "crates/oracle-studio-worker",
 ]
 resolver = "3"
 
@@ -23,30 +20,25 @@ repository = "https://github.com/gracee3/oracle-studio"
 rust-version = "1.97"
 
 [workspace.dependencies]
-argon2 = "0.5.3"
-axum = "0.8.9"
-base64 = "0.22.1"
-chacha20poly1305 = "0.10.1"
-chrono = { version = "0.4.41", default-features = false, features = ["clock", "serde", "std"] }
-chrono-tz = "0.10.4"
-clap = { version = "4.5.41", features = ["derive"] }
-getrandom = "0.3.3"
-fs2 = "0.4.3"
-gloo-net = "0.6.0"
-leptos = { version = "0.8.20", default-features = false }
-leptos_router = "0.8.9"
-serde = { version = "1.0.219", features = ["derive"] }
+argon2 = "=0.5.3"
+base64 = "=0.22.1"
+chacha20poly1305 = "=0.10.1"
+chrono = { version = "=0.4.41", default-features = false, features = ["clock", "serde", "std"] }
+chrono-tz = "=0.10.4"
+getrandom = { version = "=0.3.3", features = ["wasm_js"] }
+getrandom02 = { package = "getrandom", version = "=0.2.17", features = ["js"] }
+futures = "=0.3.33"
+gloo-worker = { version = "=0.6.0", features = ["futures"] }
+js-sys = "=0.3.103"
+leptos = { version = "=0.8.20", default-features = false }
+rexie = "=0.6.2"
+serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.151"
-sha2 = "0.10.9"
-subtle = "2.6.1"
-thiserror = "2.0.12"
-tokio = "1.47.1"
-tower = "0.5.2"
-tower-http = "0.6.6"
-uuid = { version = "1.18.1", features = ["v7"] }
-ureq = { version = "3.4.0", default-features = false, features = ["rustls"] }
-wasm-bindgen = "0.2.126"
-wasm-bindgen-futures = "0.4.53"
-web-sys = "0.3.103"
-zeroize = "1.8.1"
-zip = { version = "8.4.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+sha2 = "=0.10.9"
+thiserror = "=2.0.12"
+uuid = { version = "=1.24.1", features = ["js", "serde", "v4"] }
+wasm-bindgen = "=0.2.126"
+wasm-bindgen-futures = "=0.4.76"
+web-sys = "=0.3.103"
+zeroize = "=1.8.1"
+zip = { version = "=8.4.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }

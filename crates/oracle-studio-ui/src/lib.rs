@@ -1,844 +1,784 @@
-//! Browser-side Oracle Studio shell and replaceable platform-service boundary.
+//! Open browser-local Oracle Studio presentation.
 
-use std::{future::Future, pin::Pin, sync::Arc};
+#[cfg(not(target_arch = "wasm32"))]
+use leptos::prelude::*;
 
-use gloo_net::http::Request;
-use leptos::{ev::SubmitEvent, html::Input, prelude::*};
-use leptos_router::{
-    components::{A, Route, Router, Routes},
-    path,
-};
-use oracle_studio_protocol::{
-    ApiError, ApiResponse, CalculateChartRequest, CalculateComparisonRequest, CatalogPlaceSummary,
-    CatalogStatus, ChartSummary, ComparisonSummary, CreateVaultRequest, InstallCatalogRequest,
-    LocalTimeResolutionSummary, LocationProvenanceInput, LocationSummary, MutationResult,
-    PROTOCOL_VERSION, PersonSummary, ProtocolRequest, ResolveChartTimeRequest, SaveChartRequest,
-    SaveComparisonRequest, SaveLocationRequest, SavePersonRequest, SearchCatalogRequest,
-    SessionStatus, SetWorkspaceRequest, UnlockVaultRequest, VaultState, WorkspacePresentation,
-    WorkspaceSummary,
-};
-use serde::{Serialize, de::DeserializeOwned};
-use wasm_bindgen::JsValue;
+#[cfg(target_arch = "wasm32")]
+mod browser {
+    use std::rc::Rc;
 
-pub type PlatformFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, PlatformError>> + 'a>>;
+    use js_sys::{Array, Uint8Array};
+    use leptos::{
+        ev::SubmitEvent,
+        html::{Input, Select, Textarea},
+        prelude::*,
+    };
+    use oracle_studio_core::{
+        AmbiguousTimeChoice, ChartCalculationOptions, ChartDefinition, ChartRole, ComparisonPreset,
+        LocalDateTimeInput, LocalTimeResolution, LocationProvenance, PersonKind, SavedLocation,
+        StableId, WheelOrientation, default_aspects, default_chart_points,
+    };
+    use oracle_studio_location_catalog::{
+        CatalogInstallInput, CatalogRetrieval, CatalogSearchMatch,
+    };
+    use oracle_studio_platform::{
+        ActiveWorkspace, CapabilityStatus, PlatformCommand, PlatformResponse, StudioPlatform,
+        VaultLockState, VaultSummary, WorkspaceSummary,
+    };
+    use oracle_studio_worker::BrowserStudioPlatform;
+    use wasm_bindgen::{JsCast, closure::Closure};
+    use wasm_bindgen_futures::{JsFuture, spawn_local};
+    use web_sys::{BeforeUnloadEvent, Blob, File, HtmlAnchorElement, Url};
 
-mod charts;
-mod people;
-mod workspace;
+    type Platform = StoredValue<Rc<BrowserStudioPlatform>, LocalStorage>;
 
-/// Native capabilities consumed by components. HTTP is one implementation, not
-/// part of the component contract, so a future Tauri or browser-local adapter
-/// can replace it without changing routes or presenters.
-pub trait StudioPlatform: Send + Sync {
-    fn session_status(&self) -> PlatformFuture<'_, SessionStatus>;
-    fn create_vault(&self, request: CreateVaultRequest) -> PlatformFuture<'_, SessionStatus>;
-    fn unlock_vault(&self, request: UnlockVaultRequest) -> PlatformFuture<'_, SessionStatus>;
-    fn lock_vault(&self) -> PlatformFuture<'_, SessionStatus>;
-    fn people(&self) -> PlatformFuture<'_, Vec<PersonSummary>>;
-    fn save_person(&self, request: SavePersonRequest) -> PlatformFuture<'_, MutationResult>;
-    fn locations(&self) -> PlatformFuture<'_, Vec<LocationSummary>>;
-    fn save_location(&self, request: SaveLocationRequest) -> PlatformFuture<'_, MutationResult>;
-    fn catalog_status(&self) -> PlatformFuture<'_, CatalogStatus>;
-    fn install_catalog(&self) -> PlatformFuture<'_, CatalogStatus>;
-    fn search_catalog(
-        &self,
-        request: SearchCatalogRequest,
-    ) -> PlatformFuture<'_, Vec<CatalogPlaceSummary>>;
-    fn charts(&self) -> PlatformFuture<'_, Vec<ChartSummary>>;
-    fn save_chart(&self, request: SaveChartRequest) -> PlatformFuture<'_, MutationResult>;
-    fn resolve_chart_time(
-        &self,
-        request: ResolveChartTimeRequest,
-    ) -> PlatformFuture<'_, LocalTimeResolutionSummary>;
-    fn calculate_chart(&self, request: CalculateChartRequest)
-    -> PlatformFuture<'_, MutationResult>;
-    fn comparisons(&self) -> PlatformFuture<'_, Vec<ComparisonSummary>>;
-    fn save_comparison(&self, request: SaveComparisonRequest)
-    -> PlatformFuture<'_, MutationResult>;
-    fn calculate_comparison(
-        &self,
-        request: CalculateComparisonRequest,
-    ) -> PlatformFuture<'_, MutationResult>;
-    fn workspace(&self) -> PlatformFuture<'_, WorkspaceSummary>;
-    fn workspace_presentation(&self) -> PlatformFuture<'_, Option<WorkspacePresentation>>;
-    fn set_workspace(&self, request: SetWorkspaceRequest) -> PlatformFuture<'_, MutationResult>;
-}
-
-#[derive(Clone)]
-pub struct HttpStudioPlatform {
-    bearer_token: String,
-}
-
-impl HttpStudioPlatform {
-    pub fn from_launch_fragment() -> Result<Self, PlatformError> {
-        let window = web_sys::window().ok_or_else(|| PlatformError::new("window unavailable"))?;
-        let location = window.location();
-        let hash = location
-            .hash()
-            .map_err(|_| PlatformError::new("launch fragment unavailable"))?;
-        let token = hash
-            .trim_start_matches('#')
-            .split('&')
-            .find_map(|part| part.strip_prefix("token="))
-            .filter(|value| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
-            .ok_or_else(|| {
-                PlatformError::new("Open Studio with the one-time URL printed by the native host.")
-            })?
-            .to_owned();
-
-        let replacement = format!(
-            "{}{}",
-            location
-                .pathname()
-                .map_err(|_| PlatformError::new("page path unavailable"))?,
-            location
-                .search()
-                .map_err(|_| PlatformError::new("page query unavailable"))?
-        );
-        window
-            .history()
-            .map_err(|_| PlatformError::new("browser history unavailable"))?
-            .replace_state_with_url(&JsValue::NULL, "", Some(&replacement))
-            .map_err(|_| PlatformError::new("could not consume the launch token"))?;
-        Ok(Self {
-            bearer_token: token,
-        })
+    #[derive(Clone, Copy)]
+    struct Model {
+        vaults: RwSignal<Vec<VaultSummary>>,
+        workspace: RwSignal<WorkspaceSummary>,
+        capabilities: RwSignal<Option<CapabilityStatus>>,
+        catalog_results: RwSignal<Vec<CatalogSearchMatch>>,
+        notice: RwSignal<Option<String>>,
+        problem: RwSignal<Option<String>>,
+        busy: RwSignal<bool>,
     }
 
-    async fn post<RequestBody, ResponseBody>(
-        &self,
-        path: &str,
-        body: RequestBody,
-    ) -> Result<ResponseBody, PlatformError>
-    where
-        RequestBody: Serialize,
-        ResponseBody: DeserializeOwned,
-    {
-        let body = serde_json::to_string(&body)
-            .map_err(|_| PlatformError::new("could not encode the local request"))?;
-        let response = Request::post(path)
-            .header("Authorization", &format!("Bearer {}", self.bearer_token))
-            .header("Content-Type", "application/json")
-            .body(body)
-            .map_err(|_| PlatformError::new("could not prepare the local request"))?
-            .send()
-            .await
-            .map_err(|_| PlatformError::new("the local Studio host is unavailable"))?;
-        if response.ok() {
-            let response: ApiResponse<ResponseBody> = response
-                .json()
-                .await
-                .map_err(|_| PlatformError::new("the local host returned an invalid response"))?;
-            Ok(response.data)
-        } else {
-            let fallback = format!(
-                "the local host rejected the request ({})",
-                response.status()
-            );
-            let message = response
-                .json::<ApiError>()
-                .await
-                .map(|error| error.message)
-                .unwrap_or(fallback);
-            Err(PlatformError::new(message))
-        }
-    }
-}
-
-impl StudioPlatform for HttpStudioPlatform {
-    fn session_status(&self) -> PlatformFuture<'_, SessionStatus> {
-        Box::pin(self.post("/api/v1/session/status", ProtocolRequest::current()))
-    }
-
-    fn create_vault(&self, request: CreateVaultRequest) -> PlatformFuture<'_, SessionStatus> {
-        Box::pin(self.post("/api/v1/vault/create", request))
-    }
-
-    fn unlock_vault(&self, request: UnlockVaultRequest) -> PlatformFuture<'_, SessionStatus> {
-        Box::pin(self.post("/api/v1/vault/unlock", request))
-    }
-
-    fn lock_vault(&self) -> PlatformFuture<'_, SessionStatus> {
-        Box::pin(self.post("/api/v1/vault/lock", ProtocolRequest::current()))
-    }
-
-    fn people(&self) -> PlatformFuture<'_, Vec<PersonSummary>> {
-        Box::pin(self.post("/api/v1/people/list", ProtocolRequest::current()))
-    }
-
-    fn save_person(&self, request: SavePersonRequest) -> PlatformFuture<'_, MutationResult> {
-        Box::pin(self.post("/api/v1/people/save", request))
-    }
-
-    fn locations(&self) -> PlatformFuture<'_, Vec<LocationSummary>> {
-        Box::pin(self.post("/api/v1/locations/list", ProtocolRequest::current()))
-    }
-
-    fn save_location(&self, request: SaveLocationRequest) -> PlatformFuture<'_, MutationResult> {
-        Box::pin(self.post("/api/v1/locations/save", request))
-    }
-
-    fn catalog_status(&self) -> PlatformFuture<'_, CatalogStatus> {
-        Box::pin(self.post("/api/v1/catalog/status", ProtocolRequest::current()))
-    }
-
-    fn install_catalog(&self) -> PlatformFuture<'_, CatalogStatus> {
-        Box::pin(self.post("/api/v1/catalog/install", InstallCatalogRequest::current()))
-    }
-
-    fn search_catalog(
-        &self,
-        request: SearchCatalogRequest,
-    ) -> PlatformFuture<'_, Vec<CatalogPlaceSummary>> {
-        Box::pin(self.post("/api/v1/catalog/search", request))
-    }
-
-    fn charts(&self) -> PlatformFuture<'_, Vec<ChartSummary>> {
-        Box::pin(self.post("/api/v1/charts/list", ProtocolRequest::current()))
-    }
-
-    fn save_chart(&self, request: SaveChartRequest) -> PlatformFuture<'_, MutationResult> {
-        Box::pin(self.post("/api/v1/charts/save", request))
-    }
-
-    fn resolve_chart_time(
-        &self,
-        request: ResolveChartTimeRequest,
-    ) -> PlatformFuture<'_, LocalTimeResolutionSummary> {
-        Box::pin(self.post("/api/v1/charts/time-resolution", request))
-    }
-
-    fn calculate_chart(
-        &self,
-        request: CalculateChartRequest,
-    ) -> PlatformFuture<'_, MutationResult> {
-        Box::pin(self.post("/api/v1/charts/calculate", request))
-    }
-
-    fn comparisons(&self) -> PlatformFuture<'_, Vec<ComparisonSummary>> {
-        Box::pin(self.post("/api/v1/comparisons/list", ProtocolRequest::current()))
-    }
-
-    fn save_comparison(
-        &self,
-        request: SaveComparisonRequest,
-    ) -> PlatformFuture<'_, MutationResult> {
-        Box::pin(self.post("/api/v1/comparisons/save", request))
-    }
-
-    fn calculate_comparison(
-        &self,
-        request: CalculateComparisonRequest,
-    ) -> PlatformFuture<'_, MutationResult> {
-        Box::pin(self.post("/api/v1/comparisons/calculate", request))
-    }
-
-    fn workspace(&self) -> PlatformFuture<'_, WorkspaceSummary> {
-        Box::pin(self.post("/api/v1/workspace/get", ProtocolRequest::current()))
-    }
-
-    fn workspace_presentation(&self) -> PlatformFuture<'_, Option<WorkspacePresentation>> {
-        Box::pin(self.post("/api/v1/workspace/view", ProtocolRequest::current()))
-    }
-
-    fn set_workspace(&self, request: SetWorkspaceRequest) -> PlatformFuture<'_, MutationResult> {
-        Box::pin(self.post("/api/v1/workspace/set", request))
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PlatformError {
-    message: String,
-}
-
-impl PlatformError {
-    pub fn new(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
+    impl Model {
+        fn new() -> Self {
+            Self {
+                vaults: RwSignal::new(Vec::new()),
+                workspace: RwSignal::new(WorkspaceSummary {
+                    active: None,
+                    scratch_dirty: false,
+                    people: Vec::new(),
+                    locations: Vec::new(),
+                    charts: Vec::new(),
+                    comparisons: Vec::new(),
+                }),
+                capabilities: RwSignal::new(None),
+                catalog_results: RwSignal::new(Vec::new()),
+                notice: RwSignal::new(None),
+                problem: RwSignal::new(None),
+                busy: RwSignal::new(false),
+            }
         }
     }
 
-    pub fn message(&self) -> &str {
-        &self.message
-    }
-}
+    #[component]
+    pub fn App() -> impl IntoView {
+        let model = Model::new();
+        let platform = StoredValue::new_local(Rc::new(BrowserStudioPlatform::spawn()));
+        install_scratch_exit_warning(model.workspace);
+        Effect::new(move |_| dispatch(platform, model, PlatformCommand::Initialize));
 
-pub(crate) fn new_id(prefix: &str) -> Result<String, PlatformError> {
-    let window = web_sys::window().ok_or_else(|| PlatformError::new("window unavailable"))?;
-    let crypto = window
-        .crypto()
-        .map_err(|_| PlatformError::new("secure browser randomness unavailable"))?;
-    Ok(format!("{prefix}_{}", crypto.random_uuid()))
-}
-
-#[derive(Clone)]
-pub(crate) struct StudioContext {
-    pub(crate) platform: Arc<dyn StudioPlatform>,
-    pub(crate) status: RwSignal<Option<Result<SessionStatus, PlatformError>>>,
-}
-
-#[component]
-pub fn App(platform: Arc<dyn StudioPlatform>) -> impl IntoView {
-    let status = RwSignal::new(None);
-    provide_context(StudioContext {
-        platform: Arc::clone(&platform),
-        status,
-    });
-    refresh_status(platform, status);
-
-    view! {
-        <Router>
-            <div class="studio-shell">
-                <header class="app-header">
-                    <div>
-                        <p class="eyebrow">"Local astrology workspace"</p>
-                        <A attr:class="wordmark" href="/">"Oracle Studio"</A>
-                    </div>
-                    <VaultIndicator />
-                </header>
-                <nav class="primary-nav" aria-label="Studio sections">
-                    <A href="/people">"People"</A>
-                    <A href="/locations">"Locations"</A>
-                    <A href="/charts/new">"New chart"</A>
-                    <A href="/workspace">"Workspace"</A>
+        view! {
+            <a class="skip-link" href="#main-content">"Skip to workspace"</a>
+            <header class="site-header">
+                <a class="brand" href="#library" aria-label="Oracle Studio home">
+                    <span class="brand-mark" aria-hidden="true">"☉"</span>
+                    <span><strong>"Oracle Studio"</strong><small>"Browser-local chart work"</small></span>
+                </a>
+                <nav aria-label="Studio sections">
+                    <a href="#library">"Vaults"</a>
+                    <a href="#people">"People"</a>
+                    <a href="#locations">"Locations"</a>
+                    <a href="#charts">"Charts"</a>
+                    <a href="#workspace">"Workspace"</a>
                 </nav>
-                <main id="main-content" tabindex="-1">
-                    <Routes fallback=|| view! { <NotFound /> }>
-                        <Route path=path!("") view=HomePage />
-                        <Route path=path!("vault") view=VaultPage />
-                        <Route path=path!("people") view=people::PeoplePage />
-                        <Route path=path!("people/:id") view=people::PersonPage />
-                        <Route path=path!("charts/:id") view=charts::ChartEditorPage />
-                        <Route path=path!("locations") view=LocationsPage />
-                        <Route path=path!("workspace") view=workspace::WorkspacePage />
-                    </Routes>
-                </main>
-            </div>
-        </Router>
-    }
-}
+            </header>
 
-fn refresh_status(
-    platform: Arc<dyn StudioPlatform>,
-    status: RwSignal<Option<Result<SessionStatus, PlatformError>>>,
-) {
-    wasm_bindgen_futures::spawn_local(async move {
-        status.set(Some(platform.session_status().await));
-    });
-}
+            <main id="main-content" tabindex="-1">
+                <section class="hero">
+                    <div>
+                        <p class="eyebrow">"Private by construction"</p>
+                        <h1>"Your studio lives in this browser."</h1>
+                        <p>"Start immediately in scratch, or unlock any number of encrypted portable vaults. No account, token, server, or filesystem path is required."</p>
+                    </div>
+                    <div class="hero-status">
+                        <span class="status-dot" aria-hidden="true"></span>
+                        <strong>"Local-only session"</strong>
+                        <small>{move || active_label(&model.workspace.get())}</small>
+                    </div>
+                </section>
 
-#[component]
-fn VaultIndicator() -> impl IntoView {
-    let context = expect_context::<StudioContext>();
-    let platform = Arc::clone(&context.platform);
-    let status = context.status;
-    view! {
-        <div class="vault-indicator" aria-live="polite">
-            {move || match status.get() {
-                None => view! { <span>"Checking vault…"</span> }.into_any(),
-                Some(Err(error)) => view! { <span class="error-text">{error.message().to_owned()}</span> }.into_any(),
-                Some(Ok(session)) if session.state == VaultState::Unlocked => view! {
-                    <span class="status-dot unlocked" aria-hidden="true"></span>
-                    <span>{session.vault_name.unwrap_or_else(|| "Vault".to_owned())}</span>
-                    <button class="quiet-button" type="button" on:click={
-                        let platform = Arc::clone(&platform);
-                        move |_| {
-                            let platform = Arc::clone(&platform);
-                            wasm_bindgen_futures::spawn_local(async move {
-                                status.set(Some(platform.lock_vault().await));
-                            });
-                        }
-                    }>"Lock"</button>
-                }.into_any(),
-                Some(Ok(_)) => view! {
-                    <span class="status-dot" aria-hidden="true"></span>
-                    <A href="/vault">"Unlock vault"</A>
-                }.into_any(),
-            }}
-        </div>
-    }
-}
+                <div class="announcements">
+                    <p class="notice" aria-live="polite">{move || model.notice.get().unwrap_or_default()}</p>
+                    <p class="problem" role="alert">{move || model.problem.get().unwrap_or_default()}</p>
+                </div>
 
-#[component]
-fn HomePage() -> impl IntoView {
-    view! {
-        <section class="hero panel">
-            <p class="eyebrow">"Charts first"</p>
-            <h1>"A private studio for natal and transit work."</h1>
-            <p>
-                "Your vault stays encrypted on this computer. Start with a person, a saved location, and a chart; then compare natal and transit positions in the workspace."
-            </p>
-            <div class="button-row">
-                <A attr:class="primary-button" href="/vault">"Open a vault"</A>
-                <A attr:class="secondary-button" href="/workspace">"View workspace"</A>
-            </div>
-        </section>
-        <section class="feature-grid" aria-label="Studio capabilities">
-            <article class="panel"><span class="feature-number">"01"</span><h2>"People"</h2><p>"Keep chart subjects and professional clients organized inside the encrypted vault."</p></article>
-            <article class="panel"><span class="feature-number">"02"</span><h2>"Places"</h2><p>"Use saved, offline location snapshots with explicit coordinates and time zones."</p></article>
-            <article class="panel"><span class="feature-number">"03"</span><h2>"Biwheel"</h2><p>"Read a deterministic natal/transit comparison with precise chart metadata."</p></article>
-        </section>
-    }
-}
+                <VaultLibrary platform model />
 
-#[component]
-fn VaultPage() -> impl IntoView {
-    view! {
-        <PageHeader eyebrow="Encrypted local storage" title="Open your studio" description="The password is sent only to the loopback host and is never retained by the browser application." />
-        <div class="two-column">
-            <VaultForm create=false />
-            <VaultForm create=true />
-        </div>
-    }
-}
-
-#[component]
-fn VaultForm(create: bool) -> impl IntoView {
-    let context = expect_context::<StudioContext>();
-    let path_ref = NodeRef::<Input>::new();
-    let password_ref = NodeRef::<Input>::new();
-    let feedback = RwSignal::new(None::<Result<String, String>>);
-    let submit = move |event: SubmitEvent| {
-        event.prevent_default();
-        let Some(path_input) = path_ref.get() else {
-            return;
-        };
-        let Some(password_input) = password_ref.get() else {
-            return;
-        };
-        let path = path_input.value();
-        let password = password_input.value();
-        password_input.set_value("");
-        if path.trim().is_empty() || password.is_empty() {
-            feedback.set(Some(
-                Err("Enter both a vault path and password.".to_owned()),
-            ));
-            return;
-        }
-        feedback.set(Some(Ok("Working…".to_owned())));
-        let platform = Arc::clone(&context.platform);
-        let status = context.status;
-        wasm_bindgen_futures::spawn_local(async move {
-            let result = if create {
-                platform
-                    .create_vault(CreateVaultRequest::current(path, password))
-                    .await
-            } else {
-                platform
-                    .unlock_vault(UnlockVaultRequest::current(path, password))
-                    .await
-            };
-            match result {
-                Ok(session) => {
-                    status.set(Some(Ok(session)));
-                    feedback.set(Some(Ok(if create {
-                        "Vault created and unlocked.".to_owned()
-                    } else {
-                        "Vault unlocked.".to_owned()
-                    })));
-                }
-                Err(error) => feedback.set(Some(Err(error.message().to_owned()))),
-            }
-        });
-    };
-    view! {
-        <form class="panel vault-form" on:submit=submit>
-            <p class="eyebrow">{if create { "New vault" } else { "Existing vault" }}</p>
-            <h2>{if create { "Create" } else { "Unlock" }}</h2>
-            <label>
-                <span>"Vault path"</span>
-                <input node_ref=path_ref type="text" autocomplete="off" spellcheck="false" placeholder="/home/you/Documents/studio.oracle" />
-            </label>
-            <label>
-                <span>"Password"</span>
-                <input node_ref=password_ref type="password" autocomplete=if create { "new-password" } else { "current-password" } />
-            </label>
-            <button class="primary-button" type="submit">{if create { "Create vault" } else { "Unlock vault" }}</button>
-            <div class="form-feedback" role="status" aria-live="polite">
-                {move || feedback.get().map(|result| match result {
-                    Ok(message) => view! { <span>{message}</span> }.into_any(),
-                    Err(message) => view! { <span class="error-text">{message}</span> }.into_any(),
-                })}
-            </div>
-        </form>
-    }
-}
-
-#[component]
-fn LocationsPage() -> impl IntoView {
-    let context = expect_context::<StudioContext>();
-    let catalog = RwSignal::new(None::<Result<CatalogStatus, PlatformError>>);
-    let saved = RwSignal::new(None::<Result<Vec<LocationSummary>, PlatformError>>);
-    let results = RwSignal::new(Vec::<CatalogPlaceSummary>::new());
-    let feedback = RwSignal::new(None::<Result<String, String>>);
-    let search_ref = NodeRef::<Input>::new();
-    refresh_catalog_status(Arc::clone(&context.platform), catalog);
-    refresh_saved_locations(Arc::clone(&context.platform), saved);
-
-    let install = {
-        let platform = Arc::clone(&context.platform);
-        move |_| {
-            feedback.set(Some(
-                Ok("Downloading the public GeoNames files…".to_owned()),
-            ));
-            let platform = Arc::clone(&platform);
-            wasm_bindgen_futures::spawn_local(async move {
-                match platform.install_catalog().await {
-                    Ok(status) => {
-                        catalog.set(Some(Ok(status)));
-                        feedback.set(Some(Ok(
-                            "The offline catalog is installed. Searches stay on this computer."
-                                .to_owned(),
-                        )));
-                    }
-                    Err(error) => feedback.set(Some(Err(error.message().to_owned()))),
-                }
-            });
-        }
-    };
-    let search = {
-        let platform = Arc::clone(&context.platform);
-        move |event: SubmitEvent| {
-            event.prevent_default();
-            let Some(input) = search_ref.get() else {
-                return;
-            };
-            let query = input.value();
-            if query.trim().is_empty() {
-                feedback.set(Some(Err("Enter a city or place name.".to_owned())));
-                return;
-            }
-            feedback.set(Some(Ok("Searching the local catalog…".to_owned())));
-            let platform = Arc::clone(&platform);
-            wasm_bindgen_futures::spawn_local(async move {
-                match platform
-                    .search_catalog(SearchCatalogRequest::current(query, 20))
-                    .await
-                {
-                    Ok(matches) => {
-                        let count = matches.len();
-                        results.set(matches);
-                        feedback.set(Some(Ok(format!(
-                            "Found {count} local catalog result{}.",
-                            if count == 1 { "" } else { "s" }
-                        ))));
-                    }
-                    Err(error) => feedback.set(Some(Err(error.message().to_owned()))),
-                }
-            });
-        }
-    };
-
-    view! {
-        <PageHeader eyebrow="Offline location catalog" title="Locations" description="Saved places are encrypted snapshots. The optional GeoNames catalog remains outside the vault and never sends searches over the network." />
-        <div class="location-layout">
-            <section class="panel catalog-panel" aria-labelledby="catalog-title">
-                <p class="eyebrow">"Optional public data"</p>
-                <h2 id="catalog-title">"GeoNames cities500"</h2>
-                {move || match catalog.get() {
-                    None => view! { <p class="muted">"Checking the local catalog…"</p> }.into_any(),
-                    Some(Err(error)) => view! { <p class="error-text">{error.message().to_owned()}</p> }.into_any(),
-                    Some(Ok(status)) if status.installed => view! {
-                        <div class="catalog-status installed">
-                            <span class="status-dot unlocked" aria-hidden="true"></span>
-                            <strong>"Installed for offline search"</strong>
-                            <span>{status.place_count.map(|count| format!("{count} places")).unwrap_or_default()}</span>
-                            <code>{status.content_id.unwrap_or_default()}</code>
-                        </div>
-                    }.into_any(),
-                    Some(Ok(_)) => view! {
-                        <div class="catalog-status">
-                            <span class="status-dot" aria-hidden="true"></span>
-                            <strong>"Not installed"</strong>
-                        </div>
-                    }.into_any(),
+                {move || if model.workspace.get().active.is_some() {
+                    view! {
+                        <PeopleSection platform model />
+                        <LocationsSection platform model />
+                        <ChartsSection platform model />
+                        <WorkspaceSection platform model />
+                    }.into_any()
+                } else {
+                    view! {
+                        <section class="empty-workspace panel">
+                            <p class="eyebrow">"No active workspace"</p>
+                            <h2>"Explore freely, save deliberately."</h2>
+                            <p>"A new chart starts an in-memory scratch workspace. It is never written to disk until you choose a title and password."</p>
+                            <button class="primary" disabled=move || model.busy.get() on:click=move |_| dispatch(platform, model, PlatformCommand::CreateScratch)>
+                                "New chart in scratch"
+                            </button>
+                        </section>
+                    }.into_any()
                 }}
-                <p class="muted">
-                    "Installation downloads cities500 and administrative-name files only after you press this button. The files stay outside your vault; later searches use only the local copy."
-                </p>
-                <button class="primary-button" type="button" on:click=install>
-                    "Download and install catalog"
-                </button>
-                <p class="attribution">
-                    "Contains GeoNames geographical data, available under "
-                    <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noreferrer">"CC BY 4.0"</a>
-                    ". Source: "
-                    <a href="https://download.geonames.org/export/dump/" target="_blank" rel="noreferrer">"GeoNames distribution"</a>
-                    "."
-                </p>
-            </section>
+            </main>
+            <footer>
+                <span>"Oracle Studio · AGPL-3.0-or-later"</span>
+                <span>"GeoNames catalog data: CC BY 4.0"</span>
+            </footer>
+        }
+    }
 
-            <section class="panel catalog-panel" aria-labelledby="search-title">
-                <p class="eyebrow">"Local-only lookup"</p>
-                <h2 id="search-title">"Search places"</h2>
-                <form class="inline-form" on:submit=search>
-                    <label class="grow-field">
-                        <span>"City or place name"</span>
-                        <input node_ref=search_ref type="search" autocomplete="off" placeholder="Columbia" />
-                    </label>
-                    <button class="secondary-button" type="submit">"Search offline"</button>
-                </form>
-                <div class="catalog-results" aria-live="polite">
+    #[component]
+    fn VaultLibrary(platform: Platform, model: Model) -> impl IntoView {
+        let scratch_title = NodeRef::<Input>::new();
+        let scratch_password = NodeRef::<Input>::new();
+        let import = NodeRef::<Input>::new();
+        let replace_duplicate = NodeRef::<Input>::new();
+        let save_scratch = move |event: SubmitEvent| {
+            event.prevent_default();
+            let Some(title) = value(scratch_title) else {
+                return;
+            };
+            let Some(password) = value(scratch_password) else {
+                return;
+            };
+            if let Some(input) = scratch_password.get() {
+                input.set_value("");
+            }
+            dispatch(
+                platform,
+                model,
+                PlatformCommand::SaveScratch {
+                    title,
+                    password: password.into_bytes(),
+                },
+            );
+        };
+        let import_vault = move |_| {
+            let Some(file) = import
+                .get()
+                .and_then(|input| input.files())
+                .and_then(|files| files.item(0))
+            else {
+                return;
+            };
+            let replace_confirmed = replace_duplicate.get().is_some_and(|input| input.checked());
+            spawn_local(async move {
+                match read_file(file).await {
+                    Ok(bytes) => dispatch(
+                        platform,
+                        model,
+                        PlatformCommand::ImportVault {
+                            bytes,
+                            replace_confirmed,
+                        },
+                    ),
+                    Err(message) => model.problem.set(Some(message)),
+                }
+            });
+        };
+
+        view! {
+            <section id="library" class="panel library">
+                <div class="section-heading">
+                    <div><p class="eyebrow">"Vault library"</p><h2>"Portable studios"</h2></div>
+                    <div class="import-actions">
+                        <label class="file-action">"Import .oracle-vault"<input node_ref=import type="file" accept=".oracle-vault,application/octet-stream" on:change=import_vault /></label>
+                        <label class="confirm-replace"><input node_ref=replace_duplicate type="checkbox" />"Replace an existing vault with the same ID"</label>
+                    </div>
+                </div>
+                <div class="storage-warning">
+                    <strong>"Exports are your backups."</strong>
+                    <span>{move || model.capabilities.get().map(|status| status.backup_warning).unwrap_or_else(|| "Browser storage can be evicted.".into())}</span>
+                </div>
+                <div class="vault-grid">
                     <For
-                        each=move || results.get()
-                        key=|place| place.geonames_id
-                        children={
-                            let platform = Arc::clone(&context.platform);
-                            move |place| view! {
-                                <CatalogPlaceCard
-                                    place
-                                    platform=Arc::clone(&platform)
-                                    feedback
-                                    saved
-                                />
-                            }
-                        }
+                        each=move || model.vaults.get()
+                        key=|vault| format!("{}:{}:{:?}", vault.id, vault.revision, vault.lock_state)
+                        children=move |vault| view! { <VaultCard platform model vault /> }
                     />
+                    {move || if model.vaults.get().is_empty() {
+                        view! { <div class="empty-card"><span aria-hidden="true">"◇"</span><p>"No encrypted vaults in this browser yet."</p></div> }.into_any()
+                    } else { ().into_any() }}
+                </div>
+                <div class="scratch-row">
+                    <div>
+                        <strong>"Scratch workspace"</strong>
+                        <p>{move || if model.workspace.get().scratch_dirty { "Unsaved changes — save or explicitly discard before leaving." } else { "Memory-only work for quick exploration." }}</p>
+                    </div>
+                    {move || if model.workspace.get().active == Some(ActiveWorkspace::Scratch) {
+                        view! {
+                            <form class="inline-form" on:submit=save_scratch>
+                                <label><span>"Public vault title"</span><input node_ref=scratch_title required maxlength="256" autocomplete="off" /></label>
+                                <label><span>"Vault password"</span><input node_ref=scratch_password type="password" required autocomplete="new-password" /></label>
+                                <button class="primary" disabled=move || model.busy.get() type="submit">"Save encrypted vault"</button>
+                                <button type="button" on:click=move |_| {
+                                    let confirmed = !model.workspace.get().scratch_dirty || web_sys::window().and_then(|window| window.confirm_with_message("Discard unsaved scratch work?").ok()).unwrap_or(false);
+                                    dispatch(platform, model, PlatformCommand::DiscardScratch { confirmed });
+                                }>"Discard"</button>
+                            </form>
+                        }.into_any()
+                    } else {
+                        view! { <button on:click=move |_| dispatch(platform, model, PlatformCommand::CreateScratch)>"Open scratch"</button> }.into_any()
+                    }}
                 </div>
             </section>
-        </div>
-
-        <div class="form-feedback location-feedback" role="status" aria-live="polite">
-            {move || feedback.get().map(|result| match result {
-                Ok(message) => view! { <span>{message}</span> }.into_any(),
-                Err(message) => view! { <span class="error-text">{message}</span> }.into_any(),
-            })}
-        </div>
-
-        <div class="location-layout location-layout-secondary">
-            <ManualLocationForm
-                platform=Arc::clone(&context.platform)
-                feedback
-                saved
-            />
-            <section class="panel catalog-panel" aria-labelledby="saved-locations-title">
-                <p class="eyebrow">"Encrypted snapshots"</p>
-                <h2 id="saved-locations-title">"Saved locations"</h2>
-                {move || match saved.get() {
-                    None => view! { <p class="muted">"Loading saved locations…"</p> }.into_any(),
-                    Some(Err(error)) => view! { <p class="error-text">{error.message().to_owned()}</p> }.into_any(),
-                    Some(Ok(locations)) if locations.is_empty() => view! { <p class="muted">"No saved locations in the unlocked vault."</p> }.into_any(),
-                    Some(Ok(locations)) => view! {
-                        <ul class="saved-location-list">
-                            {locations.into_iter().map(|location| view! {
-                                <li>
-                                    <strong>{location.label}</strong>
-                                    <span>{format!("{} · {}", location.country_code, location.time_zone)}</span>
-                                    <small>{format!("{:.4}, {:.4}", location.latitude_degrees, location.longitude_degrees)}</small>
-                                </li>
-                            }).collect_view()}
-                        </ul>
-                    }.into_any(),
-                }}
-            </section>
-        </div>
+        }
     }
-}
 
-fn refresh_catalog_status(
-    platform: Arc<dyn StudioPlatform>,
-    status: RwSignal<Option<Result<CatalogStatus, PlatformError>>>,
-) {
-    wasm_bindgen_futures::spawn_local(async move {
-        status.set(Some(platform.catalog_status().await));
-    });
-}
-
-fn refresh_saved_locations(
-    platform: Arc<dyn StudioPlatform>,
-    saved: RwSignal<Option<Result<Vec<LocationSummary>, PlatformError>>>,
-) {
-    wasm_bindgen_futures::spawn_local(async move {
-        saved.set(Some(platform.locations().await));
-    });
-}
-
-#[component]
-fn CatalogPlaceCard(
-    place: CatalogPlaceSummary,
-    platform: Arc<dyn StudioPlatform>,
-    feedback: RwSignal<Option<Result<String, String>>>,
-    saved: RwSignal<Option<Result<Vec<LocationSummary>, PlatformError>>>,
-) -> impl IntoView {
-    let details = if place.administrative_names.is_empty() {
-        place.country_code.clone()
-    } else {
-        format!(
-            "{}, {}",
-            place.administrative_names.join(", "),
-            place.country_code
-        )
-    };
-    let save = {
-        let place = place.clone();
-        move |_| {
-            let request = SaveLocationRequest {
-                protocol_version: PROTOCOL_VERSION,
-                id: format!("geonames_{}", place.geonames_id),
-                label: place.name.clone(),
-                administrative_names: place.administrative_names.clone(),
-                country_code: place.country_code.clone(),
-                latitude_degrees: place.latitude_degrees,
-                longitude_degrees: place.longitude_degrees,
-                elevation_meters: place.elevation_meters,
-                time_zone: place.time_zone.clone(),
-                provenance: LocationProvenanceInput::GeoNames {
-                    geonames_id: place.geonames_id,
-                    catalog_content_id: place.catalog_content_id.clone(),
-                },
+    #[component]
+    fn VaultCard(platform: Platform, model: Model, vault: VaultSummary) -> impl IntoView {
+        let password = NodeRef::<Input>::new();
+        let id = vault.id.clone();
+        let unlock_id = id.clone();
+        let export_id = id.clone();
+        let lock_id = id.clone();
+        let remove_id = id.clone();
+        let activate_id = id.clone();
+        let state = vault.lock_state.clone();
+        let unlock = move |event: SubmitEvent| {
+            event.prevent_default();
+            let Some(password_value) = value(password) else {
+                return;
             };
-            let platform = Arc::clone(&platform);
-            wasm_bindgen_futures::spawn_local(async move {
-                match platform.save_location(request).await {
-                    Ok(_) => {
-                        feedback.set(Some(Ok("Saved an encrypted location snapshot.".to_owned())));
-                        refresh_saved_locations(Arc::clone(&platform), saved);
+            if let Some(input) = password.get() {
+                input.set_value("");
+            }
+            dispatch(
+                platform,
+                model,
+                PlatformCommand::UnlockVault {
+                    vault_id: unlock_id.clone(),
+                    password: password_value.into_bytes(),
+                },
+            );
+        };
+        view! {
+            <article class="vault-card">
+                <div class="vault-card-top"><span class="vault-icon" aria-hidden="true">"◈"</span><span class=format!("badge {:?}", state)>{format!("{:?}", state)}</span></div>
+                <h3>{vault.title}</h3>
+                <p class="vault-id">{id}</p>
+                <small>{format!("Updated {}", vault.modified_at)}</small>
+                {if state == VaultLockState::Locked {
+                    view! {
+                        <form class="unlock-form" on:submit=unlock>
+                            <label><span>"Password"</span><input node_ref=password type="password" required autocomplete="current-password" /></label>
+                            <button class="primary" type="submit">"Unlock"</button>
+                        </form>
+                    }.into_any()
+                } else {
+                    view! {
+                        <div class="button-row">
+                            <button on:click=move |_| dispatch(platform, model, PlatformCommand::ActivateVault { vault_id: activate_id.clone() })>"Switch here"</button>
+                            <button on:click=move |_| dispatch(platform, model, PlatformCommand::LockVault { vault_id: lock_id.clone() })>"Lock"</button>
+                        </div>
+                    }.into_any()
+                }}
+                <div class="button-row secondary-actions">
+                    <button on:click=move |_| dispatch(platform, model, PlatformCommand::ExportVault { vault_id: export_id.clone() })>"Export"</button>
+                    <button class="danger" on:click=move |_| {
+                        let confirmed = web_sys::window().and_then(|window| window.confirm_with_message("Remove this browser copy? Exported backups are unaffected.").ok()).unwrap_or(false);
+                        dispatch(platform, model, PlatformCommand::RemoveVault { vault_id: remove_id.clone(), confirmed });
+                    }>"Remove"</button>
+                </div>
+            </article>
+        }
+    }
+
+    #[component]
+    fn PeopleSection(platform: Platform, model: Model) -> impl IntoView {
+        let id = NodeRef::<Input>::new();
+        let name = NodeRef::<Input>::new();
+        let notes = NodeRef::<Textarea>::new();
+        let submit = move |event: SubmitEvent| {
+            event.prevent_default();
+            let (Some(id_value), Some(display_name)) = (value(id), value(name)) else {
+                return;
+            };
+            match StableId::new("person.id", id_value) {
+                Ok(id) => dispatch(
+                    platform,
+                    model,
+                    PlatformCommand::AddPerson {
+                        id,
+                        display_name,
+                        kind: PersonKind::Personal,
+                        notes: text_value(notes).filter(|value| !value.trim().is_empty()),
+                    },
+                ),
+                Err(error) => model.problem.set(Some(error.to_string())),
+            }
+        };
+        view! {
+            <section id="people" class="panel split-panel">
+                <div><p class="eyebrow">"People"</p><h2>"Chart subjects"</h2><ul class="entity-list"><For each=move || model.workspace.get().people key=|item| item.id.clone() children=|item| view! { <li><strong>{item.label}</strong><small>{item.id}</small></li> } /></ul></div>
+                <form class="studio-form" on:submit=submit>
+                    <h3>"Add or update a person"</h3>
+                    <label><span>"Record ID"</span><input node_ref=id required /></label>
+                    <label><span>"Display name"</span><input node_ref=name required /></label>
+                    <label><span>"Notes (optional)"</span><textarea node_ref=notes></textarea></label>
+                    <button class="primary" type="submit">"Save person"</button>
+                </form>
+            </section>
+        }
+    }
+
+    #[component]
+    fn LocationsSection(platform: Platform, model: Model) -> impl IntoView {
+        let id = NodeRef::<Input>::new();
+        let label = NodeRef::<Input>::new();
+        let country = NodeRef::<Input>::new();
+        let zone = NodeRef::<Input>::new();
+        let latitude = NodeRef::<Input>::new();
+        let longitude = NodeRef::<Input>::new();
+        let cities = NodeRef::<Input>::new();
+        let admin1 = NodeRef::<Input>::new();
+        let admin2 = NodeRef::<Input>::new();
+        let query = NodeRef::<Input>::new();
+        let save = move |event: SubmitEvent| {
+            event.prevent_default();
+            let result = (|| {
+                SavedLocation::new(
+                    StableId::new(
+                        "saved_location.id",
+                        value(id).ok_or("record ID is required")?,
+                    )
+                    .map_err(|error| error.to_string())?,
+                    value(label).ok_or("label is required")?,
+                    Vec::new(),
+                    value(country)
+                        .ok_or("country is required")?
+                        .to_ascii_uppercase(),
+                    value(latitude)
+                        .ok_or("latitude is required")?
+                        .parse::<f64>()
+                        .map_err(|_| "invalid latitude")?,
+                    value(longitude)
+                        .ok_or("longitude is required")?
+                        .parse::<f64>()
+                        .map_err(|_| "invalid longitude")?,
+                    None,
+                    value(zone).ok_or("time zone is required")?,
+                    LocationProvenance::Manual,
+                )
+                .map_err(|error| error.to_string())
+            })();
+            match result {
+                Ok(location) => {
+                    dispatch(platform, model, PlatformCommand::SaveLocation { location })
+                }
+                Err(message) => model.problem.set(Some(message.to_string())),
+            }
+        };
+        let install = move |event: SubmitEvent| {
+            event.prevent_default();
+            let files = [cities, admin1, admin2].map(|input| {
+                input
+                    .get()
+                    .and_then(|element| element.files())
+                    .and_then(|files| files.item(0))
+            });
+            let [Some(cities_file), Some(admin1_file), Some(admin2_file)] = files else {
+                model
+                    .problem
+                    .set(Some("Choose all three GeoNames files.".into()));
+                return;
+            };
+            spawn_local(async move {
+                let result = async {
+                    Ok::<_, String>(CatalogInstallInput {
+                        cities500_zip: read_file(cities_file).await?,
+                        admin1_codes: read_file(admin1_file).await?,
+                        admin2_codes: read_file(admin2_file).await?,
+                        retrieved_at: canonical_now(),
+                        retrieval: CatalogRetrieval::LocalFiles,
+                    })
+                }
+                .await;
+                match result {
+                    Ok(input) => {
+                        dispatch(platform, model, PlatformCommand::InstallCatalog { input })
                     }
-                    Err(error) => feedback.set(Some(Err(error.message().to_owned()))),
+                    Err(message) => model.problem.set(Some(message)),
                 }
             });
+        };
+        let search = move |event: SubmitEvent| {
+            event.prevent_default();
+            if let Some(query) = value(query) {
+                dispatch(
+                    platform,
+                    model,
+                    PlatformCommand::SearchCatalog { query, limit: 20 },
+                );
+            }
+        };
+        view! {
+            <section id="locations" class="panel">
+                <div class="section-heading"><div><p class="eyebrow">"Locations"</p><h2>"Encrypted snapshots, local catalog"</h2></div><span class="attribution">"GeoNames · CC BY 4.0"</span></div>
+                <div class="two-column">
+                    <form class="studio-form" on:submit=save>
+                        <h3>"Manual location"</h3>
+                        <label><span>"Record ID"</span><input node_ref=id required /></label>
+                        <label><span>"Label"</span><input node_ref=label required /></label>
+                        <div class="field-row"><label><span>"Country code"</span><input node_ref=country required maxlength="2" value="US" /></label><label><span>"IANA time zone"</span><input node_ref=zone required value="America/New_York" /></label></div>
+                        <div class="field-row"><label><span>"Latitude"</span><input node_ref=latitude required inputmode="decimal" /></label><label><span>"Longitude"</span><input node_ref=longitude required inputmode="decimal" /></label></div>
+                        <button class="primary" type="submit">"Save encrypted snapshot"</button>
+                    </form>
+                    <form class="studio-form catalog-form" on:submit=install>
+                        <h3>"Install GeoNames files"</h3>
+                        <p>"Parsing and search run in the worker. Source bytes and hashes stay in IndexedDB, outside encrypted vaults."</p>
+                        <button type="button" on:click=move |_| dispatch(platform, model, PlatformCommand::InstallPinnedCatalog)>"Install image-pinned catalog"</button>
+                        <span class="or-divider">"or choose local files"</span>
+                        <label><span>"cities500.zip"</span><input node_ref=cities type="file" required accept=".zip" /></label>
+                        <label><span>"admin1CodesASCII.txt"</span><input node_ref=admin1 type="file" required accept=".txt,text/plain" /></label>
+                        <label><span>"admin2Codes.txt"</span><input node_ref=admin2 type="file" required accept=".txt,text/plain" /></label>
+                        <button type="submit">"Install local catalog"</button>
+                        <small>{move || model.capabilities.get().and_then(|status| status.catalog).map(|catalog| format!("Active: {} places · {}", catalog.place_count, catalog.content_id)).unwrap_or_else(|| "No catalog installed. Manual entry remains available.".into())}</small>
+                    </form>
+                </div>
+                <form class="catalog-search" on:submit=search>
+                    <label><span>"Search the active catalog"</span><input node_ref=query required autocomplete="off" /></label>
+                    <button type="submit">"Search locally"</button>
+                </form>
+                <ul class="entity-list cards catalog-results">
+                    <For
+                        each=move || model.catalog_results.get()
+                        key=|result| result.place().geonames_id()
+                        children=|result| view! {
+                            <li>
+                                <strong>{result.place().name().to_owned()}</strong>
+                                <small>{format!("{} · {} · {:?}", result.place().country_code(), result.place().time_zone(), result.match_kind())}</small>
+                            </li>
+                        }
+                    />
+                </ul>
+                <ul class="entity-list cards"><For each=move || model.workspace.get().locations key=|item| item.id.clone() children=|item| view! { <li><strong>{item.label}</strong><small>{item.id}</small></li> } /></ul>
+            </section>
         }
-    };
-    view! {
-        <article class="catalog-result">
-            <div>
-                <h3>{place.name}</h3>
-                <p>{details}</p>
-                <small>{format!("{} · {:.4}, {:.4} · population {}", place.time_zone, place.latitude_degrees, place.longitude_degrees, place.population)}</small>
-            </div>
-            <button class="quiet-button" type="button" on:click=save>"Save snapshot"</button>
-        </article>
     }
-}
 
-#[component]
-fn ManualLocationForm(
-    platform: Arc<dyn StudioPlatform>,
-    feedback: RwSignal<Option<Result<String, String>>>,
-    saved: RwSignal<Option<Result<Vec<LocationSummary>, PlatformError>>>,
-) -> impl IntoView {
-    let id_ref = NodeRef::<Input>::new();
-    let label_ref = NodeRef::<Input>::new();
-    let admin_ref = NodeRef::<Input>::new();
-    let country_ref = NodeRef::<Input>::new();
-    let latitude_ref = NodeRef::<Input>::new();
-    let longitude_ref = NodeRef::<Input>::new();
-    let elevation_ref = NodeRef::<Input>::new();
-    let zone_ref = NodeRef::<Input>::new();
-    let submit = move |event: SubmitEvent| {
-        event.prevent_default();
-        let values = (
-            id_ref.get().map(|input| input.value()),
-            label_ref.get().map(|input| input.value()),
-            country_ref.get().map(|input| input.value()),
-            latitude_ref.get().map(|input| input.value()),
-            longitude_ref.get().map(|input| input.value()),
-            zone_ref.get().map(|input| input.value()),
-        );
-        let (Some(id), Some(label), Some(country), Some(latitude), Some(longitude), Some(zone)) =
-            values
-        else {
-            return;
-        };
-        let latitude = match latitude.parse::<f64>() {
-            Ok(value) => value,
-            Err(_) => {
-                feedback.set(Some(Err("Latitude must be a number.".to_owned())));
-                return;
+    #[component]
+    fn ChartsSection(platform: Platform, model: Model) -> impl IntoView {
+        let id = NodeRef::<Input>::new();
+        let label = NodeRef::<Input>::new();
+        let role = NodeRef::<Select>::new();
+        let date = NodeRef::<Input>::new();
+        let time = NodeRef::<Input>::new();
+        let zone = NodeRef::<Input>::new();
+        let time_choice = NodeRef::<Select>::new();
+        let save = move |event: SubmitEvent| {
+            event.prevent_default();
+            let result = (|| {
+                let role = match select_value(role).as_deref() {
+                    Some("natal") => ChartRole::Natal,
+                    Some("event") => ChartRole::Event,
+                    _ => ChartRole::Transit,
+                };
+                ChartDefinition::new(
+                    StableId::new("chart.id", value(id).ok_or("chart ID is required")?)
+                        .map_err(|error| error.to_string())?,
+                    value(label).ok_or("chart label is required")?,
+                    role,
+                    None,
+                    LocalDateTimeInput::new(
+                        value(date).ok_or("date is required")?,
+                        value(time).ok_or("time is required")?,
+                        value(zone).ok_or("zone is required")?,
+                    )
+                    .map_err(|error| error.to_string())?,
+                    ChartCalculationOptions::default(),
+                    default_chart_points(),
+                    false,
+                )
+                .map_err(|error| error.to_string())
+            })();
+            match result {
+                Ok(chart) => dispatch(platform, model, PlatformCommand::SaveChart { chart }),
+                Err(message) => model.problem.set(Some(message.to_string())),
             }
         };
-        let longitude = match longitude.parse::<f64>() {
-            Ok(value) => value,
-            Err(_) => {
-                feedback.set(Some(Err("Longitude must be a number.".to_owned())));
-                return;
+        let resolve = move |_| {
+            let result = (|| {
+                let input = LocalDateTimeInput::new(
+                    value(date).ok_or("date is required")?,
+                    value(time).ok_or("time is required")?,
+                    value(zone).ok_or("zone is required")?,
+                )
+                .map_err(|error| error.to_string())?;
+                let choice = match select_value(time_choice).as_deref() {
+                    Some("earlier") => Some(AmbiguousTimeChoice::Earlier),
+                    Some("later") => Some(AmbiguousTimeChoice::Later),
+                    _ => None,
+                };
+                Ok::<_, String>((input, choice))
+            })();
+            match result {
+                Ok((input, choice)) => dispatch(
+                    platform,
+                    model,
+                    PlatformCommand::ResolveLocalTime { input, choice },
+                ),
+                Err(message) => model.problem.set(Some(message)),
             }
         };
-        let elevation = elevation_ref
-            .get()
-            .map(|input| input.value())
-            .filter(|value| !value.trim().is_empty())
-            .map(|value| value.parse::<f64>());
-        let elevation = match elevation.transpose() {
-            Ok(value) => value,
-            Err(_) => {
-                feedback.set(Some(Err("Elevation must be blank or a number.".to_owned())));
-                return;
+        view! {
+            <section id="charts" class="panel split-panel">
+                <div><p class="eyebrow">"Charts"</p><h2>"Exact local-time definitions"</h2><ul class="entity-list"><For each=move || model.workspace.get().charts key=|chart| chart.id.clone() children=|chart| view! { <li><strong>{format!("{} · {}", chart.label, chart.role)}</strong><small>{chart.local_input}</small></li> } /></ul></div>
+                <form class="studio-form chart-editor" on:submit=save>
+                    <h3>"New chart"</h3>
+                    <label><span>"Chart ID"</span><input node_ref=id required /></label>
+                    <label><span>"Chart label"</span><input node_ref=label required /></label>
+                    <label><span>"Role"</span><select node_ref=role><option value="natal">"Natal"</option><option value="transit">"Transit"</option><option value="event">"Event"</option></select></label>
+                    <div class="field-row"><label><span>"Local date"</span><input node_ref=date type="date" required /></label><label><span>"Local time"</span><input node_ref=time type="time" step="1" required /></label></div>
+                    <label><span>"IANA time zone"</span><input node_ref=zone required value="America/New_York" /></label>
+                    <label><span>"Ambiguous clock time"</span><select node_ref=time_choice><option value="">"Show both choices"</option><option value="earlier">"Use earlier instant"</option><option value="later">"Use later instant"</option></select></label>
+                    <button type="button" on:click=resolve>"Check DST resolution"</button>
+                    <button class="primary" type="submit">"Save chart definition"</button>
+                    <p class="provider-note" role="status">{move || match model.capabilities.get().map(|status| status.ephemeris) { Some(oracle_studio_platform::EphemerisStatus::Unavailable) | None => "Ephemeris provider unavailable in this production build. Definitions and DST resolution remain available; results are never fabricated.", Some(_) => "Deterministic acceptance provider enabled." }}</p>
+                </form>
+            </section>
+        }
+    }
+
+    #[component]
+    fn WorkspaceSection(platform: Platform, model: Model) -> impl IntoView {
+        let id = NodeRef::<Input>::new();
+        let label = NodeRef::<Input>::new();
+        let inner = NodeRef::<Input>::new();
+        let outer = NodeRef::<Input>::new();
+        let orientation = NodeRef::<Select>::new();
+        let save = move |event: SubmitEvent| {
+            event.prevent_default();
+            let result = (|| {
+                ComparisonPreset::new(
+                    StableId::new(
+                        "comparison.id",
+                        value(id).ok_or("comparison ID is required")?,
+                    )
+                    .map_err(|error| error.to_string())?,
+                    value(label).ok_or("label is required")?,
+                    StableId::new(
+                        "comparison.inner_chart_definition_id",
+                        value(inner).ok_or("inner chart ID is required")?,
+                    )
+                    .map_err(|error| error.to_string())?,
+                    StableId::new(
+                        "comparison.outer_chart_definition_id",
+                        value(outer).ok_or("outer chart ID is required")?,
+                    )
+                    .map_err(|error| error.to_string())?,
+                    default_chart_points(),
+                    default_chart_points(),
+                    default_aspects(),
+                    if select_value(orientation).as_deref() == Some("aries-top") {
+                        WheelOrientation::AriesTop
+                    } else {
+                        WheelOrientation::AscendantLeft
+                    },
+                )
+                .map_err(|error| error.to_string())
+            })();
+            match result {
+                Ok(preset) => dispatch(platform, model, PlatformCommand::SaveComparison { preset }),
+                Err(message) => model.problem.set(Some(message)),
             }
         };
-        let administrative_names = admin_ref
-            .get()
-            .map(|input| input.value())
-            .unwrap_or_default()
-            .split(',')
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_owned)
-            .collect();
-        let request = SaveLocationRequest {
-            protocol_version: PROTOCOL_VERSION,
-            id,
-            label,
-            administrative_names,
-            country_code: country.trim().to_uppercase(),
-            latitude_degrees: latitude,
-            longitude_degrees: longitude,
-            elevation_meters: elevation,
-            time_zone: zone,
-            provenance: LocationProvenanceInput::Manual,
-        };
-        let platform = Arc::clone(&platform);
-        wasm_bindgen_futures::spawn_local(async move {
-            match platform.save_location(request).await {
-                Ok(_) => {
-                    feedback.set(Some(Ok("Saved the manual location.".to_owned())));
-                    refresh_saved_locations(Arc::clone(&platform), saved);
-                }
-                Err(error) => feedback.set(Some(Err(error.message().to_owned()))),
+        view! {
+            <section id="workspace" class="panel workspace-panel">
+                <p class="eyebrow">"Workspace"</p><h2>"Comparison canvas"</h2>
+                <div class="chart-stage" aria-label="Transit biwheel workspace">
+                    <div class="orbit-placeholder" aria-hidden="true"><span>"☉"</span></div>
+                    <div><h3>"Ready for an in-worker ephemeris provider"</h3><p>"The Rust SVG biwheel renderer and animated HTML player remain available to browser presentations. This build intentionally has no production ephemeris implementation."</p><p>{move || format!("{} chart definitions · {} comparison presets", model.workspace.get().charts.len(), model.workspace.get().comparisons.len())}</p></div>
+                </div>
+                <form class="studio-form comparison-builder" on:submit=save>
+                    <h3>"Comparison preset"</h3>
+                    <p>"Presets reference chart definitions; immutable comparison snapshots are created only when both charts have provider-backed calculations."</p>
+                    <label><span>"Preset ID"</span><input node_ref=id required /></label>
+                    <label><span>"Preset label"</span><input node_ref=label required /></label>
+                    <div class="field-row"><label><span>"Inner chart ID"</span><input node_ref=inner required /></label><label><span>"Outer chart ID"</span><input node_ref=outer required /></label></div>
+                    <label><span>"Wheel orientation"</span><select node_ref=orientation><option value="ascendant-left">"Ascendant left"</option><option value="aries-top">"Aries top"</option></select></label>
+                    <button type="submit">"Save comparison preset"</button>
+                </form>
+                <ul class="entity-list cards"><For each=move || model.workspace.get().comparisons key=|item| item.id.clone() children=|item| view! { <li><strong>{item.label}</strong><small>{item.id}</small></li> } /></ul>
+            </section>
+        }
+    }
+
+    fn dispatch(platform: Platform, model: Model, command: PlatformCommand) {
+        model.busy.set(true);
+        model.problem.set(None);
+        let future = platform.with_value(|platform| platform.execute(command));
+        spawn_local(async move {
+            match future.await {
+                Ok(response) => apply_response(model, response),
+                Err(error) => model.problem.set(Some(error.message)),
             }
+            model.busy.set(false);
         });
-    };
-    view! {
-        <form class="panel catalog-panel manual-location-form" on:submit=submit>
-            <p class="eyebrow">"Always available"</p>
-            <h2>"Manual location"</h2>
-            <p class="muted">"Enter explicit coordinates and an IANA time zone when no catalog is installed or the place is absent."</p>
-            <div class="form-grid">
-                <label><span>"Record ID"</span><input node_ref=id_ref required type="text" placeholder="home_city" /></label>
-                <label><span>"Label"</span><input node_ref=label_ref required type="text" placeholder="Home city" /></label>
-                <label class="wide-field"><span>"Administrative names (comma-separated)"</span><input node_ref=admin_ref type="text" placeholder="County, State" /></label>
-                <label><span>"Country code"</span><input node_ref=country_ref required maxlength="2" type="text" placeholder="US" /></label>
-                <label><span>"IANA time zone"</span><input node_ref=zone_ref required type="text" placeholder="America/New_York" /></label>
-                <label><span>"Latitude"</span><input node_ref=latitude_ref required inputmode="decimal" type="text" placeholder="38.9072" /></label>
-                <label><span>"Longitude"</span><input node_ref=longitude_ref required inputmode="decimal" type="text" placeholder="-77.0369" /></label>
-                <label><span>"Elevation meters (optional)"</span><input node_ref=elevation_ref inputmode="decimal" type="text" /></label>
-            </div>
-            <button class="secondary-button" type="submit">"Save manual location"</button>
-        </form>
+    }
+
+    fn apply_response(model: Model, response: PlatformResponse) {
+        match response {
+            PlatformResponse::Ready {
+                vaults,
+                workspace,
+                capabilities,
+            } => {
+                model.vaults.set(vaults);
+                model.workspace.set(workspace);
+                model.capabilities.set(Some(capabilities));
+                model.notice.set(Some("Browser-local studio ready.".into()));
+            }
+            PlatformResponse::Vaults(vaults) => model.vaults.set(vaults),
+            PlatformResponse::Workspace(workspace) => model.workspace.set(workspace),
+            PlatformResponse::Updated { vaults, workspace } => {
+                model.vaults.set(vaults);
+                model.workspace.set(workspace);
+                model.notice.set(Some("Local workspace updated.".into()));
+            }
+            PlatformResponse::Export { filename, bytes } => match download(&filename, &bytes) {
+                Ok(()) => model.notice.set(Some(format!("Downloaded {filename}."))),
+                Err(message) => model.problem.set(Some(message)),
+            },
+            PlatformResponse::LocalTime(resolution) => {
+                model.notice.set(Some(format_local_time(&resolution)))
+            }
+            PlatformResponse::CatalogInstalled(metadata) => {
+                model.capabilities.update(|status| {
+                    if let Some(status) = status {
+                        status.catalog = Some(metadata.clone());
+                    }
+                });
+                model.notice.set(Some(format!(
+                    "Installed {} GeoNames places.",
+                    metadata.place_count
+                )));
+            }
+            PlatformResponse::CatalogResults(results) => {
+                model
+                    .notice
+                    .set(Some(format!("Found {} local matches.", results.len())));
+                model.catalog_results.set(results);
+            }
+        }
+    }
+
+    fn install_scratch_exit_warning(workspace: RwSignal<WorkspaceSummary>) {
+        let closure =
+            Closure::<dyn FnMut(BeforeUnloadEvent)>::new(move |event: BeforeUnloadEvent| {
+                if workspace.get_untracked().scratch_dirty {
+                    event.prevent_default();
+                    event.set_return_value("Unsaved scratch work will be lost.");
+                }
+            });
+        if let Some(window) = web_sys::window() {
+            let _ = window
+                .add_event_listener_with_callback("beforeunload", closure.as_ref().unchecked_ref());
+            closure.forget();
+        }
+    }
+
+    async fn read_file(file: File) -> Result<Vec<u8>, String> {
+        let buffer = JsFuture::from(file.array_buffer())
+            .await
+            .map_err(|_| format!("Could not read {}.", file.name()))?;
+        Ok(Uint8Array::new(&buffer).to_vec())
+    }
+
+    fn download(filename: &str, bytes: &[u8]) -> Result<(), String> {
+        let parts = Array::new();
+        parts.push(&Uint8Array::from(bytes));
+        let blob = Blob::new_with_u8_array_sequence(&parts)
+            .map_err(|_| "Could not create the export download.".to_string())?;
+        let url = Url::create_object_url_with_blob(&blob)
+            .map_err(|_| "Could not create the export URL.".to_string())?;
+        let document = web_sys::window()
+            .and_then(|window| window.document())
+            .ok_or("Document unavailable.")?;
+        let anchor: HtmlAnchorElement = document
+            .create_element("a")
+            .map_err(|_| "Could not create download link.")?
+            .unchecked_into();
+        anchor.set_href(&url);
+        anchor.set_download(filename);
+        anchor.click();
+        Url::revoke_object_url(&url).map_err(|_| "Could not release the export URL.".to_string())
+    }
+
+    fn active_label(workspace: &WorkspaceSummary) -> String {
+        match workspace.active.as_ref() {
+            Some(ActiveWorkspace::Scratch) => if workspace.scratch_dirty {
+                "Scratch · unsaved"
+            } else {
+                "Scratch · clean"
+            }
+            .into(),
+            Some(ActiveWorkspace::Vault(id)) => {
+                format!("Vault {}… mounted", &id[..id.len().min(8)])
+            }
+            None => "No active workspace".into(),
+        }
+    }
+
+    fn value(node: NodeRef<Input>) -> Option<String> {
+        node.get()
+            .map(|input| input.value())
+            .filter(|value| !value.is_empty())
+    }
+    fn text_value(node: NodeRef<Textarea>) -> Option<String> {
+        node.get().map(|input| input.value())
+    }
+    fn select_value(node: NodeRef<Select>) -> Option<String> {
+        node.get().map(|input| input.value())
+    }
+
+    fn format_local_time(resolution: &LocalTimeResolution) -> String {
+        match resolution {
+            LocalTimeResolution::Unique(value) => format!(
+                "Unique local time: {} · {} · {}",
+                value.utc_instant(),
+                value.abbreviation(),
+                value.utc_offset_display()
+            ),
+            LocalTimeResolution::Ambiguous { earlier, later } => format!(
+                "Ambiguous local time: earlier {} {} {}; later {} {} {}",
+                earlier.utc_instant(),
+                earlier.abbreviation(),
+                earlier.utc_offset_display(),
+                later.utc_instant(),
+                later.abbreviation(),
+                later.utc_offset_display()
+            ),
+            LocalTimeResolution::Nonexistent => {
+                "That local clock time does not exist because of a daylight-saving transition."
+                    .into()
+            }
+        }
+    }
+
+    fn canonical_now() -> String {
+        let iso = js_sys::Date::new_0()
+            .to_iso_string()
+            .as_string()
+            .unwrap_or_else(|| "1970-01-01T00:00:00.000Z".into());
+        iso.split_once('.')
+            .map_or(iso.clone(), |(seconds, _)| format!("{seconds}Z"))
     }
 }
 
-#[component]
-pub(crate) fn PageHeader(
-    #[prop(into)] eyebrow: String,
-    #[prop(into)] title: String,
-    #[prop(into)] description: String,
-) -> impl IntoView {
-    view! {
-        <header class="page-header">
-            <p class="eyebrow">{eyebrow}</p>
-            <h1>{title}</h1>
-            <p>{description}</p>
-        </header>
-    }
-}
+#[cfg(target_arch = "wasm32")]
+pub use browser::App;
 
-#[component]
-fn NotFound() -> impl IntoView {
-    view! {
-        <section class="panel empty-state">
-            <p class="eyebrow">"404"</p><h1>"That studio route does not exist."</h1>
-            <A attr:class="secondary-button" href="/">"Return home"</A>
-        </section>
-    }
+#[cfg(not(target_arch = "wasm32"))]
+#[leptos::component]
+pub fn App() -> impl leptos::IntoView {
+    leptos::view! { <main><h1>"Oracle Studio"</h1><p>"Build this application for wasm32-unknown-unknown."</p></main> }
 }

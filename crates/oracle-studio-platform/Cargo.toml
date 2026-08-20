@@ -1,0 +1,13 @@
+[package]
+name = "oracle-studio-platform"
+version = "0.1.0"
+description = "Versionless browser-local Oracle Studio platform contract"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+oracle-studio-core = { version = "0.1.0", path = "../oracle-studio-core" }
+oracle-studio-location-catalog = { version = "0.1.0", path = "../oracle-studio-location-catalog" }
+serde.workspace = true

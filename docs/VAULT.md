@@ -1,66 +1,37 @@
-# Encrypted vault contract and threat model
+# Portable vault envelope v2
 
-## Version 1 envelope
+Envelope v2 visibly stores a random UUID vault ID and bounded UTF-8 public
+title. All semantic header fields are authenticated. Every older envelope
+version is rejected without migration.
 
-Vault schema version 1 serializes validated composition data to canonical JSON,
-then encrypts and authenticates it with XChaCha20-Poly1305. A 256-bit key is
-derived from the caller's password using Argon2id with a fresh 128-bit salt.
-Every seal uses a fresh operating-system-generated 192-bit nonce. The fixed
-header, version, KDF parameters, salt, and nonce are authenticated as associated
-data. Plaintext is never parsed until authentication succeeds.
+1. Argon2id derives a key-encryption key from the password and a random 128-bit
+   salt using 64 MiB, three iterations, and one lane.
+2. A random 256-bit vault data key is wrapped with XChaCha20-Poly1305 and a
+   random 192-bit nonce.
+3. Canonical schema-v4 JSON is encrypted with that data key using
+   XChaCha20-Poly1305 and a fresh 192-bit nonce on every save.
+4. Explicit algorithm identifiers and fixed/bounded lengths fail closed.
 
-The binary format has explicit magic and version bytes, bounded lengths, and
-fixed accepted KDF parameters. Unknown versions and parameters fail rather than
-being guessed or silently migrated.
+The worker discards the password and zeroizing Argon2 result immediately after
+unwrapping. A mounted vault retains only its zeroizing data key, public wrapping
+material, and decrypted validated document. Resealing does not need the
+password or rewrap the data key.
 
-The binary envelope version and the encrypted document schema are separate.
-The current pre-1.0 document is schema v3. Authenticated v1/v2 document
-plaintext is deliberately rejected without migration, while the envelope
-format, authenticated header, Argon2id policy, and XChaCha20-Poly1305 contract
-remain unchanged.
+## Persistence
+
+IndexedDB stores public ID/title, exact encrypted envelope, SHA-256 revision,
+and timestamps. A mutation encrypts a candidate document, compares the expected
+revision, commits one read-write transaction, then replaces memory. Conflicts
+never silently overwrite newer bytes. Duplicate imported IDs are rejected;
+confirmed replacement is whole-vault replacement, not merge or sync.
+
+Exports contain the exact `.oracle-vault` bytes. Removing an IndexedDB record
+does not claim physical erasure from browser storage, backups, or device media.
 
 ## Threat model
 
-The vault protects confidentiality and detects modification when an attacker
-obtains the encrypted file but not the password while the application is
-closed. It does not protect data from malware, a compromised operating system,
-screen capture, memory inspection while unlocked, weak passwords, or an
-attacker who has both the file and password.
-
-Passwords are never stored. Derived key buffers are zeroized on drop. Callers
-remain responsible for protecting and zeroizing their password input.
-
-The native Studio host retains a zeroizing password allocation only while a
-vault is unlocked so each accepted mutation can be resealed. It saves with the
-current encrypted revision and replaces in-memory state only after optimistic,
-atomic persistence succeeds. Explicit lock or 15 minutes of inactivity drops
-the decrypted document and password allocation.
-
-## Durable filesystem repository
-
-Phase 5B stores only authenticated envelope bytes. Writers take a nonblocking
-advisory lock, compare the caller's expected encrypted revision, write a
-randomly named same-directory temporary file, flush it, atomically rename it,
-and sync the parent directory. A stale caller receives a conflict instead of
-silently replacing newer data. Readers take a shared lock and authenticate the
-envelope before returning a document.
-
-On Unix, application-created directories are mode `0700`; an existing directory
-is rejected if group or other permission bits are set. Vault, lock, temporary,
-and backup files are mode `0600`. Symbolic-link storage targets are rejected.
-Other platforms use their native permission model and require a platform-specific
-review before production release.
-
-Backups contain the exact encrypted envelope and are authenticated before
-export or import. Import uses the same optimistic revision check and atomic
-replacement path as a normal save. Filesystem revision IDs hash encrypted bytes
-for concurrency control; they are distinct from engine artifact content IDs.
-
-## Deletion boundary
-
-Deleting a file cannot guarantee physical erasure on SSDs, snapshots, or cloud
-backups. Permanent deletion therefore means removing all live records and
-explicitly selected backups under application control. The storage API reports
-that physical erasure is not guaranteed. Password-derived vault v1 has no
-separate unique data key to destroy; key-wrapping and rotation remain a future
-format version and must not be implied by the UI.
+The envelope protects confidentiality and detects modification when an attacker
+has encrypted bytes but not the password while the vault is locked. It cannot
+protect against malicious browser extensions, a compromised OS/browser,
+screen/memory capture while mounted, weak passwords, or an attacker with both
+password and envelope. Public titles intentionally reveal metadata.

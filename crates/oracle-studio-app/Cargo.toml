@@ -1,11 +1,14 @@
 [package]
 name = "oracle-studio-app"
 version = "0.1.0"
-description = "Offline application workflows for Oracle Studio"
+description = "Provider-parameterized chart services for Oracle Studio"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+
+[features]
+test-ephemeris = []
 
 [dependencies]
 astraeus-artifacts = { version = "0.1.0", git = "https://github.com/gracee3/astraeus", rev = "e5d295222018178c46fb882a302a57c810bf8bd1" }
@@ -13,12 +16,5 @@ astraeus-comparison = { version = "0.1.0", git = "https://github.com/gracee3/ast
 astraeus-core = { version = "0.1.0", git = "https://github.com/gracee3/astraeus", rev = "e5d295222018178c46fb882a302a57c810bf8bd1" }
 astraeus-derived = { version = "0.1.0", git = "https://github.com/gracee3/astraeus", rev = "e5d295222018178c46fb882a302a57c810bf8bd1" }
 astraeus-specifications = { version = "0.1.0", git = "https://github.com/gracee3/astraeus", rev = "e5d295222018178c46fb882a302a57c810bf8bd1" }
-astraeus-swiss = { version = "0.1.0", git = "https://github.com/gracee3/astraeus", rev = "e5d295222018178c46fb882a302a57c810bf8bd1" }
-oracle-studio-assets = { version = "0.1.0", path = "../oracle-studio-assets" }
 oracle-studio-core = { version = "0.1.0", path = "../oracle-studio-core" }
-sibylla-artifacts = { version = "0.1.0", git = "https://github.com/gracee3/sibylla", rev = "a154c32b83b110d2568a9ab10828b4f8b3dba7c7" }
-sibylla-core = { version = "0.1.0", git = "https://github.com/gracee3/sibylla", rev = "a154c32b83b110d2568a9ab10828b4f8b3dba7c7" }
-sibylla-shuffle = { version = "0.1.0", git = "https://github.com/gracee3/sibylla", rev = "a154c32b83b110d2568a9ab10828b4f8b3dba7c7" }
 thiserror.workspace = true
-
-[dev-dependencies]

@@ -22,9 +22,11 @@ jobs:
       - run: cargo test --workspace --locked
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo check --locked --target wasm32-unknown-unknown -p oracle-studio-chart-player
-      - run: cargo check --locked --target wasm32-unknown-unknown -p oracle-studio-ui
-      - run: trunk build --release
+      - run: cargo check --locked --target wasm32-unknown-unknown -p oracle-studio-worker -p oracle-studio-ui
+      - run: trunk build --release --locked
         working-directory: crates/oracle-studio-ui
+        env:
+          NO_COLOR: "false"
       - run: cargo doc --workspace --no-deps
         env:
           RUSTDOCFLAGS: -D warnings
@@ -34,3 +36,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: EmbarkStudios/cargo-deny-action@c3bbe7e4e3f7baeee1a3dd9aec0a3b2aded580fb # v2.1.1
+
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - run: scripts/browser-acceptance.sh

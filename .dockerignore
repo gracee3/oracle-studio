@@ -1,0 +1,11 @@
+.git
+target
+var
+crates/oracle-studio-ui/dist
+tools/browser-acceptance
+scripts/browser-acceptance.sh
+*.oracle-vault
+*.png
+*.jpg
+*.jpeg
+*.webp

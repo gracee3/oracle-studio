@@ -1,0 +1,32 @@
+[package]
+name = "oracle-studio-worker"
+version = "0.1.0"
+description = "Trunk-built Web Worker for Oracle Studio browser state"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["rlib"]
+
+[[bin]]
+name = "oracle-studio-worker"
+path = "src/main.rs"
+
+[dependencies]
+futures.workspace = true
+gloo-worker.workspace = true
+js-sys.workspace = true
+oracle-studio-browser = { version = "0.1.0", path = "../oracle-studio-browser" }
+oracle-studio-location-catalog = { version = "0.1.0", path = "../oracle-studio-location-catalog" }
+oracle-studio-platform = { version = "0.1.0", path = "../oracle-studio-platform" }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+wasm-bindgen-futures.workspace = true
+wasm-bindgen.workspace = true
+web-sys = { workspace = true, features = [
+    "Response",
+    "WorkerGlobalScope",
+] }
