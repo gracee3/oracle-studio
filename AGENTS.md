@@ -61,5 +61,6 @@ personal charts/vaults for validation.
 
 - Use a focused branch. Encryption, schema, dependency, storage, and container
   changes stay reviewable and must not auto-merge.
-- Publish the exact commit and draft PR, then record validation, risks, and next
-  action in the external portfolio handoff before claiming completion.
+- Publish the exact commit and a pull request. Keep incomplete or higher-risk
+  work in draft and record the validation, risks, decisions, and next action in
+  the pull request. Oracle Studio has no external portfolio handoff requirement.

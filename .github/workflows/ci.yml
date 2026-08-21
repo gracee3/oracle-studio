@@ -1,15 +1,27 @@
 name: CI
 
 on:
-  pull_request:
-  push:
-    branches: [main]
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: Validation suite to run
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - native
+          - wasm
+          - release
+          - browser
+          - dependencies
 
 permissions:
   contents: read
 
 jobs:
   native:
+    if: inputs.suite == 'all' || inputs.suite == 'native'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -24,6 +36,7 @@ jobs:
           RUSTDOCFLAGS: -D warnings
 
   wasm:
+    if: inputs.suite == 'all' || inputs.suite == 'wasm'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -44,6 +57,7 @@ jobs:
           fi
 
   release:
+    if: inputs.suite == 'all' || inputs.suite == 'release'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -57,12 +71,14 @@ jobs:
           NO_COLOR: "false"
 
   dependencies:
+    if: inputs.suite == 'all' || inputs.suite == 'dependencies'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: EmbarkStudios/cargo-deny-action@c3bbe7e4e3f7baeee1a3dd9aec0a3b2aded580fb # v2.1.1
 
   browser:
+    if: inputs.suite == 'all' || inputs.suite == 'browser'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
