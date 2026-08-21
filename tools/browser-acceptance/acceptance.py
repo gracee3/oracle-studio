@@ -160,7 +160,13 @@ def check_headers(url: str) -> None:
     with urllib.request.urlopen(url, timeout=10) as response:
         headers = {name.casefold(): value for name, value in response.headers.items()}
     csp = headers.get("content-security-policy", "")
-    required = ("default-src 'self'", "worker-src 'self'", "'wasm-unsafe-eval'", "'sha256-")
+    required = (
+        "default-src 'self'",
+        "worker-src 'self'",
+        "'wasm-unsafe-eval'",
+        "style-src 'self' 'sha256-",
+        "script-src 'self' 'wasm-unsafe-eval' 'sha256-",
+    )
     if any(item not in csp for item in required) or "'unsafe-inline'" in csp or " 'unsafe-eval'" in csp:
         raise RuntimeError(f"strict generated CSP is missing or unsafe: {csp!r}")
     for name in (
@@ -327,6 +333,7 @@ def run_acceptance(driver: Driver, launch_url: str, downloads: Path) -> None:
 
     driver.execute("location.reload()")
     driver.wait_text("Browser-local studio ready.")
+    driver.click_text("Files", "a")
     driver.wait_text("Fictional Portable Studio")
     driver.wait_text("LOCKED")
     card = driver.element("//article[.//h2[normalize-space()='Fictional Portable Studio']]", "xpath")
@@ -382,6 +389,15 @@ def run_acceptance(driver: Driver, launch_url: str, downloads: Path) -> None:
     )
     if not focus:
         raise RuntimeError("main focus target is unavailable")
+    browser_log = driver.request("POST", driver.path("/log"), {"type": "browser"})
+    csp_blocks = [
+        entry
+        for entry in browser_log
+        if "Content Security Policy" in entry.get("message", "")
+        or "violates the following Content Security Policy" in entry.get("message", "")
+    ]
+    if csp_blocks:
+        raise RuntimeError(f"runtime content was blocked by CSP: {csp_blocks}")
     print("PASS browser: responsive layout, focus target, accessibility landmark, and no external requests")
 
 
