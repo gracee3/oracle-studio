@@ -25,10 +25,11 @@ mod browser {
         CatalogInstallInput, CatalogRetrieval, CatalogSearchMatch,
     };
     use oracle_studio_platform::{
-        ActiveWorkspace, CapabilityStatus, ChartSummary, LabelDensity, PlatformCommand,
-        PlatformResponse, PreviewGeneration, PreviewSaveMode, StudioPlatform, VaultLockState,
-        VaultSummary, WheelOrientation, WheelPalette, WheelTemplate, WheelTemplateSettings,
-        WorkbenchPresentation, WorkbenchPreviewRequest, WorkspaceSummary,
+        ActiveWorkspace, AspectKind, AspectOrbValues, AspectSet, AspectSetRule, AspectSetSettings,
+        CapabilityStatus, ChartPointId, ChartSummary, LabelDensity, MAX_IMPORT_BYTES,
+        PlatformCommand, PlatformResponse, PreviewGeneration, PreviewSaveMode, StudioPlatform,
+        VaultLockState, VaultSummary, WheelOrientation, WheelPalette, WheelTemplate,
+        WheelTemplateSettings, WorkbenchPresentation, WorkbenchPreviewRequest, WorkspaceSummary,
     };
     use oracle_studio_worker::BrowserStudioPlatform;
     use wasm_bindgen::{JsCast, closure::Closure};
@@ -149,6 +150,7 @@ mod browser {
         workspace: RwSignal<WorkspaceSummary>,
         capabilities: RwSignal<Option<CapabilityStatus>>,
         wheel_templates: RwSignal<WheelTemplateSettings>,
+        aspect_sets: RwSignal<AspectSetSettings>,
         catalog_results: RwSignal<Vec<CatalogSearchMatch>>,
         presentation: RwSignal<Option<WorkbenchPresentation>>,
         fallback_presentation: RwSignal<Option<WorkbenchPresentation>>,
@@ -180,6 +182,7 @@ mod browser {
                 workspace: RwSignal::new(empty_workspace()),
                 capabilities: RwSignal::new(None),
                 wheel_templates: RwSignal::new(WheelTemplateSettings::default()),
+                aspect_sets: RwSignal::new(AspectSetSettings::default()),
                 catalog_results: RwSignal::new(Vec::new()),
                 presentation: RwSignal::new(None),
                 fallback_presentation: RwSignal::new(None),
@@ -544,6 +547,7 @@ mod browser {
             <main id="settings" class="route scroll-route" tabindex="-1">
                 <div class="route-heading"><div><p class="eyebrow">"Studio preferences"</p><h1>"Settings"</h1></div><a href="#workbench">"Back to workbench"</a></div>
                 <TemplateSettings platform model />
+                <AspectSetSettingsView platform model />
                 <PeopleSettings platform model />
                 <LocationSettings platform model />
                 <ChartSettings platform model />
@@ -620,6 +624,239 @@ mod browser {
                     <div class="button-row"><button class="primary" type="submit">"Save selected"</button><button type="button" on:click=move |_| save(true)>"Save as new"</button><button class="danger" type="button" on:click=move |_| dispatch(platform, model, PlatformCommand::RemoveWheelTemplate { template_id: model.wheel_templates.get_untracked().last_selected_template_id })>"Remove"</button></div>
                 </form>
             </section>
+        }
+    }
+
+    #[component]
+    fn AspectSetSettingsView(platform: Platform, model: Model) -> impl IntoView {
+        let copy_name = NodeRef::<Input>::new();
+        let rename_name = NodeRef::<Input>::new();
+        let description = NodeRef::<Textarea>::new();
+        let import = NodeRef::<Input>::new();
+        let duplicate = move |event: SubmitEvent| {
+            event.prevent_default();
+            let result = (|| {
+                let name = value(copy_name).ok_or("copy name is required")?;
+                let existing = model
+                    .aspect_sets
+                    .get_untracked()
+                    .sets()
+                    .iter()
+                    .filter_map(|set| set.id().strip_prefix("user."))
+                    .map(str::to_owned)
+                    .collect();
+                let generated = generate_unique_id("aspect-set", &name, &existing)
+                    .map_err(|error| error.to_string())?;
+                Ok::<_, String>((
+                    format!("user.{}", generated.as_str()),
+                    name,
+                    model
+                        .aspect_sets
+                        .get_untracked()
+                        .selected_aspect_set_id()
+                        .to_owned(),
+                ))
+            })();
+            match result {
+                Ok((id, name, source_id)) => dispatch(
+                    platform,
+                    model,
+                    PlatformCommand::DuplicateAspectSet {
+                        source_id,
+                        id,
+                        name,
+                    },
+                ),
+                Err(message) => model.problem.set(Some(message)),
+            }
+        };
+        let rename = move |event: SubmitEvent| {
+            event.prevent_default();
+            let Some(name) = value(rename_name) else {
+                model.problem.set(Some("name is required".into()));
+                return;
+            };
+            let id = model
+                .aspect_sets
+                .get_untracked()
+                .selected_aspect_set_id()
+                .to_owned();
+            dispatch(
+                platform,
+                model,
+                PlatformCommand::RenameAspectSet { id, name },
+            );
+        };
+        let save_description = move |event: SubmitEvent| {
+            event.prevent_default();
+            let result = (|| {
+                let selected = model.aspect_sets.get_untracked().selected().clone();
+                let description = text_value(description).ok_or("description is required")?;
+                selected
+                    .revised(
+                        selected.name(),
+                        description,
+                        selected.rules().to_vec(),
+                        selected.points().to_vec(),
+                    )
+                    .map_err(|error| error.to_string())
+            })();
+            save_revised_aspect_set(platform, model, result);
+        };
+        view! {
+            <section class="settings-panel aspect-set-settings">
+                <div>
+                    <p class="eyebrow">"Global, unencrypted"</p>
+                    <h2>"Aspect sets"</h2>
+                    <p>"Choose reusable rules for new previews. Saved calculations retain an immutable snapshot of the exact set, rules, and participating points."</p>
+                    <p>"Luminary means either endpoint is the Sun or Moon. Exact aspects pass when enabled; stationary or unknown phase uses the wider applying/separating orb."</p>
+                </div>
+                <div class="settings-stack aspect-set-stack">
+                    <div class="settings-form">
+                        <label><span>"Selected set"</span><select on:change=move |event| dispatch(platform, model, PlatformCommand::SelectAspectSet { id: event_target_value(&event) })>
+                            {move || {
+                                let settings = model.aspect_sets.get();
+                                let selected_id = settings.selected_aspect_set_id().to_owned();
+                                settings.sets().iter().cloned().map(|set| {
+                                    let id = set.id().to_owned();
+                                    let label = if set.built_in() { format!("{} · built-in", set.name()) } else { set.name().to_owned() };
+                                    view! { <option value=id.clone() selected=id == selected_id>{label}</option> }
+                                }).collect_view()
+                            }}
+                        </select></label>
+                        <div class="aspect-set-identity">
+                            <strong>{move || model.aspect_sets.get().selected().name().to_owned()}</strong>
+                            <small>{move || {
+                                let settings = model.aspect_sets.get();
+                                let selected = settings.selected();
+                                format!("{} · revision {} · {}", selected.id(), selected.revision(), selected.content_id())
+                            }}</small>
+                            <p>{move || model.aspect_sets.get().selected().description().to_owned()}</p>
+                        </div>
+                        <form class="inline-search" on:submit=duplicate>
+                            <input node_ref=copy_name aria-label="New aspect-set name" placeholder="Name for new editable copy" required />
+                            <button>"Create / duplicate"</button>
+                        </form>
+                        <form class="inline-search" on:submit=rename>
+                            <input node_ref=rename_name aria-label="Rename selected aspect set" required prop:value=move || model.aspect_sets.get().selected().name().to_owned() />
+                            <button disabled=move || model.aspect_sets.get().selected().built_in()>"Rename"</button>
+                        </form>
+                        <form class="settings-form nested-form" on:submit=save_description>
+                            <label><span>"Description"</span><textarea node_ref=description required prop:value=move || model.aspect_sets.get().selected().description().to_owned() /></label>
+                            <button disabled=move || model.aspect_sets.get().selected().built_in()>"Save description"</button>
+                        </form>
+                        <div class="button-row">
+                            <button on:click=move |_| dispatch(platform, model, PlatformCommand::ExportAspectSet { id: model.aspect_sets.get_untracked().selected_aspect_set_id().to_owned() })>"Export JSON"</button>
+                            <label class="file-action">"Import JSON"<input node_ref=import type="file" accept=".json,application/json" on:change=move |_| {
+                                let Some(file) = import.get().and_then(|input| input.files()).and_then(|files| files.item(0)) else { return; };
+                                if file.size() > MAX_IMPORT_BYTES as f64 {
+                                    model.problem.set(Some(format!("Aspect-set import exceeds {} bytes.", MAX_IMPORT_BYTES)));
+                                    return;
+                                }
+                                spawn_local(async move { match read_file(file).await { Ok(bytes) => dispatch(platform, model, PlatformCommand::ImportAspectSet { bytes }), Err(message) => model.problem.set(Some(message)) } });
+                            } /></label>
+                            <button class="danger" disabled=move || model.aspect_sets.get().selected().built_in() on:click=move |_| {
+                                let id = model.aspect_sets.get_untracked().selected_aspect_set_id().to_owned();
+                                if confirm("Delete this user aspect set? Saved calculation snapshots are unaffected.") {
+                                    dispatch(platform, model, PlatformCommand::DeleteAspectSet { id });
+                                }
+                            }>"Delete"</button>
+                            <button on:click=move |_| if confirm("Restore all four Oracle built-ins? User sets are retained.") { dispatch(platform, model, PlatformCommand::ResetAspectSets) }>"Reset built-ins"</button>
+                        </div>
+                    </div>
+
+                    <div class="aspect-rule-list">
+                        {[AspectKind::Conjunction, AspectKind::Opposition, AspectKind::Square, AspectKind::Trine, AspectKind::Sextile].into_iter().map(|kind| view! { <AspectRuleEditor platform model kind /> }).collect_view()}
+                    </div>
+
+                    <div class="settings-form">
+                        <h3>"Participating points"</h3>
+                        <p>"Synastry presets include all 19 browser-supported points; Chiron is deliberately unsupported."</p>
+                        <div class="aspect-point-grid">
+                            {POINT_FILTERS.into_iter().map(|(id, label)| {
+                                let point = chart_point_from_ui_id(id).expect("UI point IDs are supported");
+                                view! {
+                                    <label class="check-label"><input type="checkbox"
+                                        disabled=move || model.aspect_sets.get().selected().built_in()
+                                        checked=move || model.aspect_sets.get().selected().points().contains(&point)
+                                        on:change=move |event| revise_aspect_point(platform, model, point, event_target_checked(&event))
+                                    /><span>{label}</span></label>
+                                }
+                            }).collect_view()}
+                        </div>
+                    </div>
+                </div>
+            </section>
+        }
+    }
+
+    #[component]
+    fn AspectRuleEditor(platform: Platform, model: Model, kind: AspectKind) -> impl IntoView {
+        let enabled = NodeRef::<Input>::new();
+        let luminary_applying = NodeRef::<Input>::new();
+        let luminary_separating = NodeRef::<Input>::new();
+        let other_applying = NodeRef::<Input>::new();
+        let other_separating = NodeRef::<Input>::new();
+        let submit = move |event: SubmitEvent| {
+            event.prevent_default();
+            let result = (|| {
+                let selected = model.aspect_sets.get_untracked().selected().clone();
+                let old_rule = selected
+                    .rules()
+                    .iter()
+                    .find(|rule| rule.kind() == kind)
+                    .copied()
+                    .ok_or("selected set is missing a rule")?;
+                let orbs = AspectOrbValues::new(
+                    number_value(luminary_applying)?,
+                    number_value(luminary_separating)?,
+                    number_value(other_applying)?,
+                    number_value(other_separating)?,
+                )
+                .map_err(|error| error.to_string())?;
+                let replacement = AspectSetRule::new(
+                    kind,
+                    enabled.get().is_some_and(|input| input.checked()),
+                    orbs,
+                    old_rule.display_order(),
+                )
+                .map_err(|error| error.to_string())?;
+                let rules = selected
+                    .rules()
+                    .iter()
+                    .map(|rule| {
+                        if rule.kind() == kind {
+                            replacement
+                        } else {
+                            *rule
+                        }
+                    })
+                    .collect();
+                selected
+                    .revised(
+                        selected.name(),
+                        selected.description(),
+                        rules,
+                        selected.points().to_vec(),
+                    )
+                    .map_err(|error| error.to_string())
+            })();
+            save_revised_aspect_set(platform, model, result);
+        };
+        view! {
+            <form class="settings-form aspect-rule" on:submit=submit>
+                <div class="aspect-rule-heading">
+                    <h3>{aspect_kind_label(kind)}</h3>
+                    <label class="check-label"><input node_ref=enabled type="checkbox" disabled=move || model.aspect_sets.get().selected().built_in() checked=move || selected_rule(model, kind).is_some_and(AspectSetRule::enabled) /><span>"Enabled"</span></label>
+                </div>
+                <div class="aspect-orb-grid">
+                    <label><span>"Luminary applying"</span><input node_ref=luminary_applying type="number" min="0" max="30" step="0.1" required disabled=move || model.aspect_sets.get().selected().built_in() prop:value=move || rule_orb_value(model, kind, |orbs| orbs.luminary_applying_degrees()) /></label>
+                    <label><span>"Luminary separating"</span><input node_ref=luminary_separating type="number" min="0" max="30" step="0.1" required disabled=move || model.aspect_sets.get().selected().built_in() prop:value=move || rule_orb_value(model, kind, |orbs| orbs.luminary_separating_degrees()) /></label>
+                    <label><span>"Other applying"</span><input node_ref=other_applying type="number" min="0" max="30" step="0.1" required disabled=move || model.aspect_sets.get().selected().built_in() prop:value=move || rule_orb_value(model, kind, |orbs| orbs.other_applying_degrees()) /></label>
+                    <label><span>"Other separating"</span><input node_ref=other_separating type="number" min="0" max="30" step="0.1" required disabled=move || model.aspect_sets.get().selected().built_in() prop:value=move || rule_orb_value(model, kind, |orbs| orbs.other_separating_degrees()) /></label>
+                </div>
+                <button disabled=move || model.aspect_sets.get().selected().built_in()>"Save rule"</button>
+            </form>
         }
     }
 
@@ -948,11 +1185,13 @@ mod browser {
                 workspace,
                 capabilities,
                 wheel_templates,
+                aspect_sets,
             } => {
                 model.vaults.set(vaults);
                 model.workspace.set(workspace);
                 model.capabilities.set(Some(capabilities));
                 model.wheel_templates.set(wheel_templates);
+                model.aspect_sets.set(aspect_sets);
                 model.notice.set(Some("Browser-local studio ready.".into()));
                 true
             }
@@ -973,6 +1212,13 @@ mod browser {
             PlatformResponse::WheelTemplates(settings) => {
                 model.wheel_templates.set(settings);
                 false
+            }
+            PlatformResponse::AspectSets(settings) => {
+                model.aspect_sets.set(settings);
+                model
+                    .notice
+                    .set(Some("Aspect-set preferences updated.".into()));
+                true
             }
             PlatformResponse::WorkbenchPreview(presentation) => {
                 model.presentation.set(Some(presentation));
@@ -1458,6 +1704,100 @@ mod browser {
     }
     fn select_value(node: NodeRef<Select>) -> Option<String> {
         node.get().map(|input| input.value())
+    }
+
+    fn number_value(node: NodeRef<Input>) -> Result<f64, String> {
+        let raw = value(node).ok_or("orb is required")?;
+        raw.parse::<f64>()
+            .map_err(|_| format!("invalid orb {raw:?}"))
+    }
+
+    fn selected_rule(model: Model, kind: AspectKind) -> Option<AspectSetRule> {
+        model
+            .aspect_sets
+            .get()
+            .selected()
+            .rules()
+            .iter()
+            .find(|rule| rule.kind() == kind)
+            .copied()
+    }
+
+    fn rule_orb_value(
+        model: Model,
+        kind: AspectKind,
+        select: fn(AspectOrbValues) -> f64,
+    ) -> String {
+        selected_rule(model, kind)
+            .map(|rule| select(rule.orbs()).to_string())
+            .unwrap_or_default()
+    }
+
+    const fn aspect_kind_label(kind: AspectKind) -> &'static str {
+        match kind {
+            AspectKind::Conjunction => "Conjunction",
+            AspectKind::Opposition => "Opposition",
+            AspectKind::Square => "Square",
+            AspectKind::Trine => "Trine",
+            AspectKind::Sextile => "Sextile",
+        }
+    }
+
+    const fn chart_point_from_ui_id(id: &str) -> Option<ChartPointId> {
+        match id.as_bytes() {
+            b"Sun" => Some(ChartPointId::Sun),
+            b"Moon" => Some(ChartPointId::Moon),
+            b"Mercury" => Some(ChartPointId::Mercury),
+            b"Venus" => Some(ChartPointId::Venus),
+            b"Mars" => Some(ChartPointId::Mars),
+            b"Jupiter" => Some(ChartPointId::Jupiter),
+            b"Saturn" => Some(ChartPointId::Saturn),
+            b"Uranus" => Some(ChartPointId::Uranus),
+            b"Neptune" => Some(ChartPointId::Neptune),
+            b"Pluto" => Some(ChartPointId::Pluto),
+            b"MeanNode" => Some(ChartPointId::MeanNode),
+            b"MeanSouthNode" => Some(ChartPointId::MeanSouthNode),
+            b"TrueNode" => Some(ChartPointId::TrueNode),
+            b"TrueSouthNode" => Some(ChartPointId::TrueSouthNode),
+            b"Ascendant" => Some(ChartPointId::Ascendant),
+            b"Midheaven" => Some(ChartPointId::Midheaven),
+            b"Descendant" => Some(ChartPointId::Descendant),
+            b"ImumCoeli" => Some(ChartPointId::ImumCoeli),
+            b"Vertex" => Some(ChartPointId::Vertex),
+            _ => None,
+        }
+    }
+
+    fn save_revised_aspect_set(
+        platform: Platform,
+        model: Model,
+        result: Result<AspectSet, String>,
+    ) {
+        match result {
+            Ok(set) => dispatch(platform, model, PlatformCommand::SaveAspectSet { set }),
+            Err(message) => model.problem.set(Some(message)),
+        }
+    }
+
+    fn revise_aspect_point(platform: Platform, model: Model, point: ChartPointId, enabled: bool) {
+        let result = (|| {
+            let selected = model.aspect_sets.get_untracked().selected().clone();
+            let mut points = selected.points().to_vec();
+            if enabled && !points.contains(&point) {
+                points.push(point);
+            } else if !enabled {
+                points.retain(|candidate| *candidate != point);
+            }
+            selected
+                .revised(
+                    selected.name(),
+                    selected.description(),
+                    selected.rules().to_vec(),
+                    points,
+                )
+                .map_err(|error| error.to_string())
+        })();
+        save_revised_aspect_set(platform, model, result);
     }
 
     fn format_local_time(resolution: &LocalTimeResolution) -> String {

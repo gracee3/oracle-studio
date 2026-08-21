@@ -15,6 +15,7 @@ const CATALOGS: &str = "catalog_objects";
 const SETTINGS: &str = "settings";
 const ACTIVE_CATALOG: &str = "active_catalog";
 const WHEEL_TEMPLATES: &str = "wheel_templates";
+const ASPECT_SETS: &str = "aspect_sets_v1";
 
 #[derive(Clone)]
 pub struct IndexedDbStore {
@@ -237,6 +238,47 @@ impl BrowserStore for IndexedDbStore {
                 .put(
                     &JsValue::from_str(&settings),
                     Some(&JsValue::from_str(WHEEL_TEMPLATES)),
+                )
+                .await
+                .map_err(browser)?;
+            transaction.done().await.map_err(browser)?;
+            Ok(())
+        })
+    }
+
+    fn load_aspect_set_settings(&self) -> StoreFuture<'_, Option<String>> {
+        Box::pin(async move {
+            let transaction = self
+                .db
+                .transaction(&[SETTINGS], TransactionMode::ReadOnly)
+                .map_err(browser)?;
+            let store = transaction.store(SETTINGS).map_err(browser)?;
+            let value = store
+                .get(JsValue::from_str(ASPECT_SETS))
+                .await
+                .map_err(browser)?;
+            transaction.done().await.map_err(browser)?;
+            value
+                .map(|value| {
+                    value.as_string().ok_or_else(|| {
+                        StoreError::Corrupt("aspect-set settings are not JSON text".into())
+                    })
+                })
+                .transpose()
+        })
+    }
+
+    fn save_aspect_set_settings(&self, settings: String) -> StoreFuture<'_, ()> {
+        Box::pin(async move {
+            let transaction = self
+                .db
+                .transaction(&[SETTINGS], TransactionMode::ReadWrite)
+                .map_err(browser)?;
+            let store = transaction.store(SETTINGS).map_err(browser)?;
+            store
+                .put(
+                    &JsValue::from_str(&settings),
+                    Some(&JsValue::from_str(ASPECT_SETS)),
                 )
                 .await
                 .map_err(browser)?;

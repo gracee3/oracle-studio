@@ -1,7 +1,10 @@
 //! Chart calculations parameterized over Astraeus' provider boundary.
 
 use astraeus_artifacts::CalculationArtifact;
-use astraeus_comparison::{ComparisonArtifact, ComparisonKind, ComparisonSpecification};
+use astraeus_comparison::{
+    ComparisonArtifact, ComparisonKind, ComparisonSpecification,
+    calculate_phase_aware_inter_chart_aspects,
+};
 use astraeus_core::{
     AspectDefinition as AstraeusAspectDefinition, AspectDefinitions,
     AspectKind as AstraeusAspectKind, Ayanamsa, CalculationError, CalculationOptions,
@@ -11,12 +14,13 @@ use astraeus_core::{
 };
 use astraeus_derived::DerivedChartArtifact;
 use astraeus_specifications::ChartSpecification;
+use oracle_studio_aspect_sets::{AspectSetSettings, AspectSetSnapshot};
 use oracle_studio_chart_view::ChartScene;
 use oracle_studio_core::{
     AmbiguousTimeChoice, AspectDefinition, AspectKindId, AyanamsaId, CelestialObjectId,
     ChartCalculation, ChartCalculationOptions, ChartDefinition, ChartPointId, ChartRole,
     ComparisonCalculation, HouseSystemId, LocalDateTimeInput, ResolvedLocalTime, SavedLocation,
-    StableId, VaultDocument, ZodiacId, default_aspects, select_local_time,
+    StableId, VaultDocument, ZodiacId, select_local_time,
 };
 use thiserror::Error;
 
@@ -80,6 +84,7 @@ pub struct PreparedChartPreview {
 pub struct PreparedWorkbenchPreview {
     pub inner: PreparedChartPreview,
     pub outer: PreparedChartPreview,
+    pub aspect_set_snapshot: AspectSetSnapshot,
     pub scene: ChartScene,
 }
 
@@ -89,6 +94,20 @@ pub fn calculate_workbench_preview<P: EphemerisAdapter>(
     document: &VaultDocument,
     request: WorkbenchCalculationRequest,
     provider: &P,
+) -> Result<PreparedWorkbenchPreview, AppError> {
+    calculate_workbench_preview_with_aspect_set(
+        document,
+        request,
+        provider,
+        AspectSetSettings::default().selected().snapshot(),
+    )
+}
+
+pub fn calculate_workbench_preview_with_aspect_set<P: EphemerisAdapter>(
+    document: &VaultDocument,
+    request: WorkbenchCalculationRequest,
+    provider: &P,
+    aspect_set_snapshot: AspectSetSnapshot,
 ) -> Result<PreparedWorkbenchPreview, AppError> {
     let inner_definition = chart(document, &request.inner_chart_definition_id)?.clone();
     let outer_definition = chart(document, &request.outer_chart_definition_id)?.clone();
@@ -109,8 +128,12 @@ pub fn calculate_workbench_preview<P: EphemerisAdapter>(
         provider,
     )?;
 
-    let aspects = astraeus_aspects(&default_aspects())?;
-    let points = workbench_points()?;
+    let aspects = aspect_set_snapshot
+        .legacy_uniform_definitions()
+        .map_err(|error| AppError::Astraeus(error.to_string()))?;
+    let points = aspect_set_snapshot
+        .point_selection()
+        .map_err(|error| AppError::Astraeus(error.to_string()))?;
     let inner_options = preview_astraeus_options(inner.definition.calculation_options())?;
     let outer_options = preview_astraeus_options(outer.definition.calculation_options())?;
     let inner_specification =
@@ -130,16 +153,28 @@ pub fn calculate_workbench_preview<P: EphemerisAdapter>(
             ComparisonKind::TransitToNatal,
             aspects,
             points.clone(),
-            points,
+            points.clone(),
         )
         .map_err(|error| AppError::Astraeus(error.to_string()))?,
     )
     .map_err(|error| AppError::Astraeus(error.to_string()))?;
-    let scene = ChartScene::from_comparison(&comparison)
+    let phase_aware_aspects = calculate_phase_aware_inter_chart_aspects(
+        comparison.first(),
+        comparison.second(),
+        &aspect_set_snapshot
+            .phase_aware_definitions()
+            .map_err(|error| AppError::Astraeus(error.to_string()))?,
+        &points,
+        &points,
+        comparison.specification().motion(),
+    )
+    .map_err(|error| AppError::Astraeus(error.to_string()))?;
+    let scene = ChartScene::from_comparison_with_aspects(&comparison, &phase_aware_aspects)
         .map_err(|error| AppError::Astraeus(error.to_string()))?;
     Ok(PreparedWorkbenchPreview {
         inner,
         outer,
+        aspect_set_snapshot,
         scene,
     })
 }
@@ -307,31 +342,6 @@ fn preview_astraeus_options(
     .map_err(|error| AppError::Astraeus(error.to_string()))
 }
 
-fn workbench_points() -> Result<ChartPointSelection, AppError> {
-    ChartPointSelection::new(vec![
-        AstraeusChartPointId::Sun,
-        AstraeusChartPointId::Moon,
-        AstraeusChartPointId::Mercury,
-        AstraeusChartPointId::Venus,
-        AstraeusChartPointId::Mars,
-        AstraeusChartPointId::Jupiter,
-        AstraeusChartPointId::Saturn,
-        AstraeusChartPointId::Uranus,
-        AstraeusChartPointId::Neptune,
-        AstraeusChartPointId::Pluto,
-        AstraeusChartPointId::MeanNode,
-        AstraeusChartPointId::TrueNode,
-        AstraeusChartPointId::MeanSouthNode,
-        AstraeusChartPointId::TrueSouthNode,
-        AstraeusChartPointId::Ascendant,
-        AstraeusChartPointId::Midheaven,
-        AstraeusChartPointId::Descendant,
-        AstraeusChartPointId::ImumCoeli,
-        AstraeusChartPointId::Vertex,
-    ])
-    .map_err(|error| AppError::Astraeus(error.to_string()))
-}
-
 fn calculation_error(error: CalculationError) -> AppError {
     match error {
         CalculationError::DataUnavailable(message) => AppError::ProviderUnavailable(message),
@@ -441,6 +451,81 @@ pub fn calculate_comparison(
         inner.id().clone(),
         outer.id().clone(),
         snapshot,
+        request.calculated_at,
+    )?;
+    Ok(document.clone().with_comparison_calculation(calculation)?)
+}
+
+pub fn calculate_comparison_with_aspect_set(
+    document: &VaultDocument,
+    request: ComparisonCalculationRequest,
+    aspect_set_snapshot: AspectSetSnapshot,
+) -> Result<VaultDocument, AppError> {
+    let preset = document
+        .comparison_presets()
+        .iter()
+        .find(|preset| preset.id() == &request.comparison_preset_id)
+        .ok_or(AppError::NotFound("comparison preset"))?;
+    let inner_chart = chart(document, preset.inner_chart_definition_id())?;
+    let outer_chart = chart(document, preset.outer_chart_definition_id())?;
+    let inner = current_calculation(document, inner_chart)?;
+    let outer = current_calculation(document, outer_chart)?;
+    let aspects = aspect_set_snapshot
+        .legacy_uniform_definitions()
+        .map_err(|error| AppError::Astraeus(error.to_string()))?;
+    let inner_points = aspect_set_snapshot
+        .point_selection()
+        .map_err(|error| AppError::Astraeus(error.to_string()))?;
+    let outer_points = inner_points.clone();
+    let inner_specification = ChartSpecification::with_aspect_points(
+        astraeus_options(inner_chart.calculation_options())?,
+        aspects.clone(),
+        inner_points.clone(),
+    )
+    .map_err(|error| AppError::Astraeus(error.to_string()))?;
+    let outer_specification = ChartSpecification::with_aspect_points(
+        astraeus_options(outer_chart.calculation_options())?,
+        aspects.clone(),
+        outer_points.clone(),
+    )
+    .map_err(|error| AppError::Astraeus(error.to_string()))?;
+    let inner_derived = DerivedChartArtifact::new(inner.snapshot().clone(), inner_specification)
+        .map_err(|error| AppError::Astraeus(error.to_string()))?;
+    let outer_derived = DerivedChartArtifact::new(outer.snapshot().clone(), outer_specification)
+        .map_err(|error| AppError::Astraeus(error.to_string()))?;
+    let specification =
+        if inner_chart.role() == ChartRole::Natal && outer_chart.role() == ChartRole::Natal {
+            ComparisonSpecification::synastry(aspects, inner_points.clone(), outer_points.clone())
+        } else {
+            ComparisonSpecification::moving_second(
+                comparison_kind(inner_chart.role(), outer_chart.role()),
+                aspects,
+                inner_points.clone(),
+                outer_points.clone(),
+            )
+        }
+        .map_err(|error| AppError::Astraeus(error.to_string()))?;
+    let snapshot = ComparisonArtifact::new(inner_derived, outer_derived, specification)
+        .map_err(|error| AppError::Astraeus(error.to_string()))?;
+    let phase_aware_aspects = calculate_phase_aware_inter_chart_aspects(
+        snapshot.first(),
+        snapshot.second(),
+        &aspect_set_snapshot
+            .phase_aware_definitions()
+            .map_err(|error| AppError::Astraeus(error.to_string()))?,
+        &inner_points,
+        &outer_points,
+        snapshot.specification().motion(),
+    )
+    .map_err(|error| AppError::Astraeus(error.to_string()))?;
+    let calculation = ComparisonCalculation::new_with_aspect_set(
+        request.id,
+        preset.id().clone(),
+        inner.id().clone(),
+        outer.id().clone(),
+        snapshot,
+        aspect_set_snapshot,
+        phase_aware_aspects,
         request.calculated_at,
     )?;
     Ok(document.clone().with_comparison_calculation(calculation)?)
@@ -604,6 +689,7 @@ mod tests {
 
     use astraeus_comparison::ChartLayerArtifact;
     use astraeus_core::{AngularPosition, ChartAngles, DeterministicMock, HouseCusps, Position};
+    use oracle_studio_aspect_sets::{STANDARD_ID, builtins};
     use oracle_studio_core::{
         ChartDefinition, ChartRole, ComparisonPreset, LocalDateTimeInput, LocationProvenance,
         SavedLocation, WheelOrientation, default_aspects, default_chart_points,
@@ -772,6 +858,13 @@ mod tests {
         let comparison = &document.comparison_calculations()[0];
         assert_eq!(comparison.inner_calculation_id().as_str(), "natal_1");
         assert_eq!(comparison.outer_calculation_id().as_str(), "transit_1");
+        assert_eq!(
+            comparison.aspect_set_snapshot().aspect_set_id(),
+            "user.legacy-comparison-preset"
+        );
+        assert_eq!(comparison.aspect_set_snapshot().rules().len(), 5);
+        assert_eq!(comparison.aspect_set_snapshot().points().len(), 12);
+        assert!(!comparison.phase_aware_aspects().is_empty());
         let ChartLayerArtifact::Physical(inner_snapshot) = comparison.snapshot().first() else {
             panic!("deterministic comparison uses a physical chart layer")
         };
@@ -783,6 +876,44 @@ mod tests {
             VaultDocument::from_json(&document.to_json().unwrap()).unwrap(),
             document
         );
+
+        let tight = builtins().remove(0).snapshot();
+        let document = calculate_comparison_with_aspect_set(
+            &document,
+            ComparisonCalculationRequest {
+                id: id("comparison_tight"),
+                comparison_preset_id: id("natal_transit"),
+                calculated_at: "2026-08-19T12:02:30Z".into(),
+            },
+            tight.clone(),
+        )
+        .unwrap();
+        let saved_tight = &document.comparison_calculations()[1];
+        assert_eq!(saved_tight.aspect_set_snapshot(), &tight);
+        assert!(
+            saved_tight.phase_aware_aspects().len()
+                <= document.comparison_calculations()[0]
+                    .phase_aware_aspects()
+                    .len()
+        );
+        assert_eq!(
+            VaultDocument::from_json(&document.to_json().unwrap()).unwrap(),
+            document
+        );
+
+        let mut tampered: serde_json::Value =
+            serde_json::from_str(&document.to_json().unwrap()).unwrap();
+        let phase_aspects = tampered["comparison_calculations"][0]["phase_aware_aspects"]
+            .as_array_mut()
+            .unwrap();
+        let old_orb = phase_aspects[0]["orb_degrees"].as_f64().unwrap();
+        phase_aspects[0]["orb_degrees"] = serde_json::Value::from(old_orb + 0.25);
+        assert!(matches!(
+            VaultDocument::from_json(&serde_json::to_string(&tampered).unwrap()),
+            Err(oracle_studio_core::ModelError::InvalidValue(
+                "comparison_calculation.phase_aware_aspects"
+            ))
+        ));
 
         let duplicate = calculate_chart(
             &document,
@@ -836,22 +967,32 @@ mod tests {
             .unwrap();
         let moved_time =
             LocalDateTimeInput::new("2026-08-20", "12:00:00", "America/New_York").unwrap();
-        let preview = calculate_workbench_preview(
-            &document,
-            WorkbenchCalculationRequest {
-                inner_chart_definition_id: id("inner"),
-                outer_chart_definition_id: id("outer"),
-                inner_saved_location_id: location.id().clone(),
-                outer_saved_location_id: location.id().clone(),
-                outer_local_input: moved_time.clone(),
-                outer_ambiguous_time_choice: None,
-            },
-            &provider(10.0),
-        )
-        .unwrap();
+        let request = WorkbenchCalculationRequest {
+            inner_chart_definition_id: id("inner"),
+            outer_chart_definition_id: id("outer"),
+            inner_saved_location_id: location.id().clone(),
+            outer_saved_location_id: location.id().clone(),
+            outer_local_input: moved_time.clone(),
+            outer_ambiguous_time_choice: None,
+        };
+        let preview =
+            calculate_workbench_preview(&document, request.clone(), &provider(10.0)).unwrap();
         assert!(document.chart_calculations().is_empty());
         assert_eq!(preview.outer.local_input, moved_time);
         assert!(!preview.scene.transit.is_empty());
+        assert_eq!(preview.aspect_set_snapshot.aspect_set_id(), STANDARD_ID);
+        let tight_preview = calculate_workbench_preview_with_aspect_set(
+            &document,
+            request,
+            &provider(10.0),
+            builtins().remove(0).snapshot(),
+        )
+        .unwrap();
+        assert_eq!(
+            tight_preview.aspect_set_snapshot.aspect_set_id(),
+            "builtin.tight"
+        );
+        assert!(tight_preview.scene.aspects.len() < preview.scene.aspects.len());
 
         let updated = commit_workbench_update(
             &document,

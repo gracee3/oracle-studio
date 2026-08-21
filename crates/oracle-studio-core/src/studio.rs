@@ -1,9 +1,12 @@
 use std::collections::BTreeSet;
 
 use astraeus_artifacts::CalculationArtifact;
-use astraeus_comparison::ComparisonArtifact;
+use astraeus_comparison::{
+    ComparisonArtifact, InterChartAspect, calculate_phase_aware_inter_chart_aspects,
+};
 use chrono::{LocalResult, NaiveDate, NaiveTime, Offset, SecondsFormat, TimeZone, Utc};
 use chrono_tz::Tz;
+use oracle_studio_aspect_sets::AspectSetSnapshot;
 use serde::{Deserialize, Serialize};
 
 use super::{ModelError, StableId, normalize_timestamp, validate_content_id, validate_text};
@@ -833,6 +836,8 @@ pub struct ComparisonCalculation {
     inner_calculation_id: StableId,
     outer_calculation_id: StableId,
     snapshot: ComparisonArtifact,
+    aspect_set_snapshot: AspectSetSnapshot,
+    phase_aware_aspects: Vec<InterChartAspect>,
     calculated_at: String,
 }
 
@@ -845,12 +850,55 @@ impl ComparisonCalculation {
         snapshot: ComparisonArtifact,
         calculated_at: impl Into<String>,
     ) -> Result<Self, ModelError> {
+        let specification = snapshot.specification();
+        let aspect_set_snapshot = AspectSetSnapshot::legacy_uniform(
+            specification.aspects(),
+            specification.first_points(),
+            specification.second_points(),
+        )
+        .map_err(|_| ModelError::InvalidValue("comparison_calculation.aspect_set"))?;
+        let phase_aware_aspects = calculate_phase_aware_inter_chart_aspects(
+            snapshot.first(),
+            snapshot.second(),
+            &aspect_set_snapshot
+                .phase_aware_definitions()
+                .map_err(|_| ModelError::InvalidValue("comparison_calculation.aspect_set"))?,
+            specification.first_points(),
+            specification.second_points(),
+            specification.motion(),
+        )
+        .map_err(|_| ModelError::InvalidValue("comparison_calculation.aspect_set"))?;
+        Self::new_with_aspect_set(
+            id,
+            comparison_preset_id,
+            inner_calculation_id,
+            outer_calculation_id,
+            snapshot,
+            aspect_set_snapshot,
+            phase_aware_aspects,
+            calculated_at,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_aspect_set(
+        id: StableId,
+        comparison_preset_id: StableId,
+        inner_calculation_id: StableId,
+        outer_calculation_id: StableId,
+        snapshot: ComparisonArtifact,
+        aspect_set_snapshot: AspectSetSnapshot,
+        phase_aware_aspects: Vec<InterChartAspect>,
+        calculated_at: impl Into<String>,
+    ) -> Result<Self, ModelError> {
         let calculation = Self {
             id,
             comparison_preset_id,
             inner_calculation_id,
             outer_calculation_id,
             snapshot,
+            aspect_set_snapshot,
+            phase_aware_aspects,
             calculated_at: normalize_timestamp(
                 "comparison_calculation.calculated_at",
                 calculated_at.into(),
@@ -863,6 +911,35 @@ impl ComparisonCalculation {
     pub(crate) fn validate(&self) -> Result<(), ModelError> {
         if self.inner_calculation_id == self.outer_calculation_id {
             return Err(ModelError::InvalidComparisonSources);
+        }
+        let specification = self.snapshot.specification();
+        let mut expected_points = specification.first_points().as_slice().to_vec();
+        for point in specification.second_points().as_slice() {
+            if !expected_points.contains(point) {
+                expected_points.push(*point);
+            }
+        }
+        if self.aspect_set_snapshot.points() != expected_points {
+            return Err(ModelError::InvalidValue(
+                "comparison_calculation.aspect_set_points",
+            ));
+        }
+        let expected = calculate_phase_aware_inter_chart_aspects(
+            self.snapshot.first(),
+            self.snapshot.second(),
+            &self
+                .aspect_set_snapshot
+                .phase_aware_definitions()
+                .map_err(|_| ModelError::InvalidValue("comparison_calculation.aspect_set"))?,
+            specification.first_points(),
+            specification.second_points(),
+            specification.motion(),
+        )
+        .map_err(|_| ModelError::InvalidValue("comparison_calculation.aspect_set"))?;
+        if expected != self.phase_aware_aspects {
+            return Err(ModelError::InvalidValue(
+                "comparison_calculation.phase_aware_aspects",
+            ));
         }
         let normalized = normalize_timestamp(
             "comparison_calculation.calculated_at",
@@ -890,6 +967,12 @@ impl ComparisonCalculation {
     }
     pub const fn snapshot(&self) -> &ComparisonArtifact {
         &self.snapshot
+    }
+    pub const fn aspect_set_snapshot(&self) -> &AspectSetSnapshot {
+        &self.aspect_set_snapshot
+    }
+    pub fn phase_aware_aspects(&self) -> &[InterChartAspect] {
+        &self.phase_aware_aspects
     }
     pub fn calculated_at(&self) -> &str {
         &self.calculated_at

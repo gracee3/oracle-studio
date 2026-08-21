@@ -609,7 +609,7 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(
             revision(&first),
-            "sha256:85f7ecfebba87687ec34c60a08216cf543ab530c38473032c487c9eecd2c9575"
+            "sha256:4250bc4cf2e3c57c47258589784d0058c0925d364ae04eda462dfa6cec5e48ee"
         );
         let opened = open(&first, b"correct horse battery staple").unwrap();
         assert_eq!(opened.header(), &header());
@@ -676,10 +676,10 @@ mod tests {
     }
 
     #[test]
-    fn old_document_schemas_are_rejected_even_when_authenticated() {
+    fn vault_v4_is_rejected_after_authentication_without_mutating_encrypted_bytes() {
         let (mounted, _) = deterministic();
         let mut plaintext = VaultDocument::empty().to_json().unwrap();
-        plaintext = plaintext.replacen("\"schema_version\":4", "\"schema_version\":3", 1);
+        plaintext = plaintext.replacen("\"schema_version\":5", "\"schema_version\":4", 1);
         let aad = document_aad(&mounted.header, &mounted.wrapping).unwrap();
         let cipher = XChaCha20Poly1305::new_from_slice(&mounted.key[..]).unwrap();
         let nonce = [8; NONCE_LEN];
@@ -693,11 +693,13 @@ mod tests {
             )
             .unwrap();
         let envelope = encode(&mounted.header, &mounted.wrapping, &nonce, &encrypted).unwrap();
+        let original_encrypted_bytes = envelope.clone();
         assert!(matches!(
             open(&envelope, b"correct horse battery staple"),
             Err(VaultError::InvalidDocument(ModelError::UnsupportedSchema(
-                3
+                4
             )))
         ));
+        assert_eq!(envelope, original_encrypted_bytes);
     }
 }

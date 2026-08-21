@@ -2,14 +2,15 @@ use std::collections::BTreeMap;
 
 use astraeus_artifacts::CalculationArtifact;
 use astraeus_comparison::{
-    ComparisonArtifact, ComparisonArtifactError, ComparisonKind, ComparisonMotionPolicy,
-    ComparisonSpecification,
+    ChartLayerArtifact, ComparisonArtifact, ComparisonArtifactError, ComparisonKind,
+    ComparisonMotionPolicy, ComparisonSpecification, calculate_phase_aware_inter_chart_aspects,
 };
 use astraeus_core::{
-    AngularPosition, AspectDefinition, AspectDefinitions, AspectKind, AspectPhase,
+    AngularPosition, AspectDefinition, AspectDefinitions, AspectKind, AspectOrbValues, AspectPhase,
     CalculationOptions, CalculationRequest, CelestialObject, ChartAngles, ChartPointId,
     ChartPointSelection, DeterministicMock, EphemerisAdapter, GeographicLocation, HouseCusps,
-    HouseSystem, Position, UtcInstant, Zodiac,
+    HouseSystem, PhaseAwareAspectDefinition, PhaseAwareAspectDefinitions, Position, UtcInstant,
+    Zodiac,
 };
 use astraeus_derived::DerivedChartArtifact;
 use astraeus_specifications::ChartSpecification;
@@ -226,4 +227,42 @@ fn static_synthetic_layers_reject_motion_dependent_comparisons() {
             point: ChartPointId::Sun
         })
     ));
+}
+
+#[test]
+fn phase_aware_comparison_selects_orbs_after_motion_and_uses_wider_unknown() {
+    let rules = PhaseAwareAspectDefinitions::new(vec![PhaseAwareAspectDefinition::new(
+        AspectKind::Square,
+        AspectOrbValues::new(4.0, 2.0, 1.0, 1.0).unwrap(),
+    )])
+    .unwrap();
+    for (longitude, motion, expected) in [
+        (
+            86.0,
+            ComparisonMotionPolicy::SecondMovesAgainstFirstFixed,
+            1,
+        ),
+        (
+            93.0,
+            ComparisonMotionPolicy::SecondMovesAgainstFirstFixed,
+            0,
+        ),
+        (92.0, ComparisonMotionPolicy::None, 1),
+    ] {
+        let first: ChartLayerArtifact = chart(0.0, 0.0, Zodiac::Tropical).into();
+        let second: ChartLayerArtifact = chart(longitude, 1.0, Zodiac::Tropical).into();
+        assert_eq!(
+            calculate_phase_aware_inter_chart_aspects(
+                &first,
+                &second,
+                &rules,
+                &points(),
+                &points(),
+                motion,
+            )
+            .unwrap()
+            .len(),
+            expected
+        );
+    }
 }

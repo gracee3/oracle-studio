@@ -42,6 +42,11 @@ Chiron return explicit provider errors. Test-only deterministic adapters cannot
 be selected by production UI input.
 
 The UI receives only `WorkspaceSummary`, `WorkbenchPresentation`, global wheel
-template settings, and render-ready `ChartScene` values. Preview calculations
-do not mutate a document. The worker retains one pending generation and commits
-it atomically only after Update Chart or Save As.
+template/aspect-set settings, and render-ready `ChartScene` values. Preview
+calculations do not mutate a document. The worker retains one pending generation
+and commits it atomically only after Update Chart or Save As. Any aspect-set
+selection or mutation invalidates that pending generation before recalculation.
+
+Aspect-set settings are global and intentionally unencrypted. Vault documents
+contain only immutable snapshots attached to saved comparison calculations, not
+the mutable global collection or selection.

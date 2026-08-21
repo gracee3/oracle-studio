@@ -14,6 +14,7 @@ members = [
     "crates/astraeus-timeseries",
     "crates/astraeus-western",
     "crates/oracle-studio-app",
+    "crates/oracle-studio-aspect-sets",
     "crates/oracle-studio-browser",
     "crates/oracle-studio-chart-player",
     "crates/oracle-studio-chart-view",
