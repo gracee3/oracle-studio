@@ -36,6 +36,10 @@ decrypted in-memory document and encrypted stored bytes unchanged.
 
 Exports contain the exact `.oracle-vault` bytes. Removing an IndexedDB record
 does not claim physical erasure from browser storage, backups, or device media.
+Envelope v2 remains the canonical vault format under the accepted
+[local persistence architecture](PERSISTENCE_ARCHITECTURE.md); a future JSON
+aggregate backup may carry exact envelope bytes but does not replace or
+reinterpret the authenticated binary format.
 
 ## Demo envelope boundary
 

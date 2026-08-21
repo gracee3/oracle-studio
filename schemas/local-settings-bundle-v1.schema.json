@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oracle-studio.invalid/schemas/local-settings-bundle-v1.schema.json",
+  "title": "Oracle Studio public settings bundle v1 (architecture sketch)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "bundle_id", "created_at", "objects"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "bundle_id": { "$ref": "#/$defs/uuid" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "objects": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": { "$ref": "#/$defs/public_object" }
+    }
+  },
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "content_id": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "scope": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": { "kind": { "const": "global" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "vault_id"],
+          "properties": {
+            "kind": { "const": "vault" },
+            "vault_id": { "$ref": "#/$defs/uuid" }
+          }
+        }
+      ]
+    },
+    "public_object": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scope",
+        "object_type",
+        "object_id",
+        "schema_version",
+        "revision",
+        "parent_content_id",
+        "content_id",
+        "updated_at",
+        "policy",
+        "payload"
+      ],
+      "properties": {
+        "scope": { "$ref": "#/$defs/scope" },
+        "object_type": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 96,
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$"
+        },
+        "object_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$"
+        },
+        "schema_version": { "type": "integer", "minimum": 1, "maximum": 4294967295 },
+        "revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "parent_content_id": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/content_id" }
+          ]
+        },
+        "content_id": { "$ref": "#/$defs/content_id" },
+        "updated_at": { "type": "string", "format": "date-time" },
+        "policy": { "enum": ["device_local", "portable", "syncable"] },
+        "payload": {
+          "type": "object",
+          "$comment": "The registered object_type and schema_version select a separate strict payload validator. Unknown payload types are never activated."
+        }
+      }
+    }
+  }
+}

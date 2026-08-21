@@ -4,6 +4,10 @@ Oracle Studio is one static browser product. Nginx serves Trunk output on port
 8080; there is no runtime API, account, token, filesystem vault path, writable
 vault volume, or native process.
 
+The current-format inventory, accepted long-term storage boundaries, public
+object model, recovery rules, and staged IndexedDB adoption are defined in
+[`PERSISTENCE_ARCHITECTURE.md`](PERSISTENCE_ARCHITECTURE.md).
+
 ```text
 Leptos UI (summaries, commands, render presentations)
                   |
