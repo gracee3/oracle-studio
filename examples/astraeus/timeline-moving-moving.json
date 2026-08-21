@@ -1,0 +1,17 @@
+{
+  "subject": {
+    "kind": "moving_moving",
+    "first_object": "sun",
+    "second_object": "moon",
+    "frame": {
+      "kind": "tropical_of_date"
+    }
+  },
+  "aspect": {
+    "kind": "conjunction",
+    "orb_degrees": 10.0
+  },
+  "start": "2000-01-06T00:00:00Z",
+  "end": "2000-01-07T00:00:00Z",
+  "cadence_seconds": 21600
+}

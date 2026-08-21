@@ -1,0 +1,22 @@
+[package]
+name = "astraeus-swiss"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Swiss Ephemeris adapter for Astraeus"
+publish = false
+
+[dependencies]
+astraeus-core.workspace = true
+astraeus-events.workspace = true
+chrono.workspace = true
+sha2.workspace = true
+sweph-sys.workspace = true
+
+[dev-dependencies]
+astraeus-fixtures.workspace = true
+astraeus-specifications.workspace = true
+astraeus-timeseries.workspace = true
+tempfile.workspace = true

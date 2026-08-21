@@ -13,7 +13,10 @@ pub use studio::*;
 pub use workbench::*;
 
 pub const VAULT_DOCUMENT_SCHEMA_VERSION: u32 = 4;
-pub const ASTRAEUS_REVISION: &str = "8637ceb64fa11a06c8680b46cb4b57c71d94d37f";
+pub const ASTRAEUS_IMPORT_REVISION: &str = "44af176ef8a85db2bbd7b57228710855a8fe6f3b";
+
+#[deprecated(note = "use ASTRAEUS_IMPORT_REVISION for the consolidated source revision")]
+pub const ASTRAEUS_REVISION: &str = ASTRAEUS_IMPORT_REVISION;
 const MAX_TEXT_BYTES: usize = 32 * 1024;
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]

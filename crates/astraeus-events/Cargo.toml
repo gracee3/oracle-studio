@@ -1,0 +1,19 @@
+[package]
+name = "astraeus-events"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+astraeus-artifacts.workspace = true
+astraeus-core.workspace = true
+astraeus-derived.workspace = true
+astraeus-specifications.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true

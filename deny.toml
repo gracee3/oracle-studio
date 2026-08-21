@@ -11,16 +11,17 @@ ignore = [
 version = 2
 confidence-threshold = 0.8
 allow = [
-	"AGPL-3.0-or-later",
-	"AGPL-3.0-only",
+  "AGPL-3.0-or-later",
+  "AGPL-3.0-only",
   "Apache-2.0",
-	"BSD-3-Clause",
+  "BSD-3-Clause",
   "BSL-1.0",
   "CDLA-Permissive-2.0",
   "CC0-1.0",
   "ISC",
   "MIT",
   "Unicode-3.0",
+  "Unlicense",
   "Zlib",
 ]
 
@@ -33,6 +34,3 @@ highlight = "all"
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = [
-  "https://github.com/gracee3/astraeus",
-]
