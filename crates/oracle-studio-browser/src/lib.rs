@@ -1460,14 +1460,8 @@ mod tests {
     fn locking_switching_and_reload_invalidate_pending_preview() {
         let (store, mut engine, vault_id, request) = populated_vault();
         calculate_pending(&mut engine, &request);
-        run(
-            &mut engine,
-            PlatformCommand::LockVault {
-                vault_id: vault_id.clone(),
-            },
-            3.0,
-        )
-        .unwrap();
+        run(&mut engine, PlatformCommand::CreateScratch, 3.0).unwrap();
+        assert_eq!(engine.active, Some(ActiveWorkspace::Scratch));
         assert!(engine.pending_preview.is_none());
         assert!(matches!(
             run(
@@ -1484,15 +1478,54 @@ mod tests {
             })
         ));
 
+        run(
+            &mut engine,
+            PlatformCommand::DiscardScratch { confirmed: true },
+            5.0,
+        )
+        .unwrap();
+        run(
+            &mut engine,
+            PlatformCommand::ActivateVault {
+                vault_id: vault_id.clone(),
+            },
+            6.0,
+        )
+        .unwrap();
+        calculate_pending(&mut engine, &request);
+        run(
+            &mut engine,
+            PlatformCommand::LockVault {
+                vault_id: vault_id.clone(),
+            },
+            7.0,
+        )
+        .unwrap();
+        assert!(engine.pending_preview.is_none());
+        assert!(matches!(
+            run(
+                &mut engine,
+                PlatformCommand::CommitWorkbenchPreview {
+                    generation: request.generation,
+                    save_mode: PreviewSaveMode::UpdateChart { confirmed: true },
+                },
+                8.0,
+            ),
+            Err(PlatformError {
+                code: PlatformErrorCode::StalePreview,
+                ..
+            })
+        ));
+
         let mut reloaded = BrowserStudioEngine::new(store);
-        run(&mut reloaded, PlatformCommand::Initialize, 5.0).unwrap();
+        run(&mut reloaded, PlatformCommand::Initialize, 9.0).unwrap();
         run(
             &mut reloaded,
             PlatformCommand::UnlockVault {
                 vault_id,
                 password: b"fictional password".to_vec(),
             },
-            6.0,
+            10.0,
         )
         .unwrap();
         assert!(matches!(
@@ -1504,7 +1537,7 @@ mod tests {
                         name: "Must Not Save".into(),
                     },
                 },
-                7.0,
+                11.0,
             ),
             Err(PlatformError {
                 code: PlatformErrorCode::StalePreview,
