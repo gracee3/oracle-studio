@@ -1,0 +1,18 @@
+[workspace]
+members = ["crates/astraeus-artifacts", "crates/astraeus-cli", "crates/astraeus-comparison", "crates/astraeus-core", "crates/astraeus-derived", "crates/astraeus-events", "crates/astraeus-fixtures", "crates/astraeus-moshier", "crates/astraeus-specifications", "crates/astraeus-swiss", "crates/astraeus-techniques", "crates/astraeus-timeseries", "crates/astraeus-western"]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/gracee3/astraeus"
+rust-version = "1.97"
+
+[workspace.dependencies]
+chrono = { version = "0.4.41", default-features = false, features = ["serde", "std"] }
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = { version = "=1.0.151", features = ["float_roundtrip"] }
+sha2 = "0.10.9"
+sweph-sys = "=0.3.0"
+swisseph-rs = { version = "=0.2.0", default-features = false }
+thiserror = "2.0.12"

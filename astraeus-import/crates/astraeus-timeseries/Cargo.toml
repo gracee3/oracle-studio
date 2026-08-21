@@ -1,0 +1,18 @@
+[package]
+name = "astraeus-timeseries"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Canonical aspect time-series artifacts for Astraeus"
+
+[dependencies]
+astraeus-artifacts = { version = "0.1.0", path = "../astraeus-artifacts" }
+astraeus-core = { version = "0.1.0", path = "../astraeus-core" }
+astraeus-events = { version = "0.1.0", path = "../astraeus-events" }
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true

@@ -1,0 +1,23 @@
+name: Swiss file verification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  swiss-files:
+    environment: swiss-ephemeris-verification
+    runs-on: [self-hosted, linux, x64, astraeus-swiss]
+    env:
+      ASTRAEUS_SWISS_EPHEMERIS_PATH: ${{ vars.ASTRAEUS_SWISS_EPHEMERIS_PATH }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - name: Require runner-local pinned ephemeris data
+        run: test -n "$ASTRAEUS_SWISS_EPHEMERIS_PATH" && test -d "$ASTRAEUS_SWISS_EPHEMERIS_PATH"
+      - name: Verify tropical and sidereal Swiss-file results
+        run: >-
+          cargo test -p astraeus-swiss --test adapter --locked -- --ignored
+          --exact swiss_files_match_tropical_and_sidereal_references

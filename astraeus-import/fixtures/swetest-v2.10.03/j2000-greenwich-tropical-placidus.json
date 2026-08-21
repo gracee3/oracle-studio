@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "id": "j2000-greenwich-tropical-placidus",
+  "source": {
+    "tool": "swetest",
+    "version": "2.10.03",
+    "repository": "https://github.com/aloistr/swisseph",
+    "revision": "175e1fcb3108bcd5c0d146c803f51dcf23508012",
+    "archive_sha256": "4a954f706c1eb7d2c5ead03d9f7e721820579ace2003fa8d438809534670786a",
+    "engine": "moshier",
+    "command": ["./swetest", "-b1.1.2000", "-ut12:00:00", "-p0123456789mt", "-emos", "-speed", "-fPTlbRs", "-g,", "-head", "-house0.0000,51.4779,P"],
+    "raw_output_file": "j2000-greenwich-tropical-placidus.stdout",
+    "raw_output_sha256": "a5b58026abba82fc59d14979860505c70d2f5ec5f24c0fd8d2094c457e93dbe4",
+    "license": "AGPL-3.0 path of Swiss Ephemeris dual license"
+  },
+  "request": {
+    "instant": "2000-01-01T12:00:00Z",
+    "location": {"latitude_degrees": 51.4779, "longitude_degrees": 0.0, "elevation_meters": 46.0},
+    "objects": ["sun", "moon", "mercury", "venus", "mars", "jupiter", "saturn", "uranus", "neptune", "pluto", "mean_node", "true_node"],
+    "zodiac": "tropical",
+    "ayanamsa": null,
+    "house_system": "placidus"
+  },
+  "expected": {
+    "positions": {
+      "sun": {"longitude_degrees": 280.3689197, "latitude_degrees": 0.0002323, "distance_au": 0.983327645, "longitude_speed_degrees_per_day": 1.0194321},
+      "moon": {"longitude_degrees": 223.3237754, "latitude_degrees": 5.1708155, "distance_au": 0.002689977, "longitude_speed_degrees_per_day": 12.0211827},
+      "mercury": {"longitude_degrees": 271.8892750, "latitude_degrees": -0.9948252, "distance_au": 1.415469482, "longitude_speed_degrees_per_day": 1.5562541},
+      "venus": {"longitude_degrees": 241.5657983, "latitude_degrees": 2.0663480, "distance_au": 1.137579379, "longitude_speed_degrees_per_day": 1.2090397},
+      "mars": {"longitude_degrees": 327.9633133, "latitude_degrees": -1.0677829, "distance_au": 1.849687433, "longitude_speed_degrees_per_day": 0.7756728},
+      "jupiter": {"longitude_degrees": 25.2530303, "latitude_degrees": -1.2621728, "distance_au": 4.621181338, "longitude_speed_degrees_per_day": 0.0407613},
+      "saturn": {"longitude_degrees": 40.3956390, "latitude_degrees": -2.4448226, "distance_au": 8.652795977, "longitude_speed_degrees_per_day": -0.0199448},
+      "uranus": {"longitude_degrees": 314.8092232, "latitude_degrees": -0.6583329, "distance_au": 20.727169206, "longitude_speed_degrees_per_day": 0.0503436},
+      "neptune": {"longitude_degrees": 303.1929812, "latitude_degrees": 0.2349912, "distance_au": 31.024527148, "longitude_speed_degrees_per_day": 0.0355701},
+      "pluto": {"longitude_degrees": 251.4547088, "latitude_degrees": 10.8552025, "distance_au": 31.064390188, "longitude_speed_degrees_per_day": 0.0351529},
+      "mean_node": {"longitude_degrees": 125.0406461, "latitude_degrees": 0.0, "distance_au": 0.002569555, "longitude_speed_degrees_per_day": -0.0529518},
+      "true_node": {"longitude_degrees": 123.9528954, "latitude_degrees": 0.0, "distance_au": 0.002445380, "longitude_speed_degrees_per_day": -0.0543822}
+    },
+    "houses": {
+      "cusps_degrees": [24.2661892, 61.1424013, 82.0208144, 99.6110878, 119.0619094, 147.7006568, 204.2661892, 241.1424013, 262.0208144, 279.6110878, 299.0619094, 327.7006568],
+      "angles": {
+        "ascendant": {"longitude_degrees": 24.2661892, "longitude_speed_degrees_per_day": 788.7408720},
+        "midheaven": {"longitude_degrees": 279.6110878, "longitude_speed_degrees_per_day": 332.9370351},
+        "descendant": {"longitude_degrees": 204.2661892, "longitude_speed_degrees_per_day": 788.7408720},
+        "imum_coeli": {"longitude_degrees": 99.6110878, "longitude_speed_degrees_per_day": 332.9370351},
+        "vertex": {"longitude_degrees": 188.4693894, "longitude_speed_degrees_per_day": 292.1070635}
+      }
+    }
+  },
+  "tolerances": {"angle_degrees": 0.000001, "distance_au": 0.000000001, "speed_degrees_per_day": 0.000001}
+}
