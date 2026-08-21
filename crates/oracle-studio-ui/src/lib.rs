@@ -337,10 +337,7 @@ mod browser {
                                 <article class="chart-card" class:is-inner=move || model.inner_chart_id.get() == chart_id class:is-outer=move || model.outer_chart_id.get() == chart.id>
                                     <div><strong>{chart.label}</strong><small>{format!("{} · {}", chart.role, chart.local_input)}</small></div>
                                     <div class="compact-actions">
-                                        <button type="button" on:click=move |_| {
-                                            model.inner_chart_id.set(inner_id.clone());
-                                            queue_selected_preview(platform, model, None);
-                                        }>"Use as Inner"</button>
+                                        <button type="button" on:click=move |_| select_inner_chart(platform, model, &inner_id)>"Use as Inner"</button>
                                         <button type="button" on:click=move |_| select_outer_chart(platform, model, &outer_id)>"Use as Outer"</button>
                                     </div>
                                 </article>
@@ -1437,18 +1434,20 @@ mod browser {
             .iter()
             .any(|item| item.id == model.inner_location_id.get_untracked())
         {
-            model
-                .inner_location_id
-                .set(workspace.locations[0].id.clone());
+            model.inner_location_id.set(
+                chart_saved_location_id(&workspace, &model.inner_chart_id.get_untracked())
+                    .unwrap_or_else(|| workspace.locations[0].id.clone()),
+            );
         }
         if !workspace
             .locations
             .iter()
             .any(|item| item.id == model.outer_location_id.get_untracked())
         {
-            model
-                .outer_location_id
-                .set(workspace.locations[0].id.clone());
+            model.outer_location_id.set(
+                chart_saved_location_id(&workspace, &model.outer_chart_id.get_untracked())
+                    .unwrap_or_else(|| workspace.locations[0].id.clone()),
+            );
         }
         if model.desired_outer.get_untracked().is_none()
             && let Some(chart) = selected_chart(&workspace, &model.outer_chart_id.get_untracked())
@@ -1458,10 +1457,22 @@ mod browser {
         true
     }
 
+    fn select_inner_chart(platform: Platform, model: Model, id: &str) {
+        model.inner_chart_id.set(id.into());
+        if let Some(location_id) = chart_saved_location_id(&model.workspace.get_untracked(), id) {
+            model.inner_location_id.set(location_id);
+        }
+        queue_selected_preview(platform, model, None);
+    }
+
     fn select_outer_chart(platform: Platform, model: Model, id: &str) {
         model.outer_chart_id.set(id.into());
         model.outer_ambiguous_choice.set(None);
-        if let Some(chart) = selected_chart(&model.workspace.get_untracked(), id) {
+        let workspace = model.workspace.get_untracked();
+        if let Some(location_id) = chart_saved_location_id(&workspace, id) {
+            model.outer_location_id.set(location_id);
+        }
+        if let Some(chart) = selected_chart(&workspace, id) {
             model.desired_outer.set(chart_input(chart).ok());
         }
         queue_selected_preview(platform, model, None);
@@ -1843,6 +1854,18 @@ mod browser {
 
     fn selected_chart<'a>(workspace: &'a WorkspaceSummary, id: &str) -> Option<&'a ChartSummary> {
         workspace.charts.iter().find(|chart| chart.id == id)
+    }
+
+    fn chart_saved_location_id(workspace: &WorkspaceSummary, chart_id: &str) -> Option<String> {
+        selected_chart(workspace, chart_id)
+            .and_then(|chart| chart.current_saved_location_id.as_ref())
+            .filter(|location_id| {
+                workspace
+                    .locations
+                    .iter()
+                    .any(|location| location.id == **location_id)
+            })
+            .cloned()
     }
 
     fn pending_destination_ready(model: Model) -> bool {

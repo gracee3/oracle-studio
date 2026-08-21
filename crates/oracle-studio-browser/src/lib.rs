@@ -947,22 +947,32 @@ impl BrowserStudioEngine {
                 document
                     .chart_definitions()
                     .iter()
-                    .map(|chart| ChartSummary {
-                        id: chart.id().as_str().into(),
-                        label: chart.label().into(),
-                        role: format!("{:?}", chart.role()).to_lowercase(),
-                        local_input: format!(
-                            "{} {} {}",
-                            chart.local_input().local_date(),
-                            chart.local_input().local_time(),
-                            chart.local_input().time_zone()
-                        ),
-                        local_date: chart.local_input().local_date().into(),
-                        local_time: chart.local_input().local_time().into(),
-                        time_zone: chart.local_input().time_zone().into(),
-                        current_calculation_id: chart
-                            .current_calculation_id()
-                            .map(|id| id.as_str().into()),
+                    .map(|chart| {
+                        let current_calculation = chart.current_calculation_id().and_then(|id| {
+                            document
+                                .chart_calculations()
+                                .iter()
+                                .find(|calculation| calculation.id() == id)
+                        });
+                        ChartSummary {
+                            id: chart.id().as_str().into(),
+                            label: chart.label().into(),
+                            role: format!("{:?}", chart.role()).to_lowercase(),
+                            local_input: format!(
+                                "{} {} {}",
+                                chart.local_input().local_date(),
+                                chart.local_input().local_time(),
+                                chart.local_input().time_zone()
+                            ),
+                            local_date: chart.local_input().local_date().into(),
+                            local_time: chart.local_input().local_time().into(),
+                            time_zone: chart.local_input().time_zone().into(),
+                            current_calculation_id: current_calculation
+                                .map(|calculation| calculation.id().as_str().into()),
+                            current_saved_location_id: current_calculation.map(|calculation| {
+                                calculation.location_snapshot().id().as_str().into()
+                            }),
+                        }
                     })
                     .collect()
             }),
@@ -1383,6 +1393,10 @@ mod tests {
             .unwrap();
         assert_eq!(updated.local_date, "2026-08-18");
         assert!(updated.current_calculation_id.is_some());
+        assert_eq!(
+            updated.current_saved_location_id.as_deref(),
+            Some("fictional_harbor")
+        );
         assert!(engine.pending_preview.is_none());
     }
 
@@ -1454,6 +1468,10 @@ mod tests {
             .unwrap();
         assert_eq!(saved.local_date, "2026-08-18");
         assert!(saved.current_calculation_id.is_some());
+        assert_eq!(
+            saved.current_saved_location_id.as_deref(),
+            Some("fictional_harbor")
+        );
     }
 
     #[test]

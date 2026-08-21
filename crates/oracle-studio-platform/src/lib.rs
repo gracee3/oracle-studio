@@ -173,6 +173,7 @@ pub struct ChartSummary {
     pub local_time: String,
     pub time_zone: String,
     pub current_calculation_id: Option<String>,
+    pub current_saved_location_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

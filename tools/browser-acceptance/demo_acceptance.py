@@ -44,13 +44,40 @@ def run_acceptance(driver: Driver, launch_url: str, downloads: Path) -> None:
 
     driver.execute("window.confirm = () => true")
     driver.click_text("Load demo workspace")
-    driver.wait_text(
-        "Loaded Oracle Studio Demo with its public, non-secret password.", timeout=180
+    driver.wait(
+        lambda: len(driver.elements(".vault-card")) == 2
+        and "active"
+        in driver.execute(
+            "return arguments[0].innerText",
+            [
+                driver.element(
+                    "//article[contains(@class,'vault-card')][.//h2[normalize-space()='Oracle Studio Demo']]",
+                    "xpath",
+                )
+            ],
+        ).casefold(),
+        "active and unlocked demo vault",
+        timeout=180,
     )
     driver.wait(
-        lambda: len(driver.elements(".vault-card")) == 2,
-        "demo and unrelated vault cards",
+        lambda: driver.execute(
+            "return Boolean(document.querySelector('#oracle-transit-biwheel')) "
+            "&& !document.querySelector('.calculation-indicator').textContent.trim()"
+        ),
+        "initial demo synastry preview",
+        timeout=180,
     )
+    initial_problem = driver.execute(
+        "return document.querySelector('.problem').textContent.trim()"
+    )
+    if initial_problem:
+        raise RuntimeError(f"initial demo preview failed: {initial_problem}")
+    initial_pair = driver.execute(
+        "return [document.querySelector('.inner-meta').textContent, "
+        "document.querySelector('.outer-meta').textContent]"
+    )
+    if "Avery North" not in initial_pair[0] or "Mira Vale" not in initial_pair[1]:
+        raise RuntimeError(f"unexpected initial demo chart pair: {initial_pair}")
     demo_card = driver.element(
         "//article[contains(@class,'vault-card')][.//h2[normalize-space()='Oracle Studio Demo']]",
         "xpath",
