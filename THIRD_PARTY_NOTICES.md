@@ -10,6 +10,23 @@ default and file features disabled.
 - License: AGPL-3.0-or-later
 - Use: pure-Rust Moshier planetary and house calculations in the Web Worker
 
+## Swiss Ephemeris and sweph-sys
+
+The native, non-WASM `astraeus-swiss` adapter uses `sweph-sys` 0.3.0, which
+vendors Swiss Ephemeris C source. No Swiss Ephemeris data file or compiled
+binary is included in this repository.
+
+- Swiss Ephemeris: <https://www.astro.com/swisseph/swephinfo_e.htm>
+- Rust binding: <https://crates.io/crates/sweph-sys>
+- Binding version: 0.3.0
+- Use: explicitly selected native validation and CLI calculation only
+- License choice for this repository: GNU AGPL; a professional Swiss Ephemeris
+  license is an alternative upstream option and is not granted by this project
+
+Callers provide any file-backed ephemeris data separately and must follow its
+provenance and licensing requirements. See
+[`docs/astraeus/SWISS_EPHEMERIS.md`](docs/astraeus/SWISS_EPHEMERIS.md).
+
 ## Astronomicon font
 
 Oracle Studio embeds the original, unmodified Astronomicon font:

@@ -1,5 +1,9 @@
 # Project Organization and Legacy Source Plan
 
+> Historical standalone planning record. The repository-boundary recommendation
+> below was superseded by the reviewed full-history consolidation recorded in
+> [MIGRATION.md](MIGRATION.md).
+
 Status: first Astraeus validation checkpoint complete
 Last reviewed: 2026-07-21
 

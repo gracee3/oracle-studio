@@ -5,9 +5,10 @@ It owns calculation contracts, providers, provenance, canonical artifacts,
 derived policies, comparisons, techniques, and events. It does not own people,
 tarot, encrypted application storage, a GUI, or a Magnolia runtime.
 
-Before changing implementation, read `README.md` and the affected contracts in
-`docs/VALIDATION.md`, `docs/PROVENANCE.md`, `docs/ARTIFACTS.md`, and
-`docs/SWISS_EPHEMERIS.md`. Read the more specific artifact, policy, comparison,
+This is the preserved standalone guidance. Active consolidated instructions are
+in the repository root `AGENTS.md`. Within this directory, read `README.md` and
+the affected contracts in `VALIDATION.md`, `PROVENANCE.md`, `ARTIFACTS.md`, and
+`SWISS_EPHEMERIS.md`. Read the more specific artifact, policy, comparison,
 technique, or event document for that surface.
 
 ## Ordinary validation

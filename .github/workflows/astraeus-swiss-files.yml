@@ -1,4 +1,4 @@
-name: Swiss file verification
+name: Astraeus Swiss file verification
 
 on:
   workflow_dispatch:
@@ -18,6 +18,4 @@ jobs:
       - name: Require runner-local pinned ephemeris data
         run: test -n "$ASTRAEUS_SWISS_EPHEMERIS_PATH" && test -d "$ASTRAEUS_SWISS_EPHEMERIS_PATH"
       - name: Verify tropical and sidereal Swiss-file results
-        run: >-
-          cargo test -p astraeus-swiss --test adapter --locked -- --ignored
-          --exact swiss_files_match_tropical_and_sidereal_references
+        run: just astraeus-swiss-test

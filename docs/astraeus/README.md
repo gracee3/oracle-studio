@@ -1,12 +1,14 @@
-# Astraeus
+# Astraeus in Oracle Studio
 
-**Status:** Active research software. Core artifact and validation contracts are implemented, while interfaces remain pre-1.0. Automatic CI is currently manual-dispatch, so published checkpoints should be tied to a passing run or documented local acceptance.
+**Status:** Integrated engine subsystem. Core artifact and validation contracts
+are implemented, while interfaces remain pre-1.0. The complete standalone
+history is retained in Oracle Studio from the checkpoint recorded in
+[the migration record](MIGRATION.md).
 
 Astraeus is a validation-first Rust astrology and ephemeris engine.
 
-The project is intentionally beginning with a clean history. The former
-`gracee3/aphrodite-rust` repository remains the legacy source and provenance
-record; code and fixtures will be imported only after review.
+The former `gracee3/aphrodite-rust` repository remains the legacy source and
+provenance record for reviewed material that predates Astraeus.
 
 ## Initial scope
 
@@ -20,14 +22,15 @@ record; code and fixtures will be imported only after review.
 
 ## Track B handoff
 
-Start with [the project organization and Track B handoff](docs/PROJECT_ORGANIZATION.md).
+Start with [the project organization and Track B handoff](PROJECT_ORGANIZATION.md).
 It records the repository boundaries, legacy sources, known defects, first
 checkpoint, and non-goals.
 
-The calculation contract lives in `astraeus-core`. The non-published
+The calculation contract lives in `astraeus-core`. All Astraeus crates are now
+non-published internal Oracle Studio workspace packages. The
 `astraeus-fixtures` crate verifies versioned external reference output without
-adding a native ephemeris dependency. See [validation fixtures](docs/VALIDATION.md)
-and the [Swiss Ephemeris integration policy](docs/SWISS_EPHEMERIS.md).
+adding a native ephemeris dependency. See [validation fixtures](VALIDATION.md)
+and the [Swiss Ephemeris integration policy](SWISS_EPHEMERIS.md).
 
 `astraeus-swiss` implements the provider contract with explicit Moshier and
 Swiss-file modes. Swiss-file mode requires a caller-supplied data directory
@@ -38,49 +41,49 @@ pure-Rust `swisseph-rs` Moshier backend. It disables all file/JPL features,
 performs no I/O, compiles for browser WebAssembly, and explicitly rejects
 Chiron and dates outside the analytical ephemeris range.
 
-Every successful result includes validated [calculation provenance](docs/PROVENANCE.md)
+Every successful result includes validated [calculation provenance](PROVENANCE.md)
 covering its provider, runtime version, ephemeris source, and optional pinned
 data revision.
 
 `astraeus-artifacts` provides the versioned, content-addressed
-[calculation artifact format](docs/ARTIFACTS.md) for safe hand-off to storage,
+[calculation artifact format](ARTIFACTS.md) for safe hand-off to storage,
 APIs, and future composition applications.
 
-The core also provides deterministic [aspect detection](docs/ASPECTS.md) over
+The core also provides deterministic [aspect detection](ASPECTS.md) over
 validated positions, with explicit per-aspect orbs and canonical pair ordering.
 
-`astraeus-timeseries` produces schema-v1 [aspect timelines](docs/TIMESERIES.md)
+`astraeus-timeseries` produces schema-v1 [aspect timelines](TIMESERIES.md)
 for one moving/fixed or moving/moving pair. Its canonical JSON includes regular
 waveform samples, refined exact passes, inclusive orb windows, provider
 provenance, and solver guarantees; rendering and interpretation stay downstream.
 
 `astraeus-specifications` provides reusable schema-v1
-[chart specifications](docs/CHART_SPECIFICATIONS.md) that combine calculation
+[chart specifications](CHART_SPECIFICATIONS.md) that combine calculation
 choices and aspect policy without changing calculation artifact schema v1.
 
 `astraeus-derived` combines a calculation artifact and matching specification
 into a separately versioned, content-addressed
-[derived chart artifact](docs/DERIVED_ARTIFACTS.md) with typed angles, derived
+[derived chart artifact](DERIVED_ARTIFACTS.md) with typed angles, derived
 South Nodes, sign/house placements, and revalidated aspects.
 
 `astraeus-western` adds separately versioned
-[Western policy artifacts](docs/WESTERN_POLICIES.md) for traditional/modern
+[Western policy artifacts](WESTERN_POLICIES.md) for traditional/modern
 rulership, essential dignity, and selectable Chaldean/triplicity decans.
 
 `astraeus-comparison` provides content-addressed
-[two-chart comparisons](docs/COMPARISONS.md) with explicit layer identities and
+[two-chart comparisons](COMPARISONS.md) with explicit layer identities and
 motion semantics for synastry, transits, progressions, returns, and research.
 
 `astraeus-techniques` implements versioned [Western chart
-techniques](docs/TECHNIQUES.md): progressions, direct solar arcs, harmonics,
+techniques](TECHNIQUES.md): progressions, direct solar arcs, harmonics,
 midpoint composites, and Davison charts.
 
-`astraeus-events` provides [exact event solving](docs/EVENTS.md) for returns,
+`astraeus-events` provides [exact event solving](EVENTS.md) for returns,
 lunations, ingresses, seasonal points, and global eclipse maxima, producing
 ordinary charts at the resolved instant.
 
 The completed Western milestone is summarized in the [engine requirements
-status](docs/ENGINE_REQUIREMENTS.md), including explicit Oracle Studio and
+status](ENGINE_REQUIREMENTS.md), including explicit Oracle Studio and
 licensing boundaries.
 
 ## CLI
@@ -92,7 +95,7 @@ request in the artifact.
 
 ```text
 cargo run -p astraeus-cli -- chart cast request.json --ephemeris moshier
-cargo run -p astraeus-cli -- timeline aspect examples/timeline-moving-moving.json --ephemeris moshier --pretty
+cargo run -p astraeus-cli -- timeline aspect examples/astraeus/timeline-moving-moving.json --ephemeris moshier --pretty
 cargo run -p astraeus-cli -- artifact canonicalize chart.json
 cargo run -p astraeus-cli -- artifact canonicalize chart.json --pretty
 cargo run -p astraeus-cli -- artifact inspect chart.json
@@ -114,12 +117,12 @@ command resolves local time zones.
 ## Swiss-file setup
 
 The optional Swiss-file adapter uses three files pinned by revision and SHA-256
-in [the fixture provenance](fixtures/swetest-v2.10.03/SWISS_PROVENANCE.md).
+in [the fixture provenance](../../fixtures/astraeus/swetest-v2.10.03/SWISS_PROVENANCE.md).
 Download them to the configured XDG data directory and run the selected adapter
 test with:
 
 ```text
-just swiss-setup
+just astraeus-swiss-setup
 ```
 
 The default is `${XDG_DATA_HOME:-$HOME/.local/share}/astraeus/swisseph`. Set
@@ -127,14 +130,16 @@ The default is `${XDG_DATA_HOME:-$HOME/.local/share}/astraeus/swisseph`. Set
 different location. To configure the current shell for direct Cargo commands:
 
 ```text
-eval "$(just swiss-env)"
+eval "$(just astraeus-swiss-env)"
 ```
 
-`just swiss-check` verifies the installed files without network access, and
-`just swiss-test` reruns the ignored Swiss-file integration test. No `.se1`
+`just astraeus-swiss-check` verifies the installed files without network
+access, and `just astraeus-swiss-test` reruns the ignored Swiss-file integration
+tests. No `.se1`
 file is committed to this repository.
 
 ## License
 
-AGPL-3.0-or-later. Swiss Ephemeris has its own dual-license requirements; its
-adapter and distribution implications must be documented before integration.
+AGPL-3.0-or-later. Swiss Ephemeris has its own dual-license requirements; see
+[the consolidated policy](SWISS_EPHEMERIS.md) and the repository's
+[third-party notices](../../THIRD_PARTY_NOTICES.md).

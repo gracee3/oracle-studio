@@ -59,6 +59,6 @@ and rejects Chiron because it requires external data.
 
 `SwissEphemerisAdapter::pinned_swiss_files` verifies `sepl_18.se1`,
 `semo_18.se1`, and `seas_18.se1` against the SHA-256 values in
-`fixtures/swetest-v2.10.03/SWISS_PROVENANCE.md`, then records revision
+`fixtures/astraeus/swetest-v2.10.03/SWISS_PROVENANCE.md`, then records revision
 `cae9ecd4b201544d85e411aced17660932514d43`. The CLI uses only this constructor
 for Swiss mode; undeclared or modified bundles are not accepted in schema v1.

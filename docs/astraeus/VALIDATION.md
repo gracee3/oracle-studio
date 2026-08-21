@@ -95,14 +95,15 @@ houses, speed, and tropical/Lahiri sidereal configuration with `-eswe`.
 complete local setup, including checksum verification, with:
 
 ```text
-just swiss-setup
-eval "$(just swiss-env)"
+just astraeus-swiss-setup
+eval "$(just astraeus-swiss-env)"
 ```
 
 The default data directory is
 `${XDG_DATA_HOME:-$HOME/.local/share}/astraeus/swisseph`; an existing
-`ASTRAEUS_SWISS_EPHEMERIS_PATH` overrides it. `just swiss-check` is the offline
-integrity check, and `just swiss-test` runs the selected adapter, pinned-bundle,
+`ASTRAEUS_SWISS_EPHEMERIS_PATH` overrides it. `just astraeus-swiss-check` is the
+offline integrity check, and `just astraeus-swiss-test` runs the selected
+adapter, pinned-bundle,
 time-series, and CLI cases. The underlying golden comparison remains:
 
 ```text
@@ -111,7 +112,8 @@ ASTRAEUS_SWISS_EPHEMERIS_PATH=/path/to/pinned-ephe \
   swiss_files_match_tropical_and_sidereal_references
 ```
 
-The manual `Swiss file verification` GitHub workflow runs the same command on
+The manual `Astraeus Swiss file verification` GitHub workflow runs the same
+selected suite on
 a self-hosted runner labeled `astraeus-swiss`. The protected
 `swiss-ephemeris-verification` environment must define the
 `ASTRAEUS_SWISS_EPHEMERIS_PATH` variable, pointing to runner-local pinned data.

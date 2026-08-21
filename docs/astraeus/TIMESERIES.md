@@ -85,13 +85,13 @@ Swiss-only objects such as Chiron.
 
 ## Fictional requests
 
-The repository's [moving/moving example](../examples/timeline-moving-moving.json)
+The repository's [moving/moving example](../../examples/astraeus/timeline-moving-moving.json)
 tracks fictional Sun/Moon conjunction data over one day and is directly usable
 with Moshier:
 
 ```text
 cargo run -p astraeus-cli -- timeline aspect \
-  examples/timeline-moving-moving.json --ephemeris moshier --pretty
+  examples/astraeus/timeline-moving-moving.json --ephemeris moshier --pretty
 ```
 
 A moving/fixed request uses the same outer fields and embeds an ordinary,
