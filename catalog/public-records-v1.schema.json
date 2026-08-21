@@ -1,0 +1,236 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/gracee3/oracle-studio/blob/main/catalog/public-records-v1.schema.json",
+  "title": "Oracle Studio public-record catalog v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "catalog_id", "catalog_content_id", "records"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "catalog_id": {"type": "string", "pattern": "^public-record-catalog\\.[A-Za-z0-9._-]+$"},
+    "catalog_content_id": {"$ref": "#/$defs/content_id"},
+    "records": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/record"}
+    }
+  },
+  "$defs": {
+    "content_id": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "nonempty": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^\\S(?:.*\\S)?$"
+    },
+    "https_url": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^https://"
+    },
+    "record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "record_id",
+        "content_id",
+        "title",
+        "provenance",
+        "rights",
+        "reliability",
+        "ethical_notes",
+        "chart_readiness",
+        "data"
+      ],
+      "properties": {
+        "record_id": {"type": "string", "pattern": "^public-record\\.[A-Za-z0-9._-]+$"},
+        "content_id": {"$ref": "#/$defs/content_id"},
+        "title": {"$ref": "#/$defs/nonempty"},
+        "provenance": {"$ref": "#/$defs/provenance"},
+        "rights": {"$ref": "#/$defs/rights"},
+        "reliability": {"$ref": "#/$defs/reliability"},
+        "ethical_notes": {"$ref": "#/$defs/nonempty"},
+        "chart_readiness": {"$ref": "#/$defs/chart_readiness"},
+        "data": {
+          "oneOf": [
+            {"$ref": "#/$defs/public_event"},
+            {"$ref": "#/$defs/deceased_person"}
+          ]
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_name", "canonical_url", "source_revision", "retrieved_at"],
+      "properties": {
+        "source_name": {"$ref": "#/$defs/nonempty"},
+        "canonical_url": {"$ref": "#/$defs/https_url"},
+        "source_revision": {"$ref": "#/$defs/nonempty"},
+        "retrieved_at": {"type": "string", "format": "date-time", "pattern": "Z$"}
+      }
+    },
+    "rights": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["license_or_status", "license_url", "attribution", "redistribution_notes"],
+      "properties": {
+        "license_or_status": {"$ref": "#/$defs/nonempty"},
+        "license_url": {"$ref": "#/$defs/https_url"},
+        "attribution": {"$ref": "#/$defs/nonempty"},
+        "redistribution_notes": {"$ref": "#/$defs/nonempty"}
+      }
+    },
+    "reliability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["classification", "source_precision", "notes"],
+      "properties": {
+        "classification": {
+          "enum": ["source_stated_exact", "date_only_exact_time_unknown"]
+        },
+        "source_precision": {"$ref": "#/$defs/nonempty"},
+        "notes": {"$ref": "#/$defs/nonempty"}
+      }
+    },
+    "chart_readiness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reason"],
+      "properties": {
+        "status": {"enum": ["chart_ready", "research_only"]},
+        "reason": {"$ref": "#/$defs/nonempty"}
+      }
+    },
+    "public_event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["record_kind", "category", "temporal", "location", "event_metadata"],
+      "properties": {
+        "record_kind": {"const": "public_event"},
+        "category": {"enum": ["astronomical_event", "natural_event"]},
+        "temporal": {"$ref": "#/$defs/event_temporal"},
+        "location": {"$ref": "#/$defs/location"},
+        "event_metadata": {"$ref": "#/$defs/event_metadata"}
+      }
+    },
+    "event_temporal": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["value", "precision", "time_scale", "exact_time_known"],
+          "properties": {
+            "value": {"type": "string", "format": "date-time", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
+            "precision": {"const": "second"},
+            "time_scale": {"const": "utc"},
+            "exact_time_known": {"const": true}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["value", "precision", "time_scale", "exact_time_known"],
+          "properties": {
+            "value": {"type": "string", "format": "date-time", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"},
+            "precision": {"const": "millisecond"},
+            "time_scale": {"const": "utc"},
+            "exact_time_known": {"const": true}
+          }
+        },
+        {"$ref": "#/$defs/date_temporal"}
+      ]
+    },
+    "date_temporal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "precision", "time_scale", "exact_time_known"],
+      "properties": {
+        "value": {"type": "string", "format": "date", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
+        "precision": {"const": "day"},
+        "time_scale": {"const": "civil_date"},
+        "exact_time_known": {"const": false}
+      }
+    },
+    "location": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "label",
+        "latitude_degrees",
+        "longitude_degrees",
+        "coordinate_precision_degrees",
+        "elevation_meters",
+        "elevation_policy",
+        "iana_time_zone"
+      ],
+      "properties": {
+        "label": {"$ref": "#/$defs/nonempty"},
+        "latitude_degrees": {"type": "number", "minimum": -90, "maximum": 90},
+        "longitude_degrees": {"type": "number", "minimum": -180, "maximum": 180},
+        "coordinate_precision_degrees": {"type": "number", "exclusiveMinimum": 0, "maximum": 10},
+        "elevation_meters": {"type": "number", "minimum": -500, "maximum": 10000},
+        "elevation_policy": {"const": "surface_for_chart"},
+        "iana_time_zone": {
+          "oneOf": [
+            {"type": "null"},
+            {"$ref": "#/$defs/nonempty"}
+          ]
+        }
+      }
+    },
+    "event_metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event_type", "source_magnitude", "source_depth_km", "notes"],
+      "properties": {
+        "event_type": {"$ref": "#/$defs/nonempty"},
+        "source_magnitude": {"oneOf": [{"type": "null"}, {"type": "number", "minimum": 0}]},
+        "source_depth_km": {"oneOf": [{"type": "null"}, {"type": "number", "minimum": 0}]},
+        "notes": {"$ref": "#/$defs/nonempty"}
+      }
+    },
+    "deceased_person": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["record_kind", "aliases", "birth", "death", "birthplaces"],
+      "properties": {
+        "record_kind": {"const": "deceased_person"},
+        "aliases": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/nonempty"}
+        },
+        "birth": {"$ref": "#/$defs/date_temporal"},
+        "death": {"$ref": "#/$defs/date_temporal"},
+        "birthplaces": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/birthplace"}
+        }
+      }
+    },
+    "birthplace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "place_entity_id",
+        "label",
+        "catalog_role",
+        "source_rank",
+        "statement_id",
+        "place_source_revision"
+      ],
+      "properties": {
+        "place_entity_id": {"type": "string", "pattern": "^Q[0-9]+$"},
+        "label": {"$ref": "#/$defs/nonempty"},
+        "catalog_role": {"enum": ["sole", "preferred", "alternate"]},
+        "source_rank": {"enum": ["preferred", "normal"]},
+        "statement_id": {"$ref": "#/$defs/nonempty"},
+        "place_source_revision": {"type": "string", "pattern": "^Q[0-9]+-oldid-[0-9]+$"}
+      }
+    }
+  }
+}

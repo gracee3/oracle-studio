@@ -20,6 +20,7 @@ members = [
     "crates/oracle-studio-core",
     "crates/oracle-studio-location-catalog",
     "crates/oracle-studio-platform",
+    "crates/oracle-studio-public-records",
     "crates/oracle-studio-ui",
     "crates/oracle-studio-vault",
     "crates/oracle-studio-worker",

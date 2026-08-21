@@ -94,8 +94,10 @@ can remove IndexedDB even after persistent storage is granted.
 
 See [architecture](docs/STUDIO_ARCHITECTURE.md),
 [schema v4](docs/COMPOSITION_MODEL.md), [envelope v2](docs/VAULT.md), and the
-[GeoNames contract](docs/LOCATION_CATALOG.md). Development validation and the
-current repository safeguards are documented in
+[GeoNames contract](docs/LOCATION_CATALOG.md). The reviewed, non-personal
+fixture inventory is documented in the
+[public-record catalog](docs/PUBLIC_RECORD_CATALOG.md). Development validation
+and the current repository safeguards are documented in
 [development policy](docs/DEVELOPMENT.md).
 
 ## License
