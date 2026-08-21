@@ -319,7 +319,7 @@ def run_acceptance(driver: Driver, launch_url: str, downloads: Path) -> None:
 
     driver.click_text("Files", "a")
     scratch_form = "form.save-scratch"
-    driver.set_value(driver.control(scratch_form, "Public vault title"), "Fictional Portable Studio")
+    driver.set_value(driver.control(scratch_form, "Public title"), "Fictional Portable Studio")
     driver.set_value(driver.control(scratch_form, "Password"), "fictional browser password")
     driver.click_text("Save encrypted vault")
     driver.wait_text("Fictional Portable Studio", timeout=90)
