@@ -36,6 +36,14 @@ catalog fetches.
 There are no cross-origin runtime requests. Direct non-loopback deployment
 requires HTTPS supplied outside the static container.
 
+The separate `demo` UI feature may fetch one generated same-origin encrypted
+vault with the reviewed public demo UUID. Before allowing replacement, the UI
+checks the envelope-v2 public ID and title against compiled demo constants. It
+then uses the ordinary worker import and unlock commands. Ordinary production
+Trunk and Docker targets do not compile the loader, password, or asset path.
+Demo load/reset never writes global settings and replacement can target only the
+demo UUID.
+
 Astraeus's pure-Rust Moshier `EphemerisAdapter` compiles directly into the
 worker. Its `swisseph-rs` dependency has default and file features disabled, so
 the static browser build does not fetch ephemeris files. Unsupported dates and

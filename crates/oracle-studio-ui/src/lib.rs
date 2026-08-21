@@ -23,6 +23,8 @@ mod browser {
         StableId, StepDirection, TimeInterval, WheelOrientation as ComparisonWheelOrientation,
         ZodiacId, default_aspects, default_chart_points, generate_unique_id, step_local_time,
     };
+    #[cfg(feature = "demo")]
+    use oracle_studio_demo::{DEMO_ASSET_PATH, DEMO_PASSWORD, DEMO_TITLE, DEMO_VAULT_ID};
     use oracle_studio_location_catalog::{
         CatalogInstallInput, CatalogRetrieval, CatalogSearchMatch,
     };
@@ -38,6 +40,8 @@ mod browser {
     use oracle_studio_worker::BrowserStudioPlatform;
     use wasm_bindgen::{JsCast, JsValue, closure::Closure};
     use wasm_bindgen_futures::{JsFuture, spawn_local};
+    #[cfg(feature = "demo")]
+    use web_sys::Response;
     use web_sys::{BeforeUnloadEvent, Blob, Element, File, HtmlAnchorElement, Url};
 
     type Platform = StoredValue<Rc<BrowserStudioPlatform>, LocalStorage>;
@@ -466,10 +470,7 @@ mod browser {
                                 <article class="chart-card" class:is-inner=move || model.inner_chart_id.get() == chart_id class:is-outer=move || model.outer_chart_id.get() == chart.id>
                                     <div><strong>{chart.label}</strong><small>{format!("{} · {}", chart.role, chart.local_input)}</small></div>
                                     <div class="compact-actions">
-                                        <button type="button" on:click=move |_| {
-                                            model.inner_chart_id.set(inner_id.clone());
-                                            queue_selected_preview(platform, model, None);
-                                        }>"Use as Inner"</button>
+                                        <button type="button" on:click=move |_| select_inner_chart(platform, model, &inner_id)>"Use as Inner"</button>
                                         <button type="button" on:click=move |_| select_outer_chart(platform, model, &outer_id)>"Use as Outer"</button>
                                     </div>
                                 </article>
@@ -1408,6 +1409,7 @@ mod browser {
             <main id="files" class="route scroll-route" tabindex="-1">
                 <div class="route-heading"><div><p class="eyebrow">"Portable, browser-local storage"</p><h1>"Files"</h1></div><a href="#workbench">"Back to workbench"</a></div>
                 <section class="file-warning"><strong>"Exports are your backups."</strong><span>{move || model.capabilities.get().map(|status| status.backup_warning).unwrap_or_else(|| "Browser storage can be evicted.".into())}</span></section>
+                <DemoControls platform model />
                 <PendingChartActions platform model />
                 <section class="file-toolbar">
                     <button class="primary" on:click=move |_| dispatch(platform, model, PlatformCommand::CreateScratch)>"New scratch"</button>
@@ -1427,6 +1429,155 @@ mod browser {
                 </section>
             </main>
         }
+    }
+
+    #[cfg(feature = "demo")]
+    #[component]
+    fn DemoControls(platform: Platform, model: Model) -> impl IntoView {
+        view! {
+            <section class="demo-controls" aria-labelledby="demo-heading">
+                <div>
+                    <p class="eyebrow">"Demo-only build"</p>
+                    <h2 id="demo-heading">"Fictional workspace"</h2>
+                    <p>"Loads two fictional people, two locations, four calculated charts, and three comparisons. It never changes an unrelated vault or a global preference."</p>
+                    <p class="demo-password"><strong>"Public, non-secret password"</strong><code>{DEMO_PASSWORD}</code></p>
+                </div>
+                <div class="button-row">
+                    <button class="primary" type="button" disabled=move || model.busy.get() on:click=move |_| {
+                        if confirm("Load the fictional Oracle Studio Demo? Its password is public and this will make only the demo vault active.") {
+                            load_demo(platform, model, false);
+                        }
+                    }>"Load demo workspace"</button>
+                    <button type="button" disabled=move || model.busy.get() on:click=move |_| {
+                        if confirm("Reset only the Oracle Studio Demo browser copy to its canonical fictional contents? An unrelated vault and global preferences will not be changed.") {
+                            load_demo(platform, model, true);
+                        }
+                    }>"Reset demo workspace"</button>
+                </div>
+            </section>
+        }
+    }
+
+    #[cfg(not(feature = "demo"))]
+    #[component]
+    fn DemoControls(platform: Platform, model: Model) -> impl IntoView {
+        let _ = (platform, model);
+    }
+
+    #[cfg(feature = "demo")]
+    fn load_demo(platform: Platform, model: Model, replace_confirmed: bool) {
+        if !replace_confirmed
+            && model
+                .vaults
+                .get_untracked()
+                .iter()
+                .any(|vault| vault.id == DEMO_VAULT_ID)
+        {
+            model.problem.set(Some(
+                "The demo vault already exists. Use Reset demo workspace to replace only that copy."
+                    .into(),
+            ));
+            return;
+        }
+        model.busy.set(true);
+        model.problem.set(None);
+        spawn_local(async move {
+            let result = async {
+                let bytes = fetch_demo_envelope().await?;
+                validate_demo_envelope_identity(&bytes)?;
+                let imported = platform
+                    .with_value(|platform| {
+                        platform.execute(PlatformCommand::ImportVault {
+                            bytes,
+                            replace_confirmed,
+                        })
+                    })
+                    .await
+                    .map_err(|error| error.message)?;
+                apply_response(model, imported);
+                let unlocked = platform
+                    .with_value(|platform| {
+                        platform.execute(PlatformCommand::UnlockVault {
+                            vault_id: DEMO_VAULT_ID.into(),
+                            password: DEMO_PASSWORD.as_bytes().to_vec(),
+                        })
+                    })
+                    .await
+                    .map_err(|error| error.message)?;
+                let preview_after = apply_response(model, unlocked);
+                if preview_after && ensure_workbench_defaults(model) {
+                    queue_selected_preview(platform, model, None);
+                }
+                model.notice.set(Some(format!(
+                    "Loaded {DEMO_TITLE} with its public, non-secret password."
+                )));
+                Ok::<(), String>(())
+            }
+            .await;
+            if let Err(message) = result {
+                model.problem.set(Some(message));
+            }
+            model.busy.set(false);
+        });
+    }
+
+    #[cfg(feature = "demo")]
+    async fn fetch_demo_envelope() -> Result<Vec<u8>, String> {
+        let window = web_sys::window().ok_or("Browser window unavailable.")?;
+        let value = JsFuture::from(window.fetch_with_str(DEMO_ASSET_PATH))
+            .await
+            .map_err(|_| "The same-origin demo vault asset is unavailable.".to_string())?;
+        let response: Response = value
+            .dyn_into()
+            .map_err(|_| "The demo vault fetch returned an invalid response.".to_string())?;
+        if !response.ok() {
+            return Err(format!(
+                "The demo vault asset returned HTTP {}.",
+                response.status()
+            ));
+        }
+        let buffer = response
+            .array_buffer()
+            .map_err(|_| "The demo vault response body is unavailable.".to_string())?;
+        let value = JsFuture::from(buffer)
+            .await
+            .map_err(|_| "The demo vault response body could not be read.".to_string())?;
+        Ok(Uint8Array::new(&value).to_vec())
+    }
+
+    #[cfg(feature = "demo")]
+    fn validate_demo_envelope_identity(bytes: &[u8]) -> Result<(), String> {
+        const FIXED_HEADER_LENGTH: usize = 42;
+        if bytes.len() < FIXED_HEADER_LENGTH
+            || bytes.get(..8) != Some(b"ORCLVLT\0")
+            || u16::from_le_bytes([bytes[8], bytes[9]]) != 2
+        {
+            return Err("The demo asset is not an Oracle envelope-v2 vault.".into());
+        }
+        let id_length = usize::from(u16::from_le_bytes([bytes[26], bytes[27]]));
+        let title_length = usize::from(u16::from_le_bytes([bytes[28], bytes[29]]));
+        let id_end = FIXED_HEADER_LENGTH
+            .checked_add(id_length)
+            .ok_or("The demo asset header is invalid.")?;
+        let title_end = id_end
+            .checked_add(title_length)
+            .ok_or("The demo asset header is invalid.")?;
+        let id = std::str::from_utf8(
+            bytes
+                .get(FIXED_HEADER_LENGTH..id_end)
+                .ok_or("The demo asset header is truncated.")?,
+        )
+        .map_err(|_| "The demo asset ID is not UTF-8.")?;
+        let title = std::str::from_utf8(
+            bytes
+                .get(id_end..title_end)
+                .ok_or("The demo asset header is truncated.")?,
+        )
+        .map_err(|_| "The demo asset title is not UTF-8.")?;
+        if id != DEMO_VAULT_ID || title != DEMO_TITLE {
+            return Err("The demo asset identity does not match the protected demo ID.".into());
+        }
+        Ok(())
     }
 
     #[component]
@@ -1707,18 +1858,20 @@ mod browser {
             .iter()
             .any(|item| item.id == model.inner_location_id.get_untracked())
         {
-            model
-                .inner_location_id
-                .set(workspace.locations[0].id.clone());
+            model.inner_location_id.set(
+                chart_saved_location_id(&workspace, &model.inner_chart_id.get_untracked())
+                    .unwrap_or_else(|| workspace.locations[0].id.clone()),
+            );
         }
         if !workspace
             .locations
             .iter()
             .any(|item| item.id == model.outer_location_id.get_untracked())
         {
-            model
-                .outer_location_id
-                .set(workspace.locations[0].id.clone());
+            model.outer_location_id.set(
+                chart_saved_location_id(&workspace, &model.outer_chart_id.get_untracked())
+                    .unwrap_or_else(|| workspace.locations[0].id.clone()),
+            );
         }
         if model.desired_outer.get_untracked().is_none()
             && let Some(chart) = selected_chart(&workspace, &model.outer_chart_id.get_untracked())
@@ -1728,10 +1881,22 @@ mod browser {
         true
     }
 
+    fn select_inner_chart(platform: Platform, model: Model, id: &str) {
+        model.inner_chart_id.set(id.into());
+        if let Some(location_id) = chart_saved_location_id(&model.workspace.get_untracked(), id) {
+            model.inner_location_id.set(location_id);
+        }
+        queue_selected_preview(platform, model, None);
+    }
+
     fn select_outer_chart(platform: Platform, model: Model, id: &str) {
         model.outer_chart_id.set(id.into());
         model.outer_ambiguous_choice.set(None);
-        if let Some(chart) = selected_chart(&model.workspace.get_untracked(), id) {
+        let workspace = model.workspace.get_untracked();
+        if let Some(location_id) = chart_saved_location_id(&workspace, id) {
+            model.outer_location_id.set(location_id);
+        }
+        if let Some(chart) = selected_chart(&workspace, id) {
             model.desired_outer.set(chart_input(chart).ok());
         }
         queue_selected_preview(platform, model, None);
@@ -2113,6 +2278,18 @@ mod browser {
 
     fn selected_chart<'a>(workspace: &'a WorkspaceSummary, id: &str) -> Option<&'a ChartSummary> {
         workspace.charts.iter().find(|chart| chart.id == id)
+    }
+
+    fn chart_saved_location_id(workspace: &WorkspaceSummary, chart_id: &str) -> Option<String> {
+        selected_chart(workspace, chart_id)
+            .and_then(|chart| chart.current_saved_location_id.as_ref())
+            .filter(|location_id| {
+                workspace
+                    .locations
+                    .iter()
+                    .any(|location| location.id == **location_id)
+            })
+            .cloned()
     }
 
     fn pending_destination_ready(model: Model) -> bool {

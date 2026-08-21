@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "vault_id": "7b6d8275-b622-4d47-a7f2-66fca6f84d2d",
+  "title": "Oracle Studio Demo",
+  "vault_document_schema_version": 5,
+  "envelope_format_version": 2,
+  "astraeus_import_revision": "44af176ef8a85db2bbd7b57228710855a8fe6f3b",
+  "ephemeris": "moshier",
+  "aspect_set": "standard",
+  "document_sha256": "sha256:a42efba9df87dde13e360aa5477aff3e2f6e8fc8d9f1306d7e511761700f12bc",
+  "people": 2,
+  "locations": 2,
+  "charts": 4,
+  "comparisons": 3,
+  "chart_artifact_content_ids": {
+    "demo.calculation.avery-north-natal": "sha256:6cfcd59675fe8b1911a1d14859895a4d11ea0a6dd4ba82001fe1e3a72a46eab0",
+    "demo.calculation.cedar-equinox-event": "sha256:1cbe1fc293897ca426b39da07f7d5c509270d3d48470442718552483df3156ae",
+    "demo.calculation.harbor-transit": "sha256:4e3810290138b5ba2b863c6f2d77468cc8515d9aeec6bdf89fb5bf13cb558a3c",
+    "demo.calculation.mira-vale-natal": "sha256:0209e2a94aec5d1c92c7b4ff552f2a2c1fcc2a8d8f0c786b3a9950716aca43af"
+  },
+  "comparison_artifact_content_ids": {
+    "demo.calculation.avery-harbor-transit": "sha256:10c153edd13edfb8879d7afe3e25f42f8a54403c3e121bd701c22f49499e25d5",
+    "demo.calculation.avery-mira-synastry": "sha256:43184675d054cb1b9813b3134c8edcf7406d66f0778bf163e421c04f547932aa",
+    "demo.calculation.mira-cedar-event": "sha256:d2b428b2f50ca6472d2a0393453ea59812d710b75c03ffe8de3d6cae3a5b68b3"
+  }
+}

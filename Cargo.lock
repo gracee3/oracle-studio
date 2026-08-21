@@ -1479,6 +1479,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "oracle-studio-demo"
+version = "0.1.0"
+dependencies = [
+ "astraeus-moshier",
+ "oracle-studio-app",
+ "oracle-studio-core",
+ "oracle-studio-vault",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.12",
+]
+
+[[package]]
 name = "oracle-studio-location-catalog"
 version = "0.1.0"
 dependencies = [
@@ -1524,6 +1538,7 @@ dependencies = [
  "oracle-studio-aspect-sets",
  "oracle-studio-chart-view",
  "oracle-studio-core",
+ "oracle-studio-demo",
  "oracle-studio-location-catalog",
  "oracle-studio-platform",
  "oracle-studio-worker",

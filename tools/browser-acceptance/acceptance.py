@@ -254,6 +254,8 @@ def run_acceptance(driver: Driver, launch_url: str, downloads: Path) -> None:
 
     driver.click_text("Files", "a")
     driver.wait_text("Exports are your backups.")
+    if driver.elements(".demo-controls") or "oracle-demo" in driver.body():
+        raise RuntimeError("ordinary production build exposed the opt-in demo loader")
     driver.click_text("New scratch")
     driver.wait_text("Scratch")
     driver.click_text("Settings", "a")

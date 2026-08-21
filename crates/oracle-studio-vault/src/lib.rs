@@ -137,6 +137,46 @@ pub fn create(
     )
 }
 
+/// Create a demo envelope with a reviewed stable public UUID.
+///
+/// This constructor is intentionally absent from ordinary vault and production
+/// browser builds. The envelope still receives a random salt, wrapping nonce,
+/// document nonce, and data key on every call.
+#[cfg(feature = "demo-builder")]
+pub fn create_with_id_for_demo(
+    id: &str,
+    title: &str,
+    password: &[u8],
+    document: VaultDocument,
+) -> Result<(UnlockedVault, Vec<u8>), VaultError> {
+    validate_title(title)?;
+    validate_password(password)?;
+    document.validate()?;
+    let header = VaultHeader {
+        id: Uuid::parse_str(id)
+            .map_err(|_| VaultError::InvalidVaultId)?
+            .to_string(),
+        title: title.into(),
+    };
+    let mut salt = [0_u8; SALT_LEN];
+    let mut wrap_nonce = [0_u8; NONCE_LEN];
+    let mut document_nonce = [0_u8; NONCE_LEN];
+    let mut key = Zeroizing::new([0_u8; KEY_LEN]);
+    getrandom::fill(&mut salt)?;
+    getrandom::fill(&mut wrap_nonce)?;
+    getrandom::fill(&mut document_nonce)?;
+    getrandom::fill(key.as_mut())?;
+    create_with_material(
+        header,
+        password,
+        document,
+        salt,
+        wrap_nonce,
+        document_nonce,
+        key,
+    )
+}
+
 pub fn open(envelope: &[u8], password: &[u8]) -> Result<UnlockedVault, VaultError> {
     validate_password(password)?;
     let parsed = parse(envelope)?;
