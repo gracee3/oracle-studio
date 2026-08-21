@@ -1394,8 +1394,21 @@ dependencies = [
  "astraeus-core",
  "astraeus-derived",
  "astraeus-specifications",
+ "oracle-studio-aspect-sets",
  "oracle-studio-chart-view",
  "oracle-studio-core",
+ "serde_json",
+ "thiserror 2.0.12",
+]
+
+[[package]]
+name = "oracle-studio-aspect-sets"
+version = "0.1.0"
+dependencies = [
+ "astraeus-core",
+ "serde",
+ "serde_json",
+ "sha2",
  "thiserror 2.0.12",
 ]
 
@@ -1407,6 +1420,7 @@ dependencies = [
  "futures",
  "js-sys",
  "oracle-studio-app",
+ "oracle-studio-aspect-sets",
  "oracle-studio-core",
  "oracle-studio-location-catalog",
  "oracle-studio-platform",
@@ -1458,6 +1472,7 @@ dependencies = [
  "astraeus-comparison",
  "chrono",
  "chrono-tz",
+ "oracle-studio-aspect-sets",
  "serde",
  "serde_json",
  "thiserror 2.0.12",
@@ -1479,6 +1494,7 @@ dependencies = [
 name = "oracle-studio-platform"
 version = "0.1.0"
 dependencies = [
+ "oracle-studio-aspect-sets",
  "oracle-studio-chart-view",
  "oracle-studio-core",
  "oracle-studio-location-catalog",
@@ -1505,6 +1521,7 @@ version = "0.1.0"
 dependencies = [
  "js-sys",
  "leptos",
+ "oracle-studio-aspect-sets",
  "oracle-studio-chart-view",
  "oracle-studio-core",
  "oracle-studio-location-catalog",

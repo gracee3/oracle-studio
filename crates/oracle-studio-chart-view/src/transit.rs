@@ -1,5 +1,6 @@
 use astraeus_comparison::{
     ChartLayerArtifact, ComparisonArtifact, ComparisonKind, ComparisonMotionPolicy,
+    InterChartAspect,
 };
 use astraeus_core::{ChartAngle, ChartPointSelection, chart_point_positions};
 use chrono::{DateTime, Duration, Utc};
@@ -132,6 +133,15 @@ impl ChartScene {
     }
 
     pub fn from_comparison(comparison: &ComparisonArtifact) -> Result<Self, TransitTimelineError> {
+        Self::from_comparison_with_aspects(comparison, comparison.aspects())
+    }
+
+    /// Project a validated schema-v1 comparison's layers with a separately
+    /// validated phase-aware aspect result.
+    pub fn from_comparison_with_aspects(
+        comparison: &ComparisonArtifact,
+        aspects: &[InterChartAspect],
+    ) -> Result<Self, TransitTimelineError> {
         validate_policy(comparison)?;
         let (natal, transit) = physical_layers(comparison)?;
         let natal_calculation = natal.calculation();
@@ -168,8 +178,7 @@ impl ChartScene {
             transit_zodiac: format!("{:?}", transit_request.zodiac()),
             transit_house_system: format!("{:?}", transit_request.house_system()),
             transit: selected_points(specification.second_points(), &transit_points)?,
-            aspects: comparison
-                .aspects()
+            aspects: aspects
                 .iter()
                 .copied()
                 .map(|aspect| {

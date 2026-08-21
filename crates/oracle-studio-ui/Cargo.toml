@@ -21,6 +21,7 @@ csr = ["leptos/csr"]
 [dependencies]
 js-sys.workspace = true
 leptos.workspace = true
+oracle-studio-aspect-sets = { version = "0.1.0", path = "../oracle-studio-aspect-sets" }
 oracle-studio-core = { version = "0.1.0", path = "../oracle-studio-core" }
 oracle-studio-chart-view = { version = "0.1.0", path = "../oracle-studio-chart-view" }
 oracle-studio-location-catalog = { version = "0.1.0", path = "../oracle-studio-location-catalog" }

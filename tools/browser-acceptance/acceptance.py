@@ -259,7 +259,9 @@ def run_acceptance(driver: Driver, launch_url: str, downloads: Path) -> None:
             driver.set_file(driver.control(catalog_form, label), path)
         driver.click_text("Install local catalog")
         driver.wait_text("Installed 1 GeoNames places.")
-        driver.set_value(driver.element("form.inline-search input"), "sao jose")
+        driver.set_value(
+            driver.element(".catalog-controls form.inline-search input"), "sao jose"
+        )
         driver.click_text("Search locally")
         driver.wait_text("São José")
     print("PASS locations: manual fallback and uploaded Unicode GeoNames search run in the worker")

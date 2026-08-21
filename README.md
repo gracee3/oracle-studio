@@ -20,7 +20,7 @@ and the full-history import is recorded in [the migration record](docs/astraeus/
   and password.
 - Import, unlock, switch, lock, export, unload, replace, and remove multiple
   independent vaults.
-- Maintain chart-only schema-v4 people, saved locations, chart definitions,
+- Maintain chart-only schema-v5 people, saved locations, chart definitions,
   immutable calculations, comparison presets/calculations, and workspace state.
 - Resolve IANA local times explicitly, including ambiguous and nonexistent
   civil times.
@@ -41,6 +41,8 @@ and the full-history import is recorded in [the migration record](docs/astraeus/
   time and elapsed-time controls, then use Files to confirm an identity-
   preserving update or save the preview under a unique new chart name.
 - Save versioned, global wheel templates containing visual options only.
+- Select and edit global aspect sets while saved comparisons retain immutable
+  rule/point snapshots.
 
 The production worker compiles Astraeus's pure-Rust Moshier adapter using
 `swisseph-rs` with file and default features disabled. Results explicitly carry
@@ -93,7 +95,8 @@ Portable exports are the backup boundary. Browser eviction or profile deletion
 can remove IndexedDB even after persistent storage is granted.
 
 See [architecture](docs/STUDIO_ARCHITECTURE.md),
-[schema v4](docs/COMPOSITION_MODEL.md), [envelope v2](docs/VAULT.md), and the
+[schema v5](docs/COMPOSITION_MODEL.md), [envelope v2](docs/VAULT.md),
+[aspect-set contract](docs/ASPECT_SETS.md), and the
 [GeoNames contract](docs/LOCATION_CATALOG.md). The reviewed, non-personal
 fixture inventory is documented in the
 [public-record catalog](docs/PUBLIC_RECORD_CATALOG.md). Development validation

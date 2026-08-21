@@ -10,6 +10,7 @@ rust-version.workspace = true
 [dependencies]
 astraeus-artifacts.workspace = true
 astraeus-comparison.workspace = true
+oracle-studio-aspect-sets = { version = "0.1.0", path = "../oracle-studio-aspect-sets" }
 chrono.workspace = true
 chrono-tz.workspace = true
 serde.workspace = true
