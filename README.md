@@ -64,8 +64,20 @@ trunk build --release --locked=true
 ```
 
 Ordinary Trunk builds contain no GeoNames bytes and offer local upload/manual
-entry. The Docker build fetches the three official GeoNames inputs, verifies the
-hashes in `catalog/geonames.lock`, and publishes them on the same static origin.
+entry. For an explicit catalog-enabled local build, use the shared lock-backed
+workflow:
+
+```bash
+just geonames-download
+just geonames-check
+just geonames-build
+just geonames-serve
+```
+
+The default Docker target uses the same download, verification, attribution,
+and staging implementation. `acceptance-runtime` remains catalog-free. Upstream
+drift fails closed; `just geonames-candidate-lock` writes only ignored review
+artifacts and never edits `catalog/geonames.lock`.
 Ordinary Trunk and Docker builds also contain no demo loader or demo vault.
 
 ```bash

@@ -1,5 +1,5 @@
-# GeoNames build input lock captured 2026-08-20T02:02:47Z.
+# GeoNames build input lock captured 2026-08-21T06:06:33Z.
 # Data files are fetched only while building the product image and never enter Git.
-cities500.zip 9c144cdd80cd9ae454bc2bae034d52b84da5d612b77148c9a97a213cf68479e4 13528784
+cities500.zip aa1331a7f5b473dafb4d0e20d3a8baa64b29b1d81a2164cc8e77661debac11c2 13529524
 admin1CodesASCII.txt 590651498043f674accda2b7f46d21286cda0e290b02f8561c5005eee9a5448c 151536
 admin2Codes.txt dfb1b884b7094070b3539be18076080aa75f66fd82e19e78acaf584b190856c4 2372900
