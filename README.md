@@ -26,8 +26,8 @@ and the full-history import is recorded in [the migration record](docs/astraeus/
   civil times.
 - Parse and search an image-pinned or user-selected GeoNames distribution in a
   Web Worker; manual location entry is always available.
-- Render validated Astraeus chart presentations with the retained Rust SVG and
-  animated-HTML renderer.
+- Render validated Astraeus chart presentations with additive single-wheel and
+  bi-wheel Rust SVG dispatch while retaining the existing biwheel API.
 - Use a full-viewport, hash-addressable Workbench, Settings, and Files shell;
   sidebars and route content scroll independently while the chart wheel remains
   the dominant surface.
@@ -40,7 +40,9 @@ and the full-history import is recorded in [the migration record](docs/astraeus/
 - Preview the fixed inner chart against a moving outer chart with exact civil-
   time and elapsed-time controls, then use Files to confirm an identity-
   preserving update or save the preview under a unique new chart name.
-- Save versioned, global wheel templates containing visual options only.
+- Select five protected single/bi-wheel templates, duplicate them into custom
+  schema-v2 visual settings, and resolve automatic chart palettes from a
+  prepaint warm-light or subdued-dark theme preference.
 - Select and edit global aspect sets while saved comparisons retain immutable
   rule/point snapshots.
 
@@ -97,10 +99,11 @@ can remove IndexedDB even after persistent storage is granted.
 See [architecture](docs/STUDIO_ARCHITECTURE.md),
 [schema v5](docs/COMPOSITION_MODEL.md), [envelope v2](docs/VAULT.md),
 [aspect-set contract](docs/ASPECT_SETS.md), and the
-[GeoNames contract](docs/LOCATION_CATALOG.md). The reviewed, non-personal
-fixture inventory is documented in the
-[public-record catalog](docs/PUBLIC_RECORD_CATALOG.md). Development validation
-and the current repository safeguards are documented in
+[GeoNames contract](docs/LOCATION_CATALOG.md). The presentation-only theme and
+template contract is documented in [chart rendering](docs/CHART_RENDERING.md).
+The [public-record catalog](docs/PUBLIC_RECORD_CATALOG.md) documents the
+reviewed, non-personal fixture inventory. Development validation and the current
+repository safeguards are documented in
 [development policy](docs/DEVELOPMENT.md).
 
 ## License

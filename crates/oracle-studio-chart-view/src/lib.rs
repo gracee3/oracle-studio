@@ -12,7 +12,8 @@ pub use transit::{
     TransitTimelineError, filtered_scene,
 };
 pub use transit_svg::{
-    LabelDensity, RenderOptions, WheelOrientation, WheelPalette, render_biwheel_svg,
+    ChartRenderOptions, LabelDensity, RenderOptions, WheelLayout, WheelMode, WheelOrientation,
+    WheelPalette, render_biwheel_svg, render_chart_svg, render_single_wheel_svg,
     resolve_circular_collisions,
 };
 

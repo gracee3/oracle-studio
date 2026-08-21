@@ -13,7 +13,9 @@ mod browser {
         html::{Input, Select, Textarea},
         prelude::*,
     };
-    use oracle_studio_chart_view::{RenderOptions, filtered_scene, render_biwheel_svg};
+    use oracle_studio_chart_view::{
+        ChartRenderOptions, RenderOptions, filtered_scene, render_chart_svg,
+    };
     use oracle_studio_core::{
         AmbiguousTimeChoice, AyanamsaId, ChartCalculationOptions, ChartDefinition, ChartRole,
         ComparisonPreset, HouseSystemId, LocalDateTimeInput, LocalTimeResolution,
@@ -29,8 +31,9 @@ mod browser {
         CapabilityStatus, ChartPointId, ChartSummary, LabelDensity, MAX_IMPORT_BYTES,
         PlatformCommand, PlatformErrorCode, PlatformResponse, PreviewCommitOutcome,
         PreviewGeneration, PreviewSaveMode, StudioPlatform, VaultLockState, VaultSummary,
-        WheelOrientation, WheelPalette, WheelTemplate, WheelTemplateSettings,
-        WorkbenchPresentation, WorkbenchPreviewRequest, WorkspaceSummary,
+        WheelLayout, WheelMode, WheelOrientation, WheelPalette, WheelPaletteSelection,
+        WheelTemplate, WheelTemplateSettings, WorkbenchPresentation, WorkbenchPreviewRequest,
+        WorkspaceSummary,
     };
     use oracle_studio_worker::BrowserStudioPlatform;
     use wasm_bindgen::{JsCast, JsValue, closure::Closure};
@@ -67,11 +70,34 @@ mod browser {
         ("Square", "Square"),
         ("Sextile", "Sextile"),
     ];
+    const THEME_STORAGE_KEY: &str = "oracle-studio.theme.v1";
     const LAYOUT_STORAGE_KEY: &str = "oracle-studio.layout.v1";
     const ZOOM_STEPS: [u16; 24] = [
         75, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200, 210, 220, 230, 240, 250,
         260, 270, 280, 290, 300,
     ];
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum ThemePreference {
+        System,
+        Light,
+        Dark,
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum EffectiveTheme {
+        Light,
+        Dark,
+    }
+
+    impl EffectiveTheme {
+        const fn data_value(self) -> &'static str {
+            match self {
+                Self::Light => "light",
+                Self::Dark => "dark",
+            }
+        }
+    }
 
     #[derive(Clone, Copy, Default)]
     struct LayoutPreferences {
@@ -162,6 +188,8 @@ mod browser {
         workspace: RwSignal<WorkspaceSummary>,
         capabilities: RwSignal<Option<CapabilityStatus>>,
         wheel_templates: RwSignal<WheelTemplateSettings>,
+        theme_preference: RwSignal<ThemePreference>,
+        effective_theme: RwSignal<EffectiveTheme>,
         aspect_sets: RwSignal<AspectSetSettings>,
         catalog_results: RwSignal<Vec<CatalogSearchMatch>>,
         presentation: RwSignal<Option<WorkbenchPresentation>>,
@@ -195,12 +223,17 @@ mod browser {
 
     impl Model {
         fn new() -> Self {
+            let theme_preference = stored_theme_preference();
+            let effective_theme =
+                document_theme().unwrap_or_else(|| resolve_theme(theme_preference));
             let layout = load_layout_preferences();
             Self {
                 vaults: RwSignal::new(Vec::new()),
                 workspace: RwSignal::new(empty_workspace()),
                 capabilities: RwSignal::new(None),
                 wheel_templates: RwSignal::new(WheelTemplateSettings::default()),
+                theme_preference: RwSignal::new(theme_preference),
+                effective_theme: RwSignal::new(effective_theme),
                 aspect_sets: RwSignal::new(AspectSetSettings::default()),
                 catalog_results: RwSignal::new(Vec::new()),
                 presentation: RwSignal::new(None),
@@ -244,10 +277,100 @@ mod browser {
         }
     }
 
+    fn stored_theme_preference() -> ThemePreference {
+        let stored = web_sys::window()
+            .and_then(|window| window.local_storage().ok().flatten())
+            .and_then(|storage| storage.get_item(THEME_STORAGE_KEY).ok().flatten());
+        match stored.as_deref() {
+            Some("light") => ThemePreference::Light,
+            Some("dark") => ThemePreference::Dark,
+            _ => ThemePreference::System,
+        }
+    }
+
+    fn system_theme() -> EffectiveTheme {
+        let prefers_dark = web_sys::window()
+            .and_then(|window| {
+                window
+                    .match_media("(prefers-color-scheme: dark)")
+                    .ok()
+                    .flatten()
+            })
+            .is_some_and(|query| query.matches());
+        if prefers_dark {
+            EffectiveTheme::Dark
+        } else {
+            EffectiveTheme::Light
+        }
+    }
+
+    fn resolve_theme(preference: ThemePreference) -> EffectiveTheme {
+        match preference {
+            ThemePreference::System => system_theme(),
+            ThemePreference::Light => EffectiveTheme::Light,
+            ThemePreference::Dark => EffectiveTheme::Dark,
+        }
+    }
+
+    fn document_theme() -> Option<EffectiveTheme> {
+        let value = web_sys::window()?
+            .document()?
+            .document_element()?
+            .get_attribute("data-theme")?;
+        match value.as_str() {
+            "light" => Some(EffectiveTheme::Light),
+            "dark" => Some(EffectiveTheme::Dark),
+            _ => None,
+        }
+    }
+
+    fn apply_theme(model: Model, preference: ThemePreference) {
+        let effective = resolve_theme(preference);
+        if let Some(window) = web_sys::window() {
+            if let Ok(Some(storage)) = window.local_storage() {
+                match preference {
+                    ThemePreference::System => {
+                        let _ = storage.remove_item(THEME_STORAGE_KEY);
+                    }
+                    ThemePreference::Light => {
+                        let _ = storage.set_item(THEME_STORAGE_KEY, "light");
+                    }
+                    ThemePreference::Dark => {
+                        let _ = storage.set_item(THEME_STORAGE_KEY, "dark");
+                    }
+                }
+            }
+            if let Some(document) = window.document() {
+                if let Some(root) = document.document_element() {
+                    let _ = root.set_attribute("data-theme", effective.data_value());
+                }
+                if let Ok(Some(meta)) = document.query_selector("meta[name='theme-color']") {
+                    let color = if effective == EffectiveTheme::Dark {
+                        "#142127"
+                    } else {
+                        "#f1e8d2"
+                    };
+                    let _ = meta.set_attribute("content", color);
+                }
+            }
+        }
+        model.theme_preference.set(preference);
+        model.effective_theme.set(effective);
+    }
+
+    fn toggle_theme(model: Model) {
+        let preference = match model.effective_theme.get_untracked() {
+            EffectiveTheme::Dark => ThemePreference::Light,
+            EffectiveTheme::Light => ThemePreference::Dark,
+        };
+        apply_theme(model, preference);
+    }
+
     #[component]
     pub fn App() -> impl IntoView {
         let model = Model::new();
         let platform = StoredValue::new_local(Rc::new(BrowserStudioPlatform::spawn()));
+        apply_theme(model, model.theme_preference.get_untracked());
         install_lifecycle_guards(model);
         Effect::new(move |_| dispatch(platform, model, PlatformCommand::Initialize));
 
@@ -265,6 +388,13 @@ mod browser {
                         <a href="#files">"Files"</a>
                     </nav>
                     <div class="header-actions">
+                        <button class="theme-toggle" type="button"
+                            aria-label=move || match model.effective_theme.get() { EffectiveTheme::Dark => "Switch to light theme", EffectiveTheme::Light => "Switch to dark theme" }
+                            title=move || match model.effective_theme.get() { EffectiveTheme::Dark => "Use light theme", EffectiveTheme::Light => "Use dark theme" }
+                            on:click=move |_| toggle_theme(model)>
+                            <span aria-hidden="true">{move || match model.effective_theme.get() { EffectiveTheme::Dark => "☼", EffectiveTheme::Light => "◐" }}</span>
+                            <span class="theme-toggle-label">{move || match model.effective_theme.get() { EffectiveTheme::Dark => "Light", EffectiveTheme::Light => "Dark" }}</span>
+                        </button>
                         <button class="sidebar-toggle charts-toggle" type="button" aria-label="Toggle charts and wheels" aria-expanded=move || model.left_open.get() on:click=move |_| { model.right_open.set(false); model.left_open.update(|open| *open = !*open); }>"Charts"</button>
                         <button class="sidebar-toggle controls-toggle" type="button" aria-label="Toggle chart controls" aria-expanded=move || model.right_open.get() on:click=move |_| { model.left_open.set(false); model.right_open.update(|open| *open = !*open); }>"Controls"</button>
                         <span class="session-state">{move || active_label(&model.workspace.get())}</span>
@@ -418,14 +548,14 @@ mod browser {
         view! {
             <section class="sidebar-module wheels-module">
                 <div class="module-heading"><h2>"Wheels"</h2><a href="#settings">"Edit"</a></div>
-                <div class="wheel-thumbnail" aria-hidden="true"><span></span></div>
+                <div class="wheel-thumbnail" class:single=move || model.wheel_templates.get().selected().mode == WheelMode::Single aria-hidden="true"><span></span></div>
                 <div class="template-list">
                     {move || model.wheel_templates.get().templates.into_iter().map(|template| {
                         let id = template.id.clone();
                         let id_for_class = template.id.clone();
                         view! {
                             <button type="button" class:selected=move || model.wheel_templates.get().last_selected_template_id == id_for_class on:click=move |_| select_template(platform, model, &id)>
-                                <strong>{template.name}</strong><small>{format!("{:?} · {:?}", template.palette, template.label_density)}</small>
+                                <strong>{template.name}</strong><small>{format!("{:?} · {:?} · {:?}", template.mode, template.palette, template.label_density)}</small>
                             </button>
                         }
                     }).collect_view()}
@@ -527,12 +657,16 @@ mod browser {
                             let scene = filtered_scene(&presentation.scene, &model.visible_points.get(), &model.visible_aspects.get());
                             let settings = model.wheel_templates.get();
                             let template = settings.selected();
-                            let svg = render_biwheel_svg(&scene, &RenderOptions {
-                                orientation: template.orientation,
-                                palette: template.palette,
-                                label_density: template.label_density,
-                                selected_points: model.selected_points.get().into_iter().collect(),
-                                selected_aspects: model.selected_aspects.get().into_iter().collect(),
+                            let svg = render_chart_svg(&scene, &ChartRenderOptions {
+                                mode: template.mode,
+                                layout: template.layout,
+                                wheel: RenderOptions {
+                                    orientation: template.orientation,
+                                    palette: template.palette.resolve(model.effective_theme.get() == EffectiveTheme::Dark),
+                                    label_density: template.label_density,
+                                    selected_points: model.selected_points.get().into_iter().collect(),
+                                    selected_aspects: model.selected_aspects.get().into_iter().collect(),
+                                },
                             });
                             let class = format!(
                                 "wheel-svg {} {} {}",
@@ -657,6 +791,7 @@ mod browser {
         view! {
             <main id="settings" class="route scroll-route" tabindex="-1">
                 <div class="route-heading"><div><p class="eyebrow">"Studio preferences"</p><h1>"Settings"</h1></div><a href="#workbench">"Back to workbench"</a></div>
+                <ThemeSettings model />
                 <TemplateSettings platform model />
                 <AspectSetSettingsView platform model />
                 <PeopleSettings platform model />
@@ -668,11 +803,34 @@ mod browser {
     }
 
     #[component]
+    fn ThemeSettings(model: Model) -> impl IntoView {
+        view! {
+            <section class="settings-panel theme-settings">
+                <div><p class="eyebrow">"Local appearance"</p><h2>"Theme"</h2><p>"Warm light and subdued dark themes cover the complete studio. Explicit choices are stored only in this browser."</p></div>
+                <div class="settings-form">
+                    <h3>{move || match model.theme_preference.get() {
+                        ThemePreference::System => format!("Following system · {}", model.effective_theme.get().data_value()),
+                        ThemePreference::Light => "Light theme selected".into(),
+                        ThemePreference::Dark => "Dark theme selected".into(),
+                    }}</h3>
+                    <div class="button-row">
+                        <button type="button" class:primary=move || model.effective_theme.get() == EffectiveTheme::Light on:click=move |_| apply_theme(model, ThemePreference::Light)>"Use light"</button>
+                        <button type="button" class:primary=move || model.effective_theme.get() == EffectiveTheme::Dark on:click=move |_| apply_theme(model, ThemePreference::Dark)>"Use dark"</button>
+                        <button type="button" on:click=move |_| apply_theme(model, ThemePreference::System)>"Reset to system"</button>
+                    </div>
+                </div>
+            </section>
+        }
+    }
+
+    #[component]
     fn TemplateSettings(platform: Platform, model: Model) -> impl IntoView {
         let name = NodeRef::<Input>::new();
+        let mode = NodeRef::<Select>::new();
         let orientation = NodeRef::<Select>::new();
         let palette = NodeRef::<Select>::new();
         let density = NodeRef::<Select>::new();
+        let layout = NodeRef::<Select>::new();
         let save = move |new_record: bool| {
             let result = (|| {
                 let name_value = value(name).ok_or("template name is required")?;
@@ -697,6 +855,11 @@ mod browser {
                 Ok::<_, String>(WheelTemplate {
                     id,
                     name: name_value,
+                    mode: if select_value(mode).as_deref() == Some("single") {
+                        WheelMode::Single
+                    } else {
+                        WheelMode::Biwheel
+                    },
                     orientation: if select_value(orientation).as_deref() == Some("zodiac-zero-top")
                     {
                         WheelOrientation::ZodiacZeroTop
@@ -704,14 +867,26 @@ mod browser {
                         WheelOrientation::AscendantLeft
                     },
                     palette: match select_value(palette).as_deref() {
-                        Some("paper-light") => WheelPalette::PaperLight,
-                        Some("high-contrast") => WheelPalette::HighContrast,
-                        _ => WheelPalette::StudioDark,
+                        Some("studio-dark") => {
+                            WheelPaletteSelection::Explicit(WheelPalette::StudioDark)
+                        }
+                        Some("paper-light") => {
+                            WheelPaletteSelection::Explicit(WheelPalette::PaperLight)
+                        }
+                        Some("high-contrast") => {
+                            WheelPaletteSelection::Explicit(WheelPalette::HighContrast)
+                        }
+                        _ => WheelPaletteSelection::Auto,
                     },
                     label_density: if select_value(density).as_deref() == Some("compact") {
                         LabelDensity::Compact
                     } else {
                         LabelDensity::Full
+                    },
+                    layout: match select_value(layout).as_deref() {
+                        Some("compact") => WheelLayout::Compact,
+                        Some("data-forward") => WheelLayout::DataForward,
+                        _ => WheelLayout::Balanced,
                     },
                 })
             })();
@@ -726,13 +901,16 @@ mod browser {
         };
         view! {
             <section class="settings-panel">
-                <div><p class="eyebrow">"Global, unencrypted"</p><h2>"Wheel templates"</h2><p>"Templates contain visual choices only—never chart identities, dates, points, or aspects."</p></div>
+                <div><p class="eyebrow">"Global, unencrypted"</p><h2>"Wheel templates"</h2><p>"Templates contain visual choices only—never chart identities, dates, points, aspects, or calculation artifacts. Oracle's five built-ins are protected; duplicate one to customize it."</p></div>
                 <form class="settings-form" on:submit=move |event: SubmitEvent| { event.prevent_default(); save(false); }>
-                    <label><span>"Name"</span><input node_ref=name required prop:value=move || model.wheel_templates.get().selected().name.clone() /></label>
-                    <label><span>"Orientation"</span><select node_ref=orientation><option value="ascendant-left" prop:selected=move || model.wheel_templates.get().selected().orientation == WheelOrientation::AscendantLeft>"Ascendant Left"</option><option value="zodiac-zero-top" prop:selected=move || model.wheel_templates.get().selected().orientation == WheelOrientation::ZodiacZeroTop>"Zodiac Zero Top"</option></select></label>
-                    <label><span>"Palette"</span><select node_ref=palette><option value="studio-dark" prop:selected=move || model.wheel_templates.get().selected().palette == WheelPalette::StudioDark>"Studio Dark"</option><option value="paper-light" prop:selected=move || model.wheel_templates.get().selected().palette == WheelPalette::PaperLight>"Paper Light"</option><option value="high-contrast" prop:selected=move || model.wheel_templates.get().selected().palette == WheelPalette::HighContrast>"High Contrast"</option></select></label>
-                    <label><span>"Label density"</span><select node_ref=density><option value="full" prop:selected=move || model.wheel_templates.get().selected().label_density == LabelDensity::Full>"Full"</option><option value="compact" prop:selected=move || model.wheel_templates.get().selected().label_density == LabelDensity::Compact>"Compact"</option></select></label>
-                    <div class="button-row"><button class="primary" type="submit">"Save selected"</button><button type="button" on:click=move |_| save(true)>"Save as new"</button><button class="danger" type="button" on:click=move |_| dispatch(platform, model, PlatformCommand::RemoveWheelTemplate { template_id: model.wheel_templates.get_untracked().last_selected_template_id })>"Remove"</button></div>
+                    <p class="template-protection" role="status">{move || if model.wheel_templates.get().selected().is_protected() { "Protected Oracle template · duplicate to edit" } else { "Custom template · editable" }}</p>
+                    <label><span>"Name"</span><input node_ref=name required disabled=move || model.wheel_templates.get().selected().is_protected() prop:value=move || model.wheel_templates.get().selected().name.clone() /></label>
+                    <label><span>"Wheel mode"</span><select node_ref=mode disabled=move || model.wheel_templates.get().selected().is_protected()><option value="biwheel" prop:selected=move || model.wheel_templates.get().selected().mode == WheelMode::Biwheel>"Biwheel"</option><option value="single" prop:selected=move || model.wheel_templates.get().selected().mode == WheelMode::Single>"Single · Chart 1"</option></select></label>
+                    <label><span>"Orientation"</span><select node_ref=orientation disabled=move || model.wheel_templates.get().selected().is_protected()><option value="ascendant-left" prop:selected=move || model.wheel_templates.get().selected().orientation == WheelOrientation::AscendantLeft>"Ascendant Left"</option><option value="zodiac-zero-top" prop:selected=move || model.wheel_templates.get().selected().orientation == WheelOrientation::ZodiacZeroTop>"Zodiac Zero Top"</option></select></label>
+                    <label><span>"Palette"</span><select node_ref=palette disabled=move || model.wheel_templates.get().selected().is_protected()><option value="auto" prop:selected=move || model.wheel_templates.get().selected().palette == WheelPaletteSelection::Auto>"Automatic for theme"</option><option value="studio-dark" prop:selected=move || model.wheel_templates.get().selected().palette == WheelPaletteSelection::Explicit(WheelPalette::StudioDark)>"Studio Dark"</option><option value="paper-light" prop:selected=move || model.wheel_templates.get().selected().palette == WheelPaletteSelection::Explicit(WheelPalette::PaperLight)>"Paper Light"</option><option value="high-contrast" prop:selected=move || model.wheel_templates.get().selected().palette == WheelPaletteSelection::Explicit(WheelPalette::HighContrast)>"High Contrast"</option></select></label>
+                    <label><span>"Label density"</span><select node_ref=density disabled=move || model.wheel_templates.get().selected().is_protected()><option value="full" prop:selected=move || model.wheel_templates.get().selected().label_density == LabelDensity::Full>"Full"</option><option value="compact" prop:selected=move || model.wheel_templates.get().selected().label_density == LabelDensity::Compact>"Compact"</option></select></label>
+                    <label><span>"Layout emphasis"</span><select node_ref=layout disabled=move || model.wheel_templates.get().selected().is_protected()><option value="balanced" prop:selected=move || model.wheel_templates.get().selected().layout == WheelLayout::Balanced>"Balanced"</option><option value="compact" prop:selected=move || model.wheel_templates.get().selected().layout == WheelLayout::Compact>"Compact"</option><option value="data-forward" prop:selected=move || model.wheel_templates.get().selected().layout == WheelLayout::DataForward>"Data-forward"</option></select></label>
+                    <div class="button-row"><button class="primary" type="submit" disabled=move || model.wheel_templates.get().selected().is_protected()>"Save selected"</button><button type="button" on:click=move |_| save(true)>"Duplicate as new"</button><button class="danger" type="button" disabled=move || model.wheel_templates.get().selected().is_protected() on:click=move |_| dispatch(platform, model, PlatformCommand::RemoveWheelTemplate { template_id: model.wheel_templates.get_untracked().last_selected_template_id })>"Remove"</button></div>
                 </form>
             </section>
         }
