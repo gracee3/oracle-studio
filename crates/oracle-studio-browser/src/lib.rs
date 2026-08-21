@@ -16,7 +16,8 @@ use oracle_studio_platform::{
     ActiveWorkspace, CapabilityStatus, ChartSummary, EntitySummary, EphemerisStatus,
     PlatformCommand, PlatformError, PlatformErrorCode, PlatformResponse, PreviewCommitOutcome,
     PreviewGeneration, PreviewSaveMode, VaultLockState, VaultSummary, WheelTemplateSettings,
-    WorkbenchChartSummary, WorkbenchPresentation, WorkbenchPreviewSource, WorkspaceSummary,
+    WheelTemplateSettingsV1, WorkbenchChartSummary, WorkbenchPresentation, WorkbenchPreviewSource,
+    WorkspaceSummary,
 };
 use oracle_studio_vault::{UnlockedVault, create, inspect, open, revision};
 use serde::{Deserialize, Serialize};
@@ -600,6 +601,12 @@ impl BrowserStudioEngine {
             }
             PlatformCommand::SaveWheelTemplate { template } => {
                 template.validate()?;
+                if template.is_protected() {
+                    return Err(error(
+                        PlatformErrorCode::InvalidInput,
+                        "protected Oracle wheel templates are immutable; duplicate one to customize it",
+                    ));
+                }
                 if let Some(existing) = self
                     .wheel_templates
                     .templates
@@ -635,6 +642,17 @@ impl BrowserStudioEngine {
                 ))
             }
             PlatformCommand::RemoveWheelTemplate { template_id } => {
+                if self
+                    .wheel_templates
+                    .templates
+                    .iter()
+                    .any(|template| template.id == template_id && template.is_protected())
+                {
+                    return Err(error(
+                        PlatformErrorCode::InvalidInput,
+                        "protected Oracle wheel templates cannot be removed",
+                    ));
+                }
                 if self.wheel_templates.templates.len() == 1 {
                     return Err(error(
                         PlatformErrorCode::InvalidInput,
@@ -726,10 +744,28 @@ impl BrowserStudioEngine {
             .load_wheel_template_settings()
             .await
             .map_err(store_error)?
-            && let Ok(settings) = serde_json::from_str::<WheelTemplateSettings>(&raw)
-            && settings.validate().is_ok()
         {
-            self.wheel_templates = settings;
+            if let Ok(settings) = serde_json::from_str::<WheelTemplateSettings>(&raw)
+                && settings.validate().is_ok()
+            {
+                self.wheel_templates = settings;
+            } else if let Ok(legacy) = serde_json::from_str::<WheelTemplateSettingsV1>(&raw)
+                && let Ok(settings) = legacy.migrate()
+            {
+                let migrated = serde_json::to_string(&settings).map_err(|serialization_error| {
+                    error(
+                        PlatformErrorCode::Internal,
+                        format!(
+                            "could not serialize migrated wheel templates: {serialization_error}"
+                        ),
+                    )
+                })?;
+                self.store
+                    .save_wheel_template_settings(migrated)
+                    .await
+                    .map_err(store_error)?;
+                self.wheel_templates = settings;
+            }
         }
         self.loaded = true;
         Ok(())
@@ -1127,6 +1163,9 @@ pub mod testing {
         }
         pub fn force_wheel_template_settings(&self, settings: impl Into<String>) {
             *self.wheel_template_settings.borrow_mut() = Some(settings.into());
+        }
+        pub fn wheel_template_settings(&self) -> Option<String> {
+            self.wheel_template_settings.borrow().clone()
         }
     }
 
@@ -1887,9 +1926,13 @@ mod tests {
         let template = oracle_studio_platform::WheelTemplate {
             id: "paper-compact".into(),
             name: "Paper Compact".into(),
+            mode: oracle_studio_platform::WheelMode::Biwheel,
             orientation: oracle_studio_platform::WheelOrientation::ZodiacZeroTop,
-            palette: oracle_studio_platform::WheelPalette::PaperLight,
+            palette: oracle_studio_platform::WheelPaletteSelection::Explicit(
+                oracle_studio_platform::WheelPalette::PaperLight,
+            ),
             label_density: oracle_studio_platform::LabelDensity::Compact,
+            layout: oracle_studio_platform::WheelLayout::Compact,
         };
         run(
             &mut engine,
@@ -1910,5 +1953,67 @@ mod tests {
         };
         assert_eq!(wheel_templates.last_selected_template_id, template.id);
         assert!(wheel_templates.templates.contains(&template));
+    }
+
+    #[test]
+    fn schema_v1_wheel_templates_migrate_without_losing_custom_ids_or_selection() {
+        let store = Rc::new(MemoryStore::default());
+        store.force_wheel_template_settings(
+            r#"{"schema_version":1,"templates":[{"id":"my-paper","name":"My Paper","orientation":"zodiac-zero-top","palette":"paper-light","label_density":"compact"}],"last_selected_template_id":"my-paper"}"#,
+        );
+        let mut engine = BrowserStudioEngine::new(store.clone());
+        let response = run(&mut engine, PlatformCommand::Initialize, 0.0).unwrap();
+        let PlatformResponse::Ready {
+            wheel_templates, ..
+        } = response
+        else {
+            panic!("ready response")
+        };
+        assert_eq!(wheel_templates.schema_version, 2);
+        assert_eq!(wheel_templates.last_selected_template_id, "my-paper");
+        let migrated = wheel_templates
+            .templates
+            .iter()
+            .find(|template| template.id == "my-paper")
+            .unwrap();
+        assert_eq!(migrated.mode, oracle_studio_platform::WheelMode::Biwheel);
+        assert_eq!(
+            migrated.palette,
+            oracle_studio_platform::WheelPaletteSelection::Explicit(
+                oracle_studio_platform::WheelPalette::PaperLight
+            )
+        );
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&store.wheel_template_settings().unwrap())
+                .unwrap()["schema_version"],
+            2
+        );
+    }
+
+    #[test]
+    fn protected_wheel_templates_are_selectable_but_not_mutable_or_removable() {
+        let store = Rc::new(MemoryStore::default());
+        let mut engine = BrowserStudioEngine::new(store);
+        run(&mut engine, PlatformCommand::Initialize, 0.0).unwrap();
+        let protected = engine.wheel_templates.templates[0].clone();
+        assert!(protected.is_protected());
+        let save_error = run(
+            &mut engine,
+            PlatformCommand::SaveWheelTemplate {
+                template: protected.clone(),
+            },
+            1.0,
+        )
+        .unwrap_err();
+        assert_eq!(save_error.code, PlatformErrorCode::InvalidInput);
+        let remove_error = run(
+            &mut engine,
+            PlatformCommand::RemoveWheelTemplate {
+                template_id: protected.id,
+            },
+            2.0,
+        )
+        .unwrap_err();
+        assert_eq!(remove_error.code, PlatformErrorCode::InvalidInput);
     }
 }

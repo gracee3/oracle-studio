@@ -77,6 +77,44 @@ pub enum WheelPalette {
     HighContrast,
 }
 
+/// Presentation mode for a chart wheel. This never changes chart calculations.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum WheelMode {
+    Single,
+    #[default]
+    Biwheel,
+}
+
+impl WheelMode {
+    const fn data_value(self) -> &'static str {
+        match self {
+            Self::Single => "single",
+            Self::Biwheel => "biwheel",
+        }
+    }
+}
+
+/// Visual spacing and emphasis metadata used by the general renderer.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum WheelLayout {
+    #[default]
+    Balanced,
+    Compact,
+    DataForward,
+}
+
+impl WheelLayout {
+    const fn data_value(self) -> &'static str {
+        match self {
+            Self::Balanced => "balanced",
+            Self::Compact => "compact",
+            Self::DataForward => "data-forward",
+        }
+    }
+}
+
 impl WheelPalette {
     const fn data_value(self) -> &'static str {
         match self {
@@ -111,6 +149,25 @@ pub struct RenderOptions {
     pub label_density: LabelDensity,
     pub selected_points: Vec<String>,
     pub selected_aspects: Vec<String>,
+}
+
+/// Additive general-renderer options. The retained [`RenderOptions`] and
+/// [`render_biwheel_svg`] signature and biwheel behavior remain compatible.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChartRenderOptions {
+    pub mode: WheelMode,
+    pub layout: WheelLayout,
+    pub wheel: RenderOptions,
+}
+
+impl Default for ChartRenderOptions {
+    fn default() -> Self {
+        Self {
+            mode: WheelMode::Biwheel,
+            layout: WheelLayout::Balanced,
+            wheel: RenderOptions::default(),
+        }
+    }
 }
 
 impl Default for RenderOptions {
@@ -216,6 +273,84 @@ pub fn render_biwheel_svg(scene: &ChartScene, options: &RenderOptions) -> String
     );
     svg.push_str("</svg>");
     svg
+}
+
+/// Render the first/chart-1 layer as a deterministic single wheel.
+///
+/// A single-wheel template deliberately presents the fixed inner chart from a
+/// comparison scene. It does not recalculate, reinterpret, or persist data.
+pub fn render_single_wheel_svg(scene: &ChartScene, options: &RenderOptions) -> String {
+    let mut svg = String::with_capacity(36_000);
+    let _ = write!(
+        svg,
+        "<svg id=\"oracle-single-wheel\" class=\"wheel-palette--{}{}\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {SIZE:.0} {SIZE:.0}\" role=\"img\" aria-labelledby=\"chart-title chart-description\" data-orientation=\"{}\" data-palette=\"{}\" data-label-density=\"{}\" data-ascendant=\"{:.12}\" data-center=\"{CENTER:.3}\" data-outer-radius=\"{OUTER_RADIUS:.3}\" data-aspect-radius=\"{ASPECT_RADIUS:.3}\" data-natal-inner-radius=\"{NATAL_INNER_RADIUS:.3}\" data-natal-position-radius=\"{NATAL_POSITION_RADIUS:.3}\" data-natal-glyph-radius=\"{NATAL_GLYPH_RADIUS:.3}\" data-cusp-inner-radius=\"{CUSP_INNER_RADIUS:.3}\" data-cusp-label-radius=\"{CUSP_LABEL_RADIUS:.3}\" data-label-padding=\"{LABEL_PADDING:.3}\">",
+        options.palette.data_value(),
+        if options.selected_points.is_empty() {
+            ""
+        } else {
+            " has-selection"
+        },
+        options.orientation,
+        options.palette.data_value(),
+        options.label_density.data_value(),
+        scene.natal.ascendant_degrees,
+    );
+    svg.push_str("<title id=\"chart-title\">Single chart wheel</title><desc id=\"chart-description\">Chart 1 points and house cusps from the current comparison presentation.</desc>");
+    render_font_and_style(&mut svg);
+    let _ = write!(
+        svg,
+        "<circle class=\"wheel-background\" cx=\"{CENTER}\" cy=\"{CENTER}\" r=\"{OUTER_RADIUS}\"/>"
+    );
+    let lane_width = OUTER_RADIUS * 0.42;
+    let lane_radius = OUTER_RADIUS * 0.70;
+    let _ = write!(
+        svg,
+        "<g id=\"lane-backgrounds\" aria-hidden=\"true\"><circle class=\"lane-background lane-background--natal\" cx=\"{CENTER:.3}\" cy=\"{CENTER:.3}\" r=\"{lane_radius:.3}\" stroke-width=\"{lane_width:.3}\"/></g>"
+    );
+    render_houses(&mut svg, scene, options.orientation);
+    render_point_layer(
+        &mut svg,
+        "natal",
+        &scene.natal.points,
+        PointGeometry {
+            inner_radius: NATAL_INNER_RADIUS,
+            position_radius: OUTER_RADIUS * 0.69,
+            glyph_radius: OUTER_RADIUS * 0.81,
+        },
+        scene.natal.ascendant_degrees,
+        options.orientation,
+        scene,
+        options,
+    );
+    svg.push_str("</svg>");
+    svg
+}
+
+/// Dispatch to the requested presentation-only wheel mode and attach layout
+/// metadata used by the coordinated wheel stylesheet.
+pub fn render_chart_svg(scene: &ChartScene, options: &ChartRenderOptions) -> String {
+    let svg = match options.mode {
+        WheelMode::Single => render_single_wheel_svg(scene, &options.wheel),
+        WheelMode::Biwheel => render_biwheel_svg(scene, &options.wheel),
+    };
+    decorate_general_svg(svg, options.mode, options.layout)
+}
+
+fn decorate_general_svg(mut svg: String, mode: WheelMode, layout: WheelLayout) -> String {
+    let root_metadata = format!(
+        "<svg data-wheel-mode=\"{}\" data-wheel-layout=\"{}\"",
+        mode.data_value(),
+        layout.data_value()
+    );
+    svg = svg.replacen("<svg", &root_metadata, 1);
+    svg.replacen(
+        "class=\"wheel-palette--",
+        &format!(
+            "class=\"wheel-layout--{} wheel-palette--",
+            layout.data_value()
+        ),
+        1,
+    )
 }
 
 fn render_font_and_style(svg: &mut String) {
