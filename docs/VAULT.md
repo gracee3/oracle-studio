@@ -33,6 +33,16 @@ decrypted in-memory document and encrypted stored bytes unchanged.
 Exports contain the exact `.oracle-vault` bytes. Removing an IndexedDB record
 does not claim physical erasure from browser storage, backups, or device media.
 
+## Demo envelope boundary
+
+The native-only `oracle-studio-demo` builder enables a narrowly feature-gated
+vault constructor so every generated demo envelope carries one reviewed public
+UUID. That constructor is absent from ordinary vault and production browser
+builds. Stable public identity does not make encryption deterministic: each
+generation still uses a fresh Argon2 salt, wrapping nonce, document nonce, and
+random data key. The repository tracks only deterministic fictional plaintext
+hashes and calculation content IDs, never an encrypted demo envelope.
+
 ## Threat model
 
 The envelope protects confidentiality and detects modification when an attacker

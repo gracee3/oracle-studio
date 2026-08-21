@@ -188,6 +188,12 @@ body:not(:has(.route:target)) #workbench { display: grid; }
 .file-warning, .file-toolbar { display: flex; align-items: center; gap: .8rem; margin-bottom: 1rem; padding: .85rem 1rem; border: 1px solid var(--line); border-radius: .6rem; background: #1b1522; }
 .file-warning { border-left: 3px solid var(--gold); color: var(--muted); }
 .file-warning strong { color: var(--ink); white-space: nowrap; }
+.demo-controls { display: flex; align-items: center; justify-content: space-between; gap: 1.5rem; margin-bottom: 1rem; padding: 1rem; border: 1px solid var(--line); border-left: 3px solid var(--violet); border-radius: .6rem; background: #1b1522; }
+.demo-controls h2 { margin: .1rem 0 .35rem; font-family: Georgia, serif; font-size: 1.35rem; font-weight: 500; }
+.demo-controls p { max-width: 52rem; color: var(--muted); line-height: 1.45; }
+.demo-password { display: flex; align-items: baseline; gap: .65rem; margin-top: .55rem; }
+.demo-password strong { color: var(--ink); }
+.demo-password code { color: var(--gold); font-size: .95rem; }
 .file-toolbar { flex-wrap: wrap; }
 .file-action { position: relative; overflow: hidden; }
 .file-action input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
@@ -275,6 +281,7 @@ body:not(:has(.route:target)) #workbench { display: grid; }
   .route-heading { align-items: start; }
   .route-heading h1 { font-size: 2.2rem; }
   .file-warning { align-items: flex-start; flex-direction: column; }
+  .demo-controls { align-items: flex-start; flex-direction: column; }
 }
 
 @media (max-width: 480px) {

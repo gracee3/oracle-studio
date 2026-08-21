@@ -84,3 +84,4 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: scripts/browser-acceptance.sh
+      - run: scripts/demo-acceptance.sh

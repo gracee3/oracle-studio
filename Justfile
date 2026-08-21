@@ -73,3 +73,36 @@ astraeus-swiss-setup data_dir=astraeus_swiss_ephemeris_path:
 # Print the export needed to configure the current shell.
 astraeus-swiss-env data_dir=astraeus_swiss_ephemeris_path:
     @printf 'export ASTRAEUS_SWISS_EPHEMERIS_PATH=%q\n' "{{ data_dir }}"
+
+# Generate the fictional demo plaintext, manifest, and a fresh encrypted envelope.
+demo-generate:
+    cargo run --locked --quiet -p oracle-studio-demo -- generate var/demo/generated
+
+# Verify deterministic plaintext/content IDs and fresh encrypted outputs.
+demo-verify:
+    cargo run --locked --quiet -p oracle-studio-demo -- verify fixtures/demo/oracle-studio-demo.lock.json
+
+# Build the opt-in demo site. Ordinary Trunk and Docker builds remain demo-free.
+demo-build: demo-generate
+    #!/usr/bin/env bash
+    set -euo pipefail
+    readonly repository="$(pwd)"
+    (
+        cd crates/oracle-studio-ui
+        env -u NO_COLOR trunk build demo.html --release --locked=true --dist "$repository/var/demo/site"
+    )
+    install -d var/demo/site/demo
+    install -m 0644 \
+        var/demo/generated/oracle-studio-demo.oracle-vault \
+        var/demo/site/demo/oracle-studio-demo.oracle-vault
+    python3 scripts/csp-hashes.py var/demo/site/index.html var/demo/site/oracle-csp.conf
+
+# Serve the generated demo on the loopback interface for local review.
+demo-serve: demo-build
+    python3 -m http.server --bind 127.0.0.1 --directory var/demo/site 8080
+
+# Run canonical builder checks plus the isolated demo browser acceptance.
+demo-test:
+    cargo test -p oracle-studio-demo --locked
+    just demo-verify
+    scripts/demo-acceptance.sh

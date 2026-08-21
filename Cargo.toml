@@ -18,6 +18,7 @@ members = [
     "crates/oracle-studio-chart-player",
     "crates/oracle-studio-chart-view",
     "crates/oracle-studio-core",
+    "crates/oracle-studio-demo",
     "crates/oracle-studio-location-catalog",
     "crates/oracle-studio-platform",
     "crates/oracle-studio-ui",

@@ -1,0 +1,36 @@
+[package]
+name = "oracle-studio-demo"
+version = "0.1.0"
+description = "Deterministic fictional demo workspace builder for Oracle Studio"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "oracle-studio-demo"
+path = "src/main.rs"
+required-features = ["builder"]
+
+[features]
+default = ["builder"]
+builder = [
+    "dep:astraeus-moshier",
+    "dep:oracle-studio-app",
+    "dep:oracle-studio-core",
+    "dep:oracle-studio-vault",
+    "dep:serde",
+    "dep:serde_json",
+    "dep:sha2",
+    "dep:thiserror",
+]
+
+[dependencies]
+astraeus-moshier = { workspace = true, optional = true }
+oracle-studio-app = { version = "0.1.0", path = "../oracle-studio-app", optional = true }
+oracle-studio-core = { version = "0.1.0", path = "../oracle-studio-core", optional = true }
+oracle-studio-vault = { version = "0.1.0", path = "../oracle-studio-vault", optional = true, features = ["demo-builder"] }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
+thiserror = { workspace = true, optional = true }

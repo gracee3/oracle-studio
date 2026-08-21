@@ -66,6 +66,7 @@ trunk build --release --locked=true
 Ordinary Trunk builds contain no GeoNames bytes and offer local upload/manual
 entry. The Docker build fetches the three official GeoNames inputs, verifies the
 hashes in `catalog/geonames.lock`, and publishes them on the same static origin.
+Ordinary Trunk and Docker builds also contain no demo loader or demo vault.
 
 ```bash
 docker build -t oracle-studio:browser-local .
@@ -79,6 +80,23 @@ Non-loopback deployments require HTTPS outside the container.
 
 Portable exports are the backup boundary. Browser eviction or profile deletion
 can remove IndexedDB even after persistent storage is granted.
+
+## Fictional demo build
+
+The opt-in demo build creates a fresh encrypted envelope around a deterministic,
+fictional workspace. Its public, non-secret password is `oracle-demo`; never use
+that password for a real vault.
+
+```bash
+just demo-verify
+just demo-build
+just demo-serve
+```
+
+`demo-generate`, `demo-verify`, `demo-build`, `demo-serve`, and `demo-test` keep
+all generated plaintext, manifests, encrypted envelopes, and static output under
+ignored `var/demo`. No stable encrypted vault is committed. See
+[the demo contract](docs/DEMO.md).
 
 See [architecture](docs/STUDIO_ARCHITECTURE.md),
 [schema v4](docs/COMPOSITION_MODEL.md), [envelope v2](docs/VAULT.md), and the

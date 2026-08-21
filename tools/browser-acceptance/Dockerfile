@@ -69,6 +69,7 @@ RUN apt-get update \
 
 COPY --from=browser-download /opt/chrome-for-testing /opt/chrome-for-testing
 COPY acceptance.py /opt/oracle-studio/acceptance.py
+COPY demo_acceptance.py /opt/oracle-studio/demo_acceptance.py
 
 ENV CHROME_BIN=/opt/chrome-for-testing/chrome-linux64/chrome \
     CHROMEDRIVER_BIN=/opt/chrome-for-testing/chromedriver-linux64/chromedriver \

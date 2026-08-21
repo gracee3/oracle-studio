@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <meta name="theme-color" content="#121019">
+    <meta name="description" content="Oracle Studio fictional local demo workspace">
+    <title>Oracle Studio Demo</title>
+    <link data-trunk rel="css" href="style.css">
+    <link data-trunk rel="rust" href="../oracle-studio-worker/Cargo.toml" data-bin="oracle-studio-worker" data-type="worker" data-loader-shim data-bindgen-target="no-modules" data-wasm-opt="z">
+    <link data-trunk rel="rust" data-bin="oracle-studio-ui" data-cargo-no-default-features data-cargo-features="csr,demo" data-wasm-opt="z">
+  </head>
+  <body></body>
+</html>
