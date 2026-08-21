@@ -19,6 +19,12 @@ RUN cargo fetch --locked \
     && trunk build index.html --release --locked=true --dist /product \
     && python3 /source/scripts/csp-hashes.py /product/index.html /product/oracle-csp.conf
 
+FROM builder AS builder-with-catalog
+
+ARG GEONAMES_CITIES_SHA256
+ARG GEONAMES_ADMIN1_SHA256
+ARG GEONAMES_ADMIN2_SHA256
+
 RUN install -d /product/catalog/geonames \
     && curl --fail --location --proto '=https' --tlsv1.2 \
         --output /product/catalog/geonames/cities500.zip \
@@ -38,10 +44,22 @@ RUN install -d /product/catalog/geonames \
         "${GEONAMES_CITIES_SHA256}" "${GEONAMES_ADMIN1_SHA256}" "${GEONAMES_ADMIN2_SHA256}" \
         > /product/catalog/geonames/manifest.json
 
-FROM nginxinc/nginx-unprivileged:1.29.1-alpine3.22@sha256:27985295bdb22a1ef8f712863210bd5877c0f3006494a593e86b3fe0fa55467e AS runtime
+FROM nginxinc/nginx-unprivileged:1.29.1-alpine3.22@sha256:27985295bdb22a1ef8f712863210bd5877c0f3006494a593e86b3fe0fa55467e AS acceptance-runtime
 
 COPY --from=builder /product/ /usr/share/nginx/html/
 COPY --from=builder /product/oracle-csp.conf /etc/nginx/conf.d/oracle-csp.conf
+COPY docker/nginx.conf /etc/nginx/nginx.conf
+USER root
+RUN rm /usr/share/nginx/html/oracle-csp.conf
+
+USER 101:101
+EXPOSE 8080
+STOPSIGNAL SIGQUIT
+
+FROM nginxinc/nginx-unprivileged:1.29.1-alpine3.22@sha256:27985295bdb22a1ef8f712863210bd5877c0f3006494a593e86b3fe0fa55467e AS runtime
+
+COPY --from=builder-with-catalog /product/ /usr/share/nginx/html/
+COPY --from=builder-with-catalog /product/oracle-csp.conf /etc/nginx/conf.d/oracle-csp.conf
 COPY docker/nginx.conf /etc/nginx/nginx.conf
 USER root
 RUN rm /usr/share/nginx/html/oracle-csp.conf

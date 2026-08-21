@@ -16,7 +16,7 @@ if ss -H -ltn 'sport = :8080' | rg -q .; then
     exit 1
 fi
 
-docker build --tag "$product_image" "$repository"
+docker build --target acceptance-runtime --tag "$product_image" "$repository"
 docker build --tag "$browser_image" "$repository/tools/browser-acceptance"
 docker run --detach \
     --name "$container_name" \

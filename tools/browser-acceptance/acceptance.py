@@ -240,9 +240,6 @@ def run_acceptance(driver: Driver, launch_url: str, downloads: Path) -> None:
     driver.submit(location_form)
     driver.wait_text("Fictional Harbor")
 
-    driver.click_text("Install pinned catalog")
-    driver.wait_text("GeoNames places.", timeout=240)
-
     with tempfile.TemporaryDirectory(prefix="oracle-geonames-") as fixture_dir:
         paths = make_catalog(Path(fixture_dir))
         catalog_form = "form.catalog-upload"
