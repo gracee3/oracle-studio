@@ -32,6 +32,7 @@ web-sys = { workspace = true, features = [
     "BeforeUnloadEvent",
     "Blob",
     "Document",
+    "DomRect",
     "Element",
     "Event",
     "EventTarget",
@@ -45,6 +46,8 @@ web-sys = { workspace = true, features = [
     "KeyboardEvent",
     "MouseEvent",
     "PointerEvent",
+    "Storage",
     "Url",
+    "WheelEvent",
     "Window",
 ] }

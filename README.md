@@ -31,6 +31,12 @@ and the full-history import is recorded in [the migration record](docs/astraeus/
 - Use a full-viewport, hash-addressable Workbench, Settings, and Files shell;
   sidebars and route content scroll independently while the chart wheel remains
   the dominant surface.
+- Collapse the desktop Charts and Controls sidebars independently into narrow
+  rails with global `oracle-studio.layout.v1` preferences; tablet and mobile
+  layouts retain their existing drawers.
+- Zoom the chart from 75% to 300% with visible controls, focused-stage keyboard
+  shortcuts, or pointer-relative Alt/Option-wheel input. Ctrl-wheel remains
+  available to the browser for page zoom.
 - Preview the fixed inner chart against a moving outer chart with exact civil-
   time and elapsed-time controls, then use Files to confirm an identity-
   preserving update or save the preview under a unique new chart name.
