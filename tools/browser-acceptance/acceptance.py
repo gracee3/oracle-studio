@@ -220,6 +220,38 @@ def run_acceptance(driver: Driver, launch_url: str, downloads: Path) -> None:
         raise RuntimeError(f"application did not use the stable token-free origin: {current}")
     print("PASS launch: open static application loaded without authentication")
 
+    initial_theme = driver.execute(
+        "return {theme: document.documentElement.dataset.theme, surface: getComputedStyle(document.documentElement).getPropertyValue('--surface').trim()}"
+    )
+    if initial_theme["theme"] not in ("light", "dark") or not initial_theme["surface"]:
+        raise RuntimeError(f"prepaint theme bootstrap did not resolve a complete theme: {initial_theme}")
+    driver.click(driver.element(".theme-toggle"))
+    toggled_theme = driver.execute(
+        "return {theme: document.documentElement.dataset.theme, saved: localStorage.getItem('oracle-studio.theme.v1'), surface: getComputedStyle(document.documentElement).getPropertyValue('--surface').trim()}"
+    )
+    if (
+        toggled_theme["theme"] == initial_theme["theme"]
+        or toggled_theme["saved"] != toggled_theme["theme"]
+        or toggled_theme["surface"] == initial_theme["surface"]
+    ):
+        raise RuntimeError(
+            f"theme toggle did not change and persist the semantic scheme: {initial_theme} -> {toggled_theme}"
+        )
+    driver.execute("location.reload()")
+    driver.wait_text("Browser-local studio ready.")
+    persisted_theme = driver.execute("return document.documentElement.dataset.theme")
+    if persisted_theme != toggled_theme["theme"]:
+        raise RuntimeError(f"prepaint bootstrap did not restore {toggled_theme['theme']}: {persisted_theme}")
+    driver.click_text("Settings", "a")
+    driver.wait_text("LOCAL APPEARANCE")
+    driver.click_text("Reset to system")
+    reset_theme = driver.execute(
+        "return {theme: document.documentElement.dataset.theme, saved: localStorage.getItem('oracle-studio.theme.v1')}"
+    )
+    if reset_theme["theme"] not in ("light", "dark") or reset_theme["saved"] is not None:
+        raise RuntimeError(f"system theme reset did not remove the explicit preference: {reset_theme}")
+    print("PASS themes: prepaint selection, semantic toggle, persistence, and system reset succeed")
+
     driver.click_text("Files", "a")
     driver.wait_text("Exports are your backups.")
     if driver.elements(".demo-controls") or "oracle-demo" in driver.body():
@@ -261,7 +293,9 @@ def run_acceptance(driver: Driver, launch_url: str, downloads: Path) -> None:
             driver.set_file(driver.control(catalog_form, label), path)
         driver.click_text("Install local catalog")
         driver.wait_text("Installed 1 GeoNames places.")
-        driver.set_value(driver.element("form.inline-search input"), "sao jose")
+        driver.set_value(
+            driver.element(".catalog-controls form.inline-search input"), "sao jose"
+        )
         driver.click_text("Search locally")
         driver.wait_text("São José")
     print("PASS locations: manual fallback and uploaded Unicode GeoNames search run in the worker")
@@ -287,6 +321,99 @@ def run_acceptance(driver: Driver, launch_url: str, downloads: Path) -> None:
         "Moshier workbench wheel",
         timeout=120,
     )
+    template_names = driver.execute(
+        "return [...document.querySelectorAll('.template-list strong')].map(item => item.textContent.trim())"
+    )
+    expected_templates = [
+        "Studio Biwheel",
+        "Compact Biwheel",
+        "High Contrast Biwheel",
+        "Classic Single",
+        "Data-forward Single",
+    ]
+    if template_names[:5] != expected_templates:
+        raise RuntimeError(f"protected wheel templates are incomplete or reordered: {template_names}")
+    driver.request("POST", driver.path("/window/rect"), {"width": 1440, "height": 900, "x": 0, "y": 0})
+    desktop_rect = driver.request("GET", driver.path("/window/rect"))
+    studio_metrics = driver.execute(
+        "const svg=document.querySelector('#oracle-transit-biwheel'); return {mode:svg?.dataset.wheelMode, layout:svg?.dataset.wheelLayout, overflow:document.documentElement.scrollWidth>document.documentElement.clientWidth}"
+    )
+    if studio_metrics != {
+        "mode": "biwheel",
+        "layout": "balanced",
+        "overflow": False,
+    } or desktop_rect["width"] != 1440 or desktop_rect["height"] != 900:
+        raise RuntimeError(f"Studio Biwheel desktop presentation is invalid: {studio_metrics}")
+
+    classic = driver.element("//button[.//strong[normalize-space()='Classic Single']]", "xpath")
+    driver.click(classic)
+    driver.request("POST", driver.path("/window/rect"), {"width": 768, "height": 1024, "x": 0, "y": 0})
+    driver.wait(
+        lambda: driver.execute(
+            "const svg=document.querySelector('#oracle-single-wheel'); return svg?.dataset.wheelMode==='single' && svg?.dataset.wheelLayout==='balanced' && !svg.querySelector('#transit-layer')"
+        ),
+        "Classic Single tablet presentation",
+    )
+    if driver.execute("return document.documentElement.scrollWidth > document.documentElement.clientWidth"):
+        raise RuntimeError("Classic Single has horizontal overflow at 768x1024")
+
+    driver.request("POST", driver.path("/window/rect"), {"width": 1440, "height": 900, "x": 0, "y": 0})
+    data_forward = driver.element(
+        "//button[.//strong[normalize-space()='Data-forward Single']]", "xpath"
+    )
+    driver.click(data_forward)
+    driver.request("POST", driver.path("/window/rect"), {"width": 390, "height": 844, "x": 0, "y": 0})
+    driver.wait(
+        lambda: driver.execute(
+            "const svg=document.querySelector('#oracle-single-wheel'); return svg?.dataset.wheelLayout==='data-forward' && svg.classList.contains('wheel-layout--data-forward')"
+        ),
+        "Data-forward Single mobile presentation",
+    )
+    if driver.execute("return document.documentElement.scrollWidth > document.documentElement.clientWidth"):
+        raise RuntimeError("Data-forward Single has horizontal overflow at 390x844")
+
+    driver.request("POST", driver.path("/window/rect"), {"width": 1440, "height": 900, "x": 0, "y": 0})
+    before_auto_palette = driver.execute(
+        "const svg=document.querySelector('#oracle-single-wheel'); return {theme:document.documentElement.dataset.theme,palette:svg?.dataset.palette}"
+    )
+    driver.click(driver.element(".theme-toggle"))
+    driver.wait(
+        lambda: driver.execute(
+            "return document.querySelector('#oracle-single-wheel')?.dataset.palette !== arguments[0]",
+            [before_auto_palette["palette"]],
+        ),
+        "theme-aware automatic wheel palette",
+    )
+    after_auto_palette = driver.execute(
+        "const svg=document.querySelector('#oracle-single-wheel'); return {theme:document.documentElement.dataset.theme,palette:svg?.dataset.palette}"
+    )
+    expected_auto = {"dark": "studio-dark", "light": "paper-light"}
+    if (
+        before_auto_palette["palette"] != expected_auto[before_auto_palette["theme"]]
+        or after_auto_palette["palette"] != expected_auto[after_auto_palette["theme"]]
+    ):
+        raise RuntimeError(
+            f"automatic chart palette did not follow both themes: {before_auto_palette} -> {after_auto_palette}"
+        )
+    high_contrast = driver.element(
+        "//button[.//strong[normalize-space()='High Contrast Biwheel']]", "xpath"
+    )
+    driver.click(high_contrast)
+    driver.wait(
+        lambda: driver.execute(
+            "return document.querySelector('#oracle-transit-biwheel')?.dataset.palette==='high-contrast'"
+        ),
+        "High Contrast Biwheel",
+    )
+    studio = driver.element("//button[.//strong[normalize-space()='Studio Biwheel']]", "xpath")
+    driver.click(studio)
+    driver.wait(
+        lambda: driver.execute(
+            "return document.querySelector('#oracle-transit-biwheel')?.dataset.wheelLayout==='balanced'"
+        ),
+        "restored Studio Biwheel",
+    )
+    print("PASS presentation: protected single/bi-wheel templates, theme palettes, and 390/768/1440 layouts succeed")
     controller = driver.execute(
         """
         return [...document.querySelectorAll('.time-column')].map(column =>
@@ -736,7 +863,7 @@ def main() -> int:
                                     "--metrics-recording-only", "--no-first-run", "--no-default-browser-check",
                                     "--password-store=basic", "--use-mock-keychain",
                                     "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1",
-                                    "--window-size=1440,1200", f"--user-data-dir={profile}",
+                                    "--window-size=1440,900", f"--user-data-dir={profile}",
                                 ],
                             },
                         }

@@ -11,6 +11,10 @@ geonames_candidate_lock := "var/geonames/geonames.candidate.lock"
 default:
     @just --list
 
+# Validate the reviewed public-record catalog and fixed Moshier vectors offline.
+public-records-check:
+    cargo test -p oracle-studio-public-records --locked
+
 # Download the exact tracked GeoNames inputs into the ignored local cache.
 geonames-download source_dir=geonames_source_dir:
     python3 scripts/geonames.py download --source-dir "{{ source_dir }}"

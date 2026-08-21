@@ -3,10 +3,11 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="color-scheme" content="dark">
-    <meta name="theme-color" content="#121019">
+    <meta name="color-scheme" content="light dark">
+    <meta name="theme-color" content="#142127">
     <meta name="description" content="Oracle Studio encrypted browser-local astrology workspace">
     <title>Oracle Studio</title>
+    <script>(()=>{const key="oracle-studio.theme.v1";let saved=null;try{saved=localStorage.getItem(key)}catch(_error){}const theme=saved==="light"||saved==="dark"?saved:matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";document.documentElement.dataset.theme=theme;document.querySelector("meta[name='theme-color']").content=theme==="dark"?"#142127":"#f1e8d2"})()</script>
     <link data-trunk rel="css" href="style.css">
     <link data-trunk rel="rust" href="../oracle-studio-worker/Cargo.toml" data-bin="oracle-studio-worker" data-type="worker" data-loader-shim data-bindgen-target="no-modules" data-wasm-opt="z">
     <link data-trunk rel="rust" data-bin="oracle-studio-ui" data-cargo-no-default-features data-cargo-features="csr" data-wasm-opt="z">

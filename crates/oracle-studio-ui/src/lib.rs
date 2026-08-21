@@ -13,7 +13,9 @@ mod browser {
         html::{Input, Select, Textarea},
         prelude::*,
     };
-    use oracle_studio_chart_view::{RenderOptions, filtered_scene, render_biwheel_svg};
+    use oracle_studio_chart_view::{
+        ChartRenderOptions, RenderOptions, filtered_scene, render_chart_svg,
+    };
     use oracle_studio_core::{
         AmbiguousTimeChoice, AyanamsaId, ChartCalculationOptions, ChartDefinition, ChartRole,
         ComparisonPreset, HouseSystemId, LocalDateTimeInput, LocalTimeResolution,
@@ -27,11 +29,13 @@ mod browser {
         CatalogInstallInput, CatalogRetrieval, CatalogSearchMatch,
     };
     use oracle_studio_platform::{
-        ActiveWorkspace, CapabilityStatus, ChartSummary, LabelDensity, PlatformCommand,
-        PlatformErrorCode, PlatformResponse, PreviewCommitOutcome, PreviewGeneration,
-        PreviewSaveMode, StudioPlatform, VaultLockState, VaultSummary, WheelOrientation,
-        WheelPalette, WheelTemplate, WheelTemplateSettings, WorkbenchPresentation,
-        WorkbenchPreviewRequest, WorkspaceSummary,
+        ActiveWorkspace, AspectKind, AspectOrbValues, AspectSet, AspectSetRule, AspectSetSettings,
+        CapabilityStatus, ChartPointId, ChartSummary, LabelDensity, MAX_IMPORT_BYTES,
+        PlatformCommand, PlatformErrorCode, PlatformResponse, PreviewCommitOutcome,
+        PreviewGeneration, PreviewSaveMode, StudioPlatform, VaultLockState, VaultSummary,
+        WheelLayout, WheelMode, WheelOrientation, WheelPalette, WheelPaletteSelection,
+        WheelTemplate, WheelTemplateSettings, WorkbenchPresentation, WorkbenchPreviewRequest,
+        WorkspaceSummary,
     };
     use oracle_studio_worker::BrowserStudioPlatform;
     use wasm_bindgen::{JsCast, JsValue, closure::Closure};
@@ -70,11 +74,34 @@ mod browser {
         ("Square", "Square"),
         ("Sextile", "Sextile"),
     ];
+    const THEME_STORAGE_KEY: &str = "oracle-studio.theme.v1";
     const LAYOUT_STORAGE_KEY: &str = "oracle-studio.layout.v1";
     const ZOOM_STEPS: [u16; 24] = [
         75, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200, 210, 220, 230, 240, 250,
         260, 270, 280, 290, 300,
     ];
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum ThemePreference {
+        System,
+        Light,
+        Dark,
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum EffectiveTheme {
+        Light,
+        Dark,
+    }
+
+    impl EffectiveTheme {
+        const fn data_value(self) -> &'static str {
+            match self {
+                Self::Light => "light",
+                Self::Dark => "dark",
+            }
+        }
+    }
 
     #[derive(Clone, Copy, Default)]
     struct LayoutPreferences {
@@ -165,6 +192,9 @@ mod browser {
         workspace: RwSignal<WorkspaceSummary>,
         capabilities: RwSignal<Option<CapabilityStatus>>,
         wheel_templates: RwSignal<WheelTemplateSettings>,
+        theme_preference: RwSignal<ThemePreference>,
+        effective_theme: RwSignal<EffectiveTheme>,
+        aspect_sets: RwSignal<AspectSetSettings>,
         catalog_results: RwSignal<Vec<CatalogSearchMatch>>,
         presentation: RwSignal<Option<WorkbenchPresentation>>,
         preview_pending: RwSignal<bool>,
@@ -197,12 +227,18 @@ mod browser {
 
     impl Model {
         fn new() -> Self {
+            let theme_preference = stored_theme_preference();
+            let effective_theme =
+                document_theme().unwrap_or_else(|| resolve_theme(theme_preference));
             let layout = load_layout_preferences();
             Self {
                 vaults: RwSignal::new(Vec::new()),
                 workspace: RwSignal::new(empty_workspace()),
                 capabilities: RwSignal::new(None),
                 wheel_templates: RwSignal::new(WheelTemplateSettings::default()),
+                theme_preference: RwSignal::new(theme_preference),
+                effective_theme: RwSignal::new(effective_theme),
+                aspect_sets: RwSignal::new(AspectSetSettings::default()),
                 catalog_results: RwSignal::new(Vec::new()),
                 presentation: RwSignal::new(None),
                 preview_pending: RwSignal::new(false),
@@ -245,10 +281,100 @@ mod browser {
         }
     }
 
+    fn stored_theme_preference() -> ThemePreference {
+        let stored = web_sys::window()
+            .and_then(|window| window.local_storage().ok().flatten())
+            .and_then(|storage| storage.get_item(THEME_STORAGE_KEY).ok().flatten());
+        match stored.as_deref() {
+            Some("light") => ThemePreference::Light,
+            Some("dark") => ThemePreference::Dark,
+            _ => ThemePreference::System,
+        }
+    }
+
+    fn system_theme() -> EffectiveTheme {
+        let prefers_dark = web_sys::window()
+            .and_then(|window| {
+                window
+                    .match_media("(prefers-color-scheme: dark)")
+                    .ok()
+                    .flatten()
+            })
+            .is_some_and(|query| query.matches());
+        if prefers_dark {
+            EffectiveTheme::Dark
+        } else {
+            EffectiveTheme::Light
+        }
+    }
+
+    fn resolve_theme(preference: ThemePreference) -> EffectiveTheme {
+        match preference {
+            ThemePreference::System => system_theme(),
+            ThemePreference::Light => EffectiveTheme::Light,
+            ThemePreference::Dark => EffectiveTheme::Dark,
+        }
+    }
+
+    fn document_theme() -> Option<EffectiveTheme> {
+        let value = web_sys::window()?
+            .document()?
+            .document_element()?
+            .get_attribute("data-theme")?;
+        match value.as_str() {
+            "light" => Some(EffectiveTheme::Light),
+            "dark" => Some(EffectiveTheme::Dark),
+            _ => None,
+        }
+    }
+
+    fn apply_theme(model: Model, preference: ThemePreference) {
+        let effective = resolve_theme(preference);
+        if let Some(window) = web_sys::window() {
+            if let Ok(Some(storage)) = window.local_storage() {
+                match preference {
+                    ThemePreference::System => {
+                        let _ = storage.remove_item(THEME_STORAGE_KEY);
+                    }
+                    ThemePreference::Light => {
+                        let _ = storage.set_item(THEME_STORAGE_KEY, "light");
+                    }
+                    ThemePreference::Dark => {
+                        let _ = storage.set_item(THEME_STORAGE_KEY, "dark");
+                    }
+                }
+            }
+            if let Some(document) = window.document() {
+                if let Some(root) = document.document_element() {
+                    let _ = root.set_attribute("data-theme", effective.data_value());
+                }
+                if let Ok(Some(meta)) = document.query_selector("meta[name='theme-color']") {
+                    let color = if effective == EffectiveTheme::Dark {
+                        "#142127"
+                    } else {
+                        "#f1e8d2"
+                    };
+                    let _ = meta.set_attribute("content", color);
+                }
+            }
+        }
+        model.theme_preference.set(preference);
+        model.effective_theme.set(effective);
+    }
+
+    fn toggle_theme(model: Model) {
+        let preference = match model.effective_theme.get_untracked() {
+            EffectiveTheme::Dark => ThemePreference::Light,
+            EffectiveTheme::Light => ThemePreference::Dark,
+        };
+        apply_theme(model, preference);
+    }
+
     #[component]
     pub fn App() -> impl IntoView {
         let model = Model::new();
         let platform = StoredValue::new_local(Rc::new(BrowserStudioPlatform::spawn()));
+        apply_theme(model, model.theme_preference.get_untracked());
         install_lifecycle_guards(model);
         Effect::new(move |_| dispatch(platform, model, PlatformCommand::Initialize));
 
@@ -266,6 +392,13 @@ mod browser {
                         <a href="#files">"Files"</a>
                     </nav>
                     <div class="header-actions">
+                        <button class="theme-toggle" type="button"
+                            aria-label=move || match model.effective_theme.get() { EffectiveTheme::Dark => "Switch to light theme", EffectiveTheme::Light => "Switch to dark theme" }
+                            title=move || match model.effective_theme.get() { EffectiveTheme::Dark => "Use light theme", EffectiveTheme::Light => "Use dark theme" }
+                            on:click=move |_| toggle_theme(model)>
+                            <span aria-hidden="true">{move || match model.effective_theme.get() { EffectiveTheme::Dark => "☼", EffectiveTheme::Light => "◐" }}</span>
+                            <span class="theme-toggle-label">{move || match model.effective_theme.get() { EffectiveTheme::Dark => "Light", EffectiveTheme::Light => "Dark" }}</span>
+                        </button>
                         <button class="sidebar-toggle charts-toggle" type="button" aria-label="Toggle charts and wheels" aria-expanded=move || model.left_open.get() on:click=move |_| { model.right_open.set(false); model.left_open.update(|open| *open = !*open); }>"Charts"</button>
                         <button class="sidebar-toggle controls-toggle" type="button" aria-label="Toggle chart controls" aria-expanded=move || model.right_open.get() on:click=move |_| { model.left_open.set(false); model.right_open.update(|open| *open = !*open); }>"Controls"</button>
                         <span class="session-state">{move || active_label(&model.workspace.get())}</span>
@@ -416,14 +549,14 @@ mod browser {
         view! {
             <section class="sidebar-module wheels-module">
                 <div class="module-heading"><h2>"Wheels"</h2><a href="#settings">"Edit"</a></div>
-                <div class="wheel-thumbnail" aria-hidden="true"><span></span></div>
+                <div class="wheel-thumbnail" class:single=move || model.wheel_templates.get().selected().mode == WheelMode::Single aria-hidden="true"><span></span></div>
                 <div class="template-list">
                     {move || model.wheel_templates.get().templates.into_iter().map(|template| {
                         let id = template.id.clone();
                         let id_for_class = template.id.clone();
                         view! {
                             <button type="button" class:selected=move || model.wheel_templates.get().last_selected_template_id == id_for_class on:click=move |_| select_template(platform, model, &id)>
-                                <strong>{template.name}</strong><small>{format!("{:?} · {:?}", template.palette, template.label_density)}</small>
+                                <strong>{template.name}</strong><small>{format!("{:?} · {:?} · {:?}", template.mode, template.palette, template.label_density)}</small>
                             </button>
                         }
                     }).collect_view()}
@@ -525,12 +658,16 @@ mod browser {
                             let scene = filtered_scene(&presentation.scene, &model.visible_points.get(), &model.visible_aspects.get());
                             let settings = model.wheel_templates.get();
                             let template = settings.selected();
-                            let svg = render_biwheel_svg(&scene, &RenderOptions {
-                                orientation: template.orientation,
-                                palette: template.palette,
-                                label_density: template.label_density,
-                                selected_points: model.selected_points.get().into_iter().collect(),
-                                selected_aspects: model.selected_aspects.get().into_iter().collect(),
+                            let svg = render_chart_svg(&scene, &ChartRenderOptions {
+                                mode: template.mode,
+                                layout: template.layout,
+                                wheel: RenderOptions {
+                                    orientation: template.orientation,
+                                    palette: template.palette.resolve(model.effective_theme.get() == EffectiveTheme::Dark),
+                                    label_density: template.label_density,
+                                    selected_points: model.selected_points.get().into_iter().collect(),
+                                    selected_aspects: model.selected_aspects.get().into_iter().collect(),
+                                },
                             });
                             let class = format!(
                                 "wheel-svg {} {} {}",
@@ -655,7 +792,9 @@ mod browser {
         view! {
             <main id="settings" class="route scroll-route" tabindex="-1">
                 <div class="route-heading"><div><p class="eyebrow">"Studio preferences"</p><h1>"Settings"</h1></div><a href="#workbench">"Back to workbench"</a></div>
+                <ThemeSettings model />
                 <TemplateSettings platform model />
+                <AspectSetSettingsView platform model />
                 <PeopleSettings platform model />
                 <LocationSettings platform model />
                 <ChartSettings platform model />
@@ -665,11 +804,34 @@ mod browser {
     }
 
     #[component]
+    fn ThemeSettings(model: Model) -> impl IntoView {
+        view! {
+            <section class="settings-panel theme-settings">
+                <div><p class="eyebrow">"Local appearance"</p><h2>"Theme"</h2><p>"Warm light and subdued dark themes cover the complete studio. Explicit choices are stored only in this browser."</p></div>
+                <div class="settings-form">
+                    <h3>{move || match model.theme_preference.get() {
+                        ThemePreference::System => format!("Following system · {}", model.effective_theme.get().data_value()),
+                        ThemePreference::Light => "Light theme selected".into(),
+                        ThemePreference::Dark => "Dark theme selected".into(),
+                    }}</h3>
+                    <div class="button-row">
+                        <button type="button" class:primary=move || model.effective_theme.get() == EffectiveTheme::Light on:click=move |_| apply_theme(model, ThemePreference::Light)>"Use light"</button>
+                        <button type="button" class:primary=move || model.effective_theme.get() == EffectiveTheme::Dark on:click=move |_| apply_theme(model, ThemePreference::Dark)>"Use dark"</button>
+                        <button type="button" on:click=move |_| apply_theme(model, ThemePreference::System)>"Reset to system"</button>
+                    </div>
+                </div>
+            </section>
+        }
+    }
+
+    #[component]
     fn TemplateSettings(platform: Platform, model: Model) -> impl IntoView {
         let name = NodeRef::<Input>::new();
+        let mode = NodeRef::<Select>::new();
         let orientation = NodeRef::<Select>::new();
         let palette = NodeRef::<Select>::new();
         let density = NodeRef::<Select>::new();
+        let layout = NodeRef::<Select>::new();
         let save = move |new_record: bool| {
             let result = (|| {
                 let name_value = value(name).ok_or("template name is required")?;
@@ -694,6 +856,11 @@ mod browser {
                 Ok::<_, String>(WheelTemplate {
                     id,
                     name: name_value,
+                    mode: if select_value(mode).as_deref() == Some("single") {
+                        WheelMode::Single
+                    } else {
+                        WheelMode::Biwheel
+                    },
                     orientation: if select_value(orientation).as_deref() == Some("zodiac-zero-top")
                     {
                         WheelOrientation::ZodiacZeroTop
@@ -701,14 +868,26 @@ mod browser {
                         WheelOrientation::AscendantLeft
                     },
                     palette: match select_value(palette).as_deref() {
-                        Some("paper-light") => WheelPalette::PaperLight,
-                        Some("high-contrast") => WheelPalette::HighContrast,
-                        _ => WheelPalette::StudioDark,
+                        Some("studio-dark") => {
+                            WheelPaletteSelection::Explicit(WheelPalette::StudioDark)
+                        }
+                        Some("paper-light") => {
+                            WheelPaletteSelection::Explicit(WheelPalette::PaperLight)
+                        }
+                        Some("high-contrast") => {
+                            WheelPaletteSelection::Explicit(WheelPalette::HighContrast)
+                        }
+                        _ => WheelPaletteSelection::Auto,
                     },
                     label_density: if select_value(density).as_deref() == Some("compact") {
                         LabelDensity::Compact
                     } else {
                         LabelDensity::Full
+                    },
+                    layout: match select_value(layout).as_deref() {
+                        Some("compact") => WheelLayout::Compact,
+                        Some("data-forward") => WheelLayout::DataForward,
+                        _ => WheelLayout::Balanced,
                     },
                 })
             })();
@@ -723,15 +902,251 @@ mod browser {
         };
         view! {
             <section class="settings-panel">
-                <div><p class="eyebrow">"Global, unencrypted"</p><h2>"Wheel templates"</h2><p>"Templates contain visual choices only—never chart identities, dates, points, or aspects."</p></div>
+                <div><p class="eyebrow">"Global, unencrypted"</p><h2>"Wheel templates"</h2><p>"Templates contain visual choices only—never chart identities, dates, points, aspects, or calculation artifacts. Oracle's five built-ins are protected; duplicate one to customize it."</p></div>
                 <form class="settings-form" on:submit=move |event: SubmitEvent| { event.prevent_default(); save(false); }>
-                    <label><span>"Name"</span><input node_ref=name required prop:value=move || model.wheel_templates.get().selected().name.clone() /></label>
-                    <label><span>"Orientation"</span><select node_ref=orientation><option value="ascendant-left" prop:selected=move || model.wheel_templates.get().selected().orientation == WheelOrientation::AscendantLeft>"Ascendant Left"</option><option value="zodiac-zero-top" prop:selected=move || model.wheel_templates.get().selected().orientation == WheelOrientation::ZodiacZeroTop>"Zodiac Zero Top"</option></select></label>
-                    <label><span>"Palette"</span><select node_ref=palette><option value="studio-dark" prop:selected=move || model.wheel_templates.get().selected().palette == WheelPalette::StudioDark>"Studio Dark"</option><option value="paper-light" prop:selected=move || model.wheel_templates.get().selected().palette == WheelPalette::PaperLight>"Paper Light"</option><option value="high-contrast" prop:selected=move || model.wheel_templates.get().selected().palette == WheelPalette::HighContrast>"High Contrast"</option></select></label>
-                    <label><span>"Label density"</span><select node_ref=density><option value="full" prop:selected=move || model.wheel_templates.get().selected().label_density == LabelDensity::Full>"Full"</option><option value="compact" prop:selected=move || model.wheel_templates.get().selected().label_density == LabelDensity::Compact>"Compact"</option></select></label>
-                    <div class="button-row"><button class="primary" type="submit">"Save selected"</button><button type="button" on:click=move |_| save(true)>"Save as new"</button><button class="danger" type="button" on:click=move |_| dispatch(platform, model, PlatformCommand::RemoveWheelTemplate { template_id: model.wheel_templates.get_untracked().last_selected_template_id })>"Remove"</button></div>
+                    <p class="template-protection" role="status">{move || if model.wheel_templates.get().selected().is_protected() { "Protected Oracle template · duplicate to edit" } else { "Custom template · editable" }}</p>
+                    <label><span>"Name"</span><input node_ref=name required disabled=move || model.wheel_templates.get().selected().is_protected() prop:value=move || model.wheel_templates.get().selected().name.clone() /></label>
+                    <label><span>"Wheel mode"</span><select node_ref=mode disabled=move || model.wheel_templates.get().selected().is_protected()><option value="biwheel" prop:selected=move || model.wheel_templates.get().selected().mode == WheelMode::Biwheel>"Biwheel"</option><option value="single" prop:selected=move || model.wheel_templates.get().selected().mode == WheelMode::Single>"Single · Chart 1"</option></select></label>
+                    <label><span>"Orientation"</span><select node_ref=orientation disabled=move || model.wheel_templates.get().selected().is_protected()><option value="ascendant-left" prop:selected=move || model.wheel_templates.get().selected().orientation == WheelOrientation::AscendantLeft>"Ascendant Left"</option><option value="zodiac-zero-top" prop:selected=move || model.wheel_templates.get().selected().orientation == WheelOrientation::ZodiacZeroTop>"Zodiac Zero Top"</option></select></label>
+                    <label><span>"Palette"</span><select node_ref=palette disabled=move || model.wheel_templates.get().selected().is_protected()><option value="auto" prop:selected=move || model.wheel_templates.get().selected().palette == WheelPaletteSelection::Auto>"Automatic for theme"</option><option value="studio-dark" prop:selected=move || model.wheel_templates.get().selected().palette == WheelPaletteSelection::Explicit(WheelPalette::StudioDark)>"Studio Dark"</option><option value="paper-light" prop:selected=move || model.wheel_templates.get().selected().palette == WheelPaletteSelection::Explicit(WheelPalette::PaperLight)>"Paper Light"</option><option value="high-contrast" prop:selected=move || model.wheel_templates.get().selected().palette == WheelPaletteSelection::Explicit(WheelPalette::HighContrast)>"High Contrast"</option></select></label>
+                    <label><span>"Label density"</span><select node_ref=density disabled=move || model.wheel_templates.get().selected().is_protected()><option value="full" prop:selected=move || model.wheel_templates.get().selected().label_density == LabelDensity::Full>"Full"</option><option value="compact" prop:selected=move || model.wheel_templates.get().selected().label_density == LabelDensity::Compact>"Compact"</option></select></label>
+                    <label><span>"Layout emphasis"</span><select node_ref=layout disabled=move || model.wheel_templates.get().selected().is_protected()><option value="balanced" prop:selected=move || model.wheel_templates.get().selected().layout == WheelLayout::Balanced>"Balanced"</option><option value="compact" prop:selected=move || model.wheel_templates.get().selected().layout == WheelLayout::Compact>"Compact"</option><option value="data-forward" prop:selected=move || model.wheel_templates.get().selected().layout == WheelLayout::DataForward>"Data-forward"</option></select></label>
+                    <div class="button-row"><button class="primary" type="submit" disabled=move || model.wheel_templates.get().selected().is_protected()>"Save selected"</button><button type="button" on:click=move |_| save(true)>"Duplicate as new"</button><button class="danger" type="button" disabled=move || model.wheel_templates.get().selected().is_protected() on:click=move |_| dispatch(platform, model, PlatformCommand::RemoveWheelTemplate { template_id: model.wheel_templates.get_untracked().last_selected_template_id })>"Remove"</button></div>
                 </form>
             </section>
+        }
+    }
+
+    #[component]
+    fn AspectSetSettingsView(platform: Platform, model: Model) -> impl IntoView {
+        let copy_name = NodeRef::<Input>::new();
+        let rename_name = NodeRef::<Input>::new();
+        let description = NodeRef::<Textarea>::new();
+        let import = NodeRef::<Input>::new();
+        let duplicate = move |event: SubmitEvent| {
+            event.prevent_default();
+            let result = (|| {
+                let name = value(copy_name).ok_or("copy name is required")?;
+                let existing = model
+                    .aspect_sets
+                    .get_untracked()
+                    .sets()
+                    .iter()
+                    .filter_map(|set| set.id().strip_prefix("user."))
+                    .map(str::to_owned)
+                    .collect();
+                let generated = generate_unique_id("aspect-set", &name, &existing)
+                    .map_err(|error| error.to_string())?;
+                Ok::<_, String>((
+                    format!("user.{}", generated.as_str()),
+                    name,
+                    model
+                        .aspect_sets
+                        .get_untracked()
+                        .selected_aspect_set_id()
+                        .to_owned(),
+                ))
+            })();
+            match result {
+                Ok((id, name, source_id)) => dispatch(
+                    platform,
+                    model,
+                    PlatformCommand::DuplicateAspectSet {
+                        source_id,
+                        id,
+                        name,
+                    },
+                ),
+                Err(message) => model.problem.set(Some(message)),
+            }
+        };
+        let rename = move |event: SubmitEvent| {
+            event.prevent_default();
+            let Some(name) = value(rename_name) else {
+                model.problem.set(Some("name is required".into()));
+                return;
+            };
+            let id = model
+                .aspect_sets
+                .get_untracked()
+                .selected_aspect_set_id()
+                .to_owned();
+            dispatch(
+                platform,
+                model,
+                PlatformCommand::RenameAspectSet { id, name },
+            );
+        };
+        let save_description = move |event: SubmitEvent| {
+            event.prevent_default();
+            let result = (|| {
+                let selected = model.aspect_sets.get_untracked().selected().clone();
+                let description = text_value(description).ok_or("description is required")?;
+                selected
+                    .revised(
+                        selected.name(),
+                        description,
+                        selected.rules().to_vec(),
+                        selected.points().to_vec(),
+                    )
+                    .map_err(|error| error.to_string())
+            })();
+            save_revised_aspect_set(platform, model, result);
+        };
+        view! {
+            <section class="settings-panel aspect-set-settings">
+                <div>
+                    <p class="eyebrow">"Global, unencrypted"</p>
+                    <h2>"Aspect sets"</h2>
+                    <p>"Choose reusable rules for new previews. Saved calculations retain an immutable snapshot of the exact set, rules, and participating points."</p>
+                    <p>"Luminary means either endpoint is the Sun or Moon. Exact aspects pass when enabled; stationary or unknown phase uses the wider applying/separating orb."</p>
+                </div>
+                <div class="settings-stack aspect-set-stack">
+                    <div class="settings-form">
+                        <label><span>"Selected set"</span><select on:change=move |event| dispatch(platform, model, PlatformCommand::SelectAspectSet { id: event_target_value(&event) })>
+                            {move || {
+                                let settings = model.aspect_sets.get();
+                                let selected_id = settings.selected_aspect_set_id().to_owned();
+                                settings.sets().iter().cloned().map(|set| {
+                                    let id = set.id().to_owned();
+                                    let label = if set.built_in() { format!("{} · built-in", set.name()) } else { set.name().to_owned() };
+                                    view! { <option value=id.clone() selected=id == selected_id>{label}</option> }
+                                }).collect_view()
+                            }}
+                        </select></label>
+                        <div class="aspect-set-identity">
+                            <strong>{move || model.aspect_sets.get().selected().name().to_owned()}</strong>
+                            <small>{move || {
+                                let settings = model.aspect_sets.get();
+                                let selected = settings.selected();
+                                format!("{} · revision {} · {}", selected.id(), selected.revision(), selected.content_id())
+                            }}</small>
+                            <p>{move || model.aspect_sets.get().selected().description().to_owned()}</p>
+                        </div>
+                        <form class="inline-search" on:submit=duplicate>
+                            <input node_ref=copy_name aria-label="New aspect-set name" placeholder="Name for new editable copy" required />
+                            <button>"Create / duplicate"</button>
+                        </form>
+                        <form class="inline-search" on:submit=rename>
+                            <input node_ref=rename_name aria-label="Rename selected aspect set" required prop:value=move || model.aspect_sets.get().selected().name().to_owned() />
+                            <button disabled=move || model.aspect_sets.get().selected().built_in()>"Rename"</button>
+                        </form>
+                        <form class="settings-form nested-form" on:submit=save_description>
+                            <label><span>"Description"</span><textarea node_ref=description required prop:value=move || model.aspect_sets.get().selected().description().to_owned() /></label>
+                            <button disabled=move || model.aspect_sets.get().selected().built_in()>"Save description"</button>
+                        </form>
+                        <div class="button-row">
+                            <button on:click=move |_| dispatch(platform, model, PlatformCommand::ExportAspectSet { id: model.aspect_sets.get_untracked().selected_aspect_set_id().to_owned() })>"Export JSON"</button>
+                            <label class="file-action">"Import JSON"<input node_ref=import type="file" accept=".json,application/json" on:change=move |_| {
+                                let Some(file) = import.get().and_then(|input| input.files()).and_then(|files| files.item(0)) else { return; };
+                                if file.size() > MAX_IMPORT_BYTES as f64 {
+                                    model.problem.set(Some(format!("Aspect-set import exceeds {} bytes.", MAX_IMPORT_BYTES)));
+                                    return;
+                                }
+                                spawn_local(async move { match read_file(file).await { Ok(bytes) => dispatch(platform, model, PlatformCommand::ImportAspectSet { bytes }), Err(message) => model.problem.set(Some(message)) } });
+                            } /></label>
+                            <button class="danger" disabled=move || model.aspect_sets.get().selected().built_in() on:click=move |_| {
+                                let id = model.aspect_sets.get_untracked().selected_aspect_set_id().to_owned();
+                                if confirm("Delete this user aspect set? Saved calculation snapshots are unaffected.") {
+                                    dispatch(platform, model, PlatformCommand::DeleteAspectSet { id });
+                                }
+                            }>"Delete"</button>
+                            <button on:click=move |_| if confirm("Restore all four Oracle built-ins? User sets are retained.") { dispatch(platform, model, PlatformCommand::ResetAspectSets) }>"Reset built-ins"</button>
+                        </div>
+                    </div>
+
+                    <div class="aspect-rule-list">
+                        {[AspectKind::Conjunction, AspectKind::Opposition, AspectKind::Square, AspectKind::Trine, AspectKind::Sextile].into_iter().map(|kind| view! { <AspectRuleEditor platform model kind /> }).collect_view()}
+                    </div>
+
+                    <div class="settings-form">
+                        <h3>"Participating points"</h3>
+                        <p>"Synastry presets include all 19 browser-supported points; Chiron is deliberately unsupported."</p>
+                        <div class="aspect-point-grid">
+                            {POINT_FILTERS.into_iter().map(|(id, label)| {
+                                let point = chart_point_from_ui_id(id).expect("UI point IDs are supported");
+                                view! {
+                                    <label class="check-label"><input type="checkbox"
+                                        disabled=move || model.aspect_sets.get().selected().built_in()
+                                        checked=move || model.aspect_sets.get().selected().points().contains(&point)
+                                        on:change=move |event| revise_aspect_point(platform, model, point, event_target_checked(&event))
+                                    /><span>{label}</span></label>
+                                }
+                            }).collect_view()}
+                        </div>
+                    </div>
+                </div>
+            </section>
+        }
+    }
+
+    #[component]
+    fn AspectRuleEditor(platform: Platform, model: Model, kind: AspectKind) -> impl IntoView {
+        let enabled = NodeRef::<Input>::new();
+        let luminary_applying = NodeRef::<Input>::new();
+        let luminary_separating = NodeRef::<Input>::new();
+        let other_applying = NodeRef::<Input>::new();
+        let other_separating = NodeRef::<Input>::new();
+        let submit = move |event: SubmitEvent| {
+            event.prevent_default();
+            let result = (|| {
+                let selected = model.aspect_sets.get_untracked().selected().clone();
+                let old_rule = selected
+                    .rules()
+                    .iter()
+                    .find(|rule| rule.kind() == kind)
+                    .copied()
+                    .ok_or("selected set is missing a rule")?;
+                let orbs = AspectOrbValues::new(
+                    number_value(luminary_applying)?,
+                    number_value(luminary_separating)?,
+                    number_value(other_applying)?,
+                    number_value(other_separating)?,
+                )
+                .map_err(|error| error.to_string())?;
+                let replacement = AspectSetRule::new(
+                    kind,
+                    enabled.get().is_some_and(|input| input.checked()),
+                    orbs,
+                    old_rule.display_order(),
+                )
+                .map_err(|error| error.to_string())?;
+                let rules = selected
+                    .rules()
+                    .iter()
+                    .map(|rule| {
+                        if rule.kind() == kind {
+                            replacement
+                        } else {
+                            *rule
+                        }
+                    })
+                    .collect();
+                selected
+                    .revised(
+                        selected.name(),
+                        selected.description(),
+                        rules,
+                        selected.points().to_vec(),
+                    )
+                    .map_err(|error| error.to_string())
+            })();
+            save_revised_aspect_set(platform, model, result);
+        };
+        view! {
+            <form class="settings-form aspect-rule" on:submit=submit>
+                <div class="aspect-rule-heading">
+                    <h3>{aspect_kind_label(kind)}</h3>
+                    <label class="check-label"><input node_ref=enabled type="checkbox" disabled=move || model.aspect_sets.get().selected().built_in() checked=move || selected_rule(model, kind).is_some_and(AspectSetRule::enabled) /><span>"Enabled"</span></label>
+                </div>
+                <div class="aspect-orb-grid">
+                    <label><span>"Luminary applying"</span><input node_ref=luminary_applying type="number" min="0" max="30" step="0.1" required disabled=move || model.aspect_sets.get().selected().built_in() prop:value=move || rule_orb_value(model, kind, |orbs| orbs.luminary_applying_degrees()) /></label>
+                    <label><span>"Luminary separating"</span><input node_ref=luminary_separating type="number" min="0" max="30" step="0.1" required disabled=move || model.aspect_sets.get().selected().built_in() prop:value=move || rule_orb_value(model, kind, |orbs| orbs.luminary_separating_degrees()) /></label>
+                    <label><span>"Other applying"</span><input node_ref=other_applying type="number" min="0" max="30" step="0.1" required disabled=move || model.aspect_sets.get().selected().built_in() prop:value=move || rule_orb_value(model, kind, |orbs| orbs.other_applying_degrees()) /></label>
+                    <label><span>"Other separating"</span><input node_ref=other_separating type="number" min="0" max="30" step="0.1" required disabled=move || model.aspect_sets.get().selected().built_in() prop:value=move || rule_orb_value(model, kind, |orbs| orbs.other_separating_degrees()) /></label>
+                </div>
+                <button disabled=move || model.aspect_sets.get().selected().built_in()>"Save rule"</button>
+            </form>
         }
     }
 
@@ -1295,6 +1710,7 @@ mod browser {
                 workspace,
                 capabilities,
                 wheel_templates,
+                aspect_sets,
             } => {
                 model.presentation.set(None);
                 model.preview_pending.set(false);
@@ -1302,6 +1718,7 @@ mod browser {
                 model.workspace.set(workspace);
                 model.capabilities.set(Some(capabilities));
                 model.wheel_templates.set(wheel_templates);
+                model.aspect_sets.set(aspect_sets);
                 model.notice.set(Some("Browser-local studio ready.".into()));
                 true
             }
@@ -1338,6 +1755,13 @@ mod browser {
             PlatformResponse::WheelTemplates(settings) => {
                 model.wheel_templates.set(settings);
                 false
+            }
+            PlatformResponse::AspectSets(settings) => {
+                model.aspect_sets.set(settings);
+                model
+                    .notice
+                    .set(Some("Aspect-set preferences updated.".into()));
+                true
             }
             PlatformResponse::WorkbenchPreview(presentation) => {
                 model.presentation.set(Some(presentation));
@@ -2037,6 +2461,100 @@ mod browser {
     }
     fn select_value(node: NodeRef<Select>) -> Option<String> {
         node.get().map(|input| input.value())
+    }
+
+    fn number_value(node: NodeRef<Input>) -> Result<f64, String> {
+        let raw = value(node).ok_or("orb is required")?;
+        raw.parse::<f64>()
+            .map_err(|_| format!("invalid orb {raw:?}"))
+    }
+
+    fn selected_rule(model: Model, kind: AspectKind) -> Option<AspectSetRule> {
+        model
+            .aspect_sets
+            .get()
+            .selected()
+            .rules()
+            .iter()
+            .find(|rule| rule.kind() == kind)
+            .copied()
+    }
+
+    fn rule_orb_value(
+        model: Model,
+        kind: AspectKind,
+        select: fn(AspectOrbValues) -> f64,
+    ) -> String {
+        selected_rule(model, kind)
+            .map(|rule| select(rule.orbs()).to_string())
+            .unwrap_or_default()
+    }
+
+    const fn aspect_kind_label(kind: AspectKind) -> &'static str {
+        match kind {
+            AspectKind::Conjunction => "Conjunction",
+            AspectKind::Opposition => "Opposition",
+            AspectKind::Square => "Square",
+            AspectKind::Trine => "Trine",
+            AspectKind::Sextile => "Sextile",
+        }
+    }
+
+    const fn chart_point_from_ui_id(id: &str) -> Option<ChartPointId> {
+        match id.as_bytes() {
+            b"Sun" => Some(ChartPointId::Sun),
+            b"Moon" => Some(ChartPointId::Moon),
+            b"Mercury" => Some(ChartPointId::Mercury),
+            b"Venus" => Some(ChartPointId::Venus),
+            b"Mars" => Some(ChartPointId::Mars),
+            b"Jupiter" => Some(ChartPointId::Jupiter),
+            b"Saturn" => Some(ChartPointId::Saturn),
+            b"Uranus" => Some(ChartPointId::Uranus),
+            b"Neptune" => Some(ChartPointId::Neptune),
+            b"Pluto" => Some(ChartPointId::Pluto),
+            b"MeanNode" => Some(ChartPointId::MeanNode),
+            b"MeanSouthNode" => Some(ChartPointId::MeanSouthNode),
+            b"TrueNode" => Some(ChartPointId::TrueNode),
+            b"TrueSouthNode" => Some(ChartPointId::TrueSouthNode),
+            b"Ascendant" => Some(ChartPointId::Ascendant),
+            b"Midheaven" => Some(ChartPointId::Midheaven),
+            b"Descendant" => Some(ChartPointId::Descendant),
+            b"ImumCoeli" => Some(ChartPointId::ImumCoeli),
+            b"Vertex" => Some(ChartPointId::Vertex),
+            _ => None,
+        }
+    }
+
+    fn save_revised_aspect_set(
+        platform: Platform,
+        model: Model,
+        result: Result<AspectSet, String>,
+    ) {
+        match result {
+            Ok(set) => dispatch(platform, model, PlatformCommand::SaveAspectSet { set }),
+            Err(message) => model.problem.set(Some(message)),
+        }
+    }
+
+    fn revise_aspect_point(platform: Platform, model: Model, point: ChartPointId, enabled: bool) {
+        let result = (|| {
+            let selected = model.aspect_sets.get_untracked().selected().clone();
+            let mut points = selected.points().to_vec();
+            if enabled && !points.contains(&point) {
+                points.push(point);
+            } else if !enabled {
+                points.retain(|candidate| *candidate != point);
+            }
+            selected
+                .revised(
+                    selected.name(),
+                    selected.description(),
+                    selected.rules().to_vec(),
+                    points,
+                )
+                .map_err(|error| error.to_string())
+        })();
+        save_revised_aspect_set(platform, model, result);
     }
 
     fn format_local_time(resolution: &LocalTimeResolution) -> String {

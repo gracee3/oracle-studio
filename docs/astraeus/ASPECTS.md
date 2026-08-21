@@ -6,6 +6,13 @@ objects, derived mean/true South Nodes, or ASC, MC, DSC, IC, and Vertex. The
 contract supports conjunction, sextile, square, trine, and opposition with an
 explicit orb per aspect.
 
+The additive phase-aware API accepts four orb values per aspect: luminary
+applying/separating and other applying/separating. Either endpoint being Sun or
+Moon selects the luminary category. Phase is measured before the applicable orb
+is selected; exact and stationary cases use the documented deterministic
+policy. The original single-orb API delegates through uniform four-value rules
+and retains identical results and serialization.
+
 Detection uses the shortest separation on the 360-degree circle. Orb limits
 are inclusive. Results use canonical point ordering and contain the measured
 separation and absolute distance from exactitude. When configured windows

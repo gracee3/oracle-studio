@@ -5,8 +5,14 @@
 
 use std::{future::Future, pin::Pin};
 
+pub use oracle_studio_aspect_sets::{
+    AspectKind, AspectOrbValues, AspectSet, AspectSetRule, AspectSetSettings, AspectSetSnapshot,
+    ChartPointId, MAX_IMPORT_BYTES,
+};
 use oracle_studio_chart_view::ChartScene;
-pub use oracle_studio_chart_view::{LabelDensity, WheelOrientation, WheelPalette};
+pub use oracle_studio_chart_view::{
+    LabelDensity, WheelLayout, WheelMode, WheelOrientation, WheelPalette,
+};
 use oracle_studio_core::{
     AmbiguousTimeChoice, ChartDefinition, ComparisonPreset, LocalDateTimeInput,
     LocalTimeResolution, PersonKind, SavedLocation, StableId, WorkspaceState,
@@ -110,6 +116,31 @@ pub enum PlatformCommand {
     RemoveWheelTemplate {
         template_id: String,
     },
+    SaveAspectSet {
+        set: AspectSet,
+    },
+    DuplicateAspectSet {
+        source_id: String,
+        id: String,
+        name: String,
+    },
+    RenameAspectSet {
+        id: String,
+        name: String,
+    },
+    DeleteAspectSet {
+        id: String,
+    },
+    SelectAspectSet {
+        id: String,
+    },
+    ResetAspectSets,
+    ImportAspectSet {
+        bytes: Vec<u8>,
+    },
+    ExportAspectSet {
+        id: String,
+    },
     SetWorkspace {
         workspace: WorkspaceState,
     },
@@ -199,6 +230,7 @@ pub enum PlatformResponse {
         workspace: WorkspaceSummary,
         capabilities: CapabilityStatus,
         wheel_templates: WheelTemplateSettings,
+        aspect_sets: AspectSetSettings,
     },
     Vaults(Vec<VaultSummary>),
     Workspace(WorkspaceSummary),
@@ -216,6 +248,7 @@ pub enum PlatformResponse {
         outcome: PreviewCommitOutcome,
     },
     WheelTemplates(WheelTemplateSettings),
+    AspectSets(AspectSetSettings),
     Updated {
         vaults: Vec<VaultSummary>,
         workspace: WorkspaceSummary,
@@ -295,16 +328,49 @@ pub struct WorkbenchPreviewSource {
     pub vault_revision: Option<String>,
 }
 
-pub const WHEEL_TEMPLATE_SETTINGS_VERSION: u32 = 1;
+pub const WHEEL_TEMPLATE_SETTINGS_VERSION: u32 = 2;
+pub const STUDIO_BIWHEEL_TEMPLATE_ID: &str = "oracle-studio-biwheel";
+pub const COMPACT_BIWHEEL_TEMPLATE_ID: &str = "oracle-compact-biwheel";
+pub const HIGH_CONTRAST_BIWHEEL_TEMPLATE_ID: &str = "oracle-high-contrast-biwheel";
+pub const CLASSIC_SINGLE_TEMPLATE_ID: &str = "oracle-classic-single";
+pub const DATA_FORWARD_SINGLE_TEMPLATE_ID: &str = "oracle-data-forward-single";
+
+const BUILTIN_TEMPLATE_IDS: [&str; 5] = [
+    STUDIO_BIWHEEL_TEMPLATE_ID,
+    COMPACT_BIWHEEL_TEMPLATE_ID,
+    HIGH_CONTRAST_BIWHEEL_TEMPLATE_ID,
+    CLASSIC_SINGLE_TEMPLATE_ID,
+    DATA_FORWARD_SINGLE_TEMPLATE_ID,
+];
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "selection", content = "palette", rename_all = "kebab-case")]
+pub enum WheelPaletteSelection {
+    #[default]
+    Auto,
+    Explicit(WheelPalette),
+}
+
+impl WheelPaletteSelection {
+    pub const fn resolve(self, dark_theme: bool) -> WheelPalette {
+        match self {
+            Self::Auto if dark_theme => WheelPalette::StudioDark,
+            Self::Auto => WheelPalette::PaperLight,
+            Self::Explicit(palette) => palette,
+        }
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WheelTemplate {
     pub id: String,
     pub name: String,
+    pub mode: WheelMode,
     pub orientation: WheelOrientation,
-    pub palette: WheelPalette,
+    pub palette: WheelPaletteSelection,
     pub label_density: LabelDensity,
+    pub layout: WheelLayout,
 }
 
 impl WheelTemplate {
@@ -323,6 +389,10 @@ impl WheelTemplate {
         }
         Ok(())
     }
+
+    pub fn is_protected(&self) -> bool {
+        BUILTIN_TEMPLATE_IDS.contains(&self.id.as_str())
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -337,21 +407,18 @@ impl Default for WheelTemplateSettings {
     fn default() -> Self {
         Self {
             schema_version: WHEEL_TEMPLATE_SETTINGS_VERSION,
-            templates: vec![WheelTemplate {
-                id: "studio-dark".into(),
-                name: "Studio Dark".into(),
-                orientation: WheelOrientation::AscendantLeft,
-                palette: WheelPalette::StudioDark,
-                label_density: LabelDensity::Full,
-            }],
-            last_selected_template_id: "studio-dark".into(),
+            templates: builtin_wheel_templates(),
+            last_selected_template_id: STUDIO_BIWHEEL_TEMPLATE_ID.into(),
         }
     }
 }
 
 impl WheelTemplateSettings {
     pub fn validate(&self) -> Result<(), PlatformError> {
-        if self.schema_version != WHEEL_TEMPLATE_SETTINGS_VERSION || self.templates.is_empty() {
+        if self.schema_version != WHEEL_TEMPLATE_SETTINGS_VERSION
+            || self.templates.is_empty()
+            || self.templates.len() > 128
+        {
             return Err(PlatformError::new(
                 PlatformErrorCode::InvalidInput,
                 "unsupported or empty wheel template settings",
@@ -364,6 +431,24 @@ impl WheelTemplateSettings {
                 return Err(PlatformError::new(
                     PlatformErrorCode::InvalidInput,
                     "wheel template IDs must be unique",
+                ));
+            }
+        }
+        for builtin in builtin_wheel_templates() {
+            let Some(stored) = self
+                .templates
+                .iter()
+                .find(|template| template.id == builtin.id)
+            else {
+                return Err(PlatformError::new(
+                    PlatformErrorCode::InvalidInput,
+                    "all protected Oracle wheel templates must remain present",
+                ));
+            };
+            if stored != &builtin {
+                return Err(PlatformError::new(
+                    PlatformErrorCode::InvalidInput,
+                    "protected Oracle wheel templates are immutable",
                 ));
             }
         }
@@ -381,6 +466,110 @@ impl WheelTemplateSettings {
             .iter()
             .find(|template| template.id == self.last_selected_template_id)
             .expect("validated template settings retain their selected record")
+    }
+}
+
+pub fn builtin_wheel_templates() -> Vec<WheelTemplate> {
+    vec![
+        WheelTemplate {
+            id: STUDIO_BIWHEEL_TEMPLATE_ID.into(),
+            name: "Studio Biwheel".into(),
+            mode: WheelMode::Biwheel,
+            orientation: WheelOrientation::AscendantLeft,
+            palette: WheelPaletteSelection::Auto,
+            label_density: LabelDensity::Full,
+            layout: WheelLayout::Balanced,
+        },
+        WheelTemplate {
+            id: COMPACT_BIWHEEL_TEMPLATE_ID.into(),
+            name: "Compact Biwheel".into(),
+            mode: WheelMode::Biwheel,
+            orientation: WheelOrientation::AscendantLeft,
+            palette: WheelPaletteSelection::Auto,
+            label_density: LabelDensity::Compact,
+            layout: WheelLayout::Compact,
+        },
+        WheelTemplate {
+            id: HIGH_CONTRAST_BIWHEEL_TEMPLATE_ID.into(),
+            name: "High Contrast Biwheel".into(),
+            mode: WheelMode::Biwheel,
+            orientation: WheelOrientation::AscendantLeft,
+            palette: WheelPaletteSelection::Explicit(WheelPalette::HighContrast),
+            label_density: LabelDensity::Full,
+            layout: WheelLayout::Balanced,
+        },
+        WheelTemplate {
+            id: CLASSIC_SINGLE_TEMPLATE_ID.into(),
+            name: "Classic Single".into(),
+            mode: WheelMode::Single,
+            orientation: WheelOrientation::AscendantLeft,
+            palette: WheelPaletteSelection::Auto,
+            label_density: LabelDensity::Full,
+            layout: WheelLayout::Balanced,
+        },
+        WheelTemplate {
+            id: DATA_FORWARD_SINGLE_TEMPLATE_ID.into(),
+            name: "Data-forward Single".into(),
+            mode: WheelMode::Single,
+            orientation: WheelOrientation::ZodiacZeroTop,
+            palette: WheelPaletteSelection::Auto,
+            label_density: LabelDensity::Full,
+            layout: WheelLayout::DataForward,
+        },
+    ]
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WheelTemplateV1 {
+    pub id: String,
+    pub name: String,
+    pub orientation: WheelOrientation,
+    pub palette: WheelPalette,
+    pub label_density: LabelDensity,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WheelTemplateSettingsV1 {
+    pub schema_version: u32,
+    pub templates: Vec<WheelTemplateV1>,
+    pub last_selected_template_id: String,
+}
+
+impl WheelTemplateSettingsV1 {
+    pub fn migrate(self) -> Result<WheelTemplateSettings, PlatformError> {
+        if self.schema_version != 1 || self.templates.is_empty() {
+            return Err(PlatformError::new(
+                PlatformErrorCode::UnsupportedFormat,
+                "wheel template settings are not schema v1",
+            ));
+        }
+        let mut templates = builtin_wheel_templates();
+        for legacy in self.templates {
+            if BUILTIN_TEMPLATE_IDS.contains(&legacy.id.as_str()) {
+                return Err(PlatformError::new(
+                    PlatformErrorCode::InvalidInput,
+                    "schema-v1 wheel template uses a reserved Oracle template ID",
+                ));
+            }
+            templates.push(WheelTemplate {
+                id: legacy.id,
+                name: legacy.name,
+                mode: WheelMode::Biwheel,
+                orientation: legacy.orientation,
+                palette: WheelPaletteSelection::Explicit(legacy.palette),
+                label_density: legacy.label_density,
+                layout: WheelLayout::Balanced,
+            });
+        }
+        let migrated = WheelTemplateSettings {
+            schema_version: WHEEL_TEMPLATE_SETTINGS_VERSION,
+            templates,
+            last_selected_template_id: self.last_selected_template_id,
+        };
+        migrated.validate()?;
+        Ok(migrated)
     }
 }
 

@@ -15,8 +15,9 @@ use astraeus_specifications::ChartSpecification;
 use astraeus_techniques::harmonic;
 use chrono::{DateTime, Utc};
 use oracle_studio_chart_view::{
-    ChartScene, RenderOptions, TransitTimeline, TransitTimelineError, WheelOrientation,
-    render_biwheel_svg, resolve_circular_collisions,
+    ChartRenderOptions, ChartScene, RenderOptions, TransitTimeline, TransitTimelineError,
+    WheelLayout, WheelMode, WheelOrientation, render_biwheel_svg, render_chart_svg,
+    render_single_wheel_svg, resolve_circular_collisions,
 };
 use sha2::{Digest, Sha256};
 
@@ -697,6 +698,53 @@ fn svg_is_deterministic_accessible_escaped_and_oriented() {
         format!("{:x}", Sha256::digest(ascendant.as_bytes())),
         include_str!("../../../fixtures/snapshots/transit-biwheel.sha256").trim()
     );
+}
+
+#[test]
+fn general_dispatch_adds_layout_metadata_and_single_mode_uses_only_chart_one() {
+    let artifact = comparison(
+        natal(),
+        transit("2026-01-01T00:00:00Z", 359.0, 1.0),
+        &[
+            CelestialObject::Sun,
+            CelestialObject::Moon,
+            CelestialObject::Mercury,
+        ],
+    );
+    let canonical_before = artifact.to_json().unwrap();
+    let scene = ChartScene::from_comparison(&artifact).unwrap();
+    let single = render_chart_svg(
+        &scene,
+        &ChartRenderOptions {
+            mode: WheelMode::Single,
+            layout: WheelLayout::DataForward,
+            wheel: RenderOptions::default(),
+        },
+    );
+    assert!(single.contains("id=\"oracle-single-wheel\""));
+    assert!(single.contains("data-wheel-mode=\"single\""));
+    assert!(single.contains("data-wheel-layout=\"data-forward\""));
+    assert!(single.contains("class=\"wheel-layout--data-forward wheel-palette--studio-dark"));
+    assert!(single.contains("<title id=\"chart-title\">Single chart wheel</title>"));
+    assert!(single.contains("id=\"natal-point-sun\""));
+    assert!(!single.contains("id=\"transit-point-sun\""));
+    assert!(!single.contains("id=\"aspect-layer\""));
+    assert_eq!(canonical_before, artifact.to_json().unwrap());
+
+    let direct_single = render_single_wheel_svg(&scene, &RenderOptions::default());
+    assert!(!direct_single.contains("data-wheel-layout"));
+    let biwheel = render_chart_svg(
+        &scene,
+        &ChartRenderOptions {
+            mode: WheelMode::Biwheel,
+            layout: WheelLayout::Compact,
+            wheel: RenderOptions::default(),
+        },
+    );
+    assert!(biwheel.contains("id=\"oracle-transit-biwheel\""));
+    assert!(biwheel.contains("data-wheel-mode=\"biwheel\""));
+    assert!(biwheel.contains("data-wheel-layout=\"compact\""));
+    assert!(biwheel.contains("id=\"transit-point-sun\""));
 }
 
 #[test]

@@ -4,7 +4,8 @@ use std::collections::BTreeMap;
 
 use astraeus_core::{
     ASPECT_EXACT_TOLERANCE_DEGREES, ASPECT_STATION_TOLERANCE_DEGREES_PER_DAY, AspectDefinitions,
-    AspectKind, AspectPhase, ChartPointId, ChartPointSelection, chart_point_positions,
+    AspectKind, AspectPhase, ChartPointId, ChartPointSelection, PhaseAwareAspectDefinitions,
+    chart_point_positions,
 };
 use astraeus_derived::DerivedChartArtifact;
 use astraeus_techniques::{ProgressedChartArtifact, SyntheticChartArtifact};
@@ -184,6 +185,10 @@ impl ComparisonSpecification {
 
     pub const fn kind(&self) -> ComparisonKind {
         self.kind
+    }
+
+    pub const fn aspects(&self) -> &AspectDefinitions {
+        &self.aspects
     }
 
     /// Returns the first layer's points in their declared selection order.
@@ -436,6 +441,37 @@ fn calculate_inter_chart_aspects(
     definitions: &AspectDefinitions,
     motion: ComparisonMotionPolicy,
 ) -> Result<Vec<InterChartAspect>, ComparisonArtifactError> {
+    let definitions = PhaseAwareAspectDefinitions::uniform(definitions)
+        .map_err(|error| ComparisonArtifactError::InvalidPointData(error.to_string()))?;
+    calculate_inter_chart_aspects_with_rules(first, second, &definitions, motion)
+}
+
+/// Calculate inter-chart aspects with phase/category-aware orb rules without
+/// changing the schema-v1 [`ComparisonArtifact`] contract.
+pub fn calculate_phase_aware_inter_chart_aspects(
+    first: &ChartLayerArtifact,
+    second: &ChartLayerArtifact,
+    definitions: &PhaseAwareAspectDefinitions,
+    first_points: &ChartPointSelection,
+    second_points: &ChartPointSelection,
+    motion: ComparisonMotionPolicy,
+) -> Result<Vec<InterChartAspect>, ComparisonArtifactError> {
+    if first.frame() != second.frame() {
+        return Err(ComparisonArtifactError::CoordinateFrameMismatch);
+    }
+    let first_all = first.points()?;
+    let second_all = second.points()?;
+    let first = select_points(&first_all, first_points, "first")?;
+    let second = select_points(&second_all, second_points, "second")?;
+    calculate_inter_chart_aspects_with_rules(&first, &second, definitions, motion)
+}
+
+fn calculate_inter_chart_aspects_with_rules(
+    first: &BTreeMap<ChartPointId, LayerPoint>,
+    second: &BTreeMap<ChartPointId, LayerPoint>,
+    definitions: &PhaseAwareAspectDefinitions,
+    motion: ComparisonMotionPolicy,
+) -> Result<Vec<InterChartAspect>, ComparisonArtifactError> {
     let mut aspects = Vec::new();
     for (first_id, first_position) in first {
         for (second_id, second_position) in second {
@@ -444,44 +480,48 @@ fn calculate_inter_chart_aspects(
                 second_position.longitude_degrees,
             );
             let separation = signed_separation.abs();
-            let best = definitions
+            let potential = definitions
                 .as_slice()
                 .iter()
                 .map(|definition| {
                     let orb = (separation - definition.kind().angle_degrees()).abs();
                     (definition, orb)
                 })
-                .filter(|(definition, orb)| *orb <= definition.orb_degrees())
+                .filter(|(definition, orb)| {
+                    *orb <= definition
+                        .orbs()
+                        .for_pair_phase(*first_id, *second_id, None)
+                })
+                .collect::<Vec<_>>();
+            if potential.is_empty() {
+                continue;
+            }
+            let relative_speed = comparison_relative_speed(
+                first_position,
+                second_position,
+                *first_id,
+                *second_id,
+                motion,
+            )?;
+            let best = potential
+                .into_iter()
+                .filter(|(definition, orb)| {
+                    let definition_phase = relative_speed
+                        .map(|speed| classify_phase(signed_separation, definition.kind(), speed));
+                    *orb <= definition.orbs().for_pair_phase(
+                        *first_id,
+                        *second_id,
+                        definition_phase,
+                    )
+                })
                 .min_by(|(left, left_orb), (right, right_orb)| {
                     left_orb
                         .total_cmp(right_orb)
                         .then_with(|| left.kind().cmp(&right.kind()))
                 });
             if let Some((definition, orb)) = best {
-                let relative_speed = match motion {
-                    ComparisonMotionPolicy::None => None,
-                    ComparisonMotionPolicy::SecondMovesAgainstFirstFixed => {
-                        Some(second_position.motion_degrees_per_day.ok_or(
-                            ComparisonArtifactError::MissingMotion {
-                                side: "second",
-                                point: *second_id,
-                            },
-                        )?)
-                    }
-                    ComparisonMotionPolicy::BothInstantaneous => Some(
-                        second_position.motion_degrees_per_day.ok_or(
-                            ComparisonArtifactError::MissingMotion {
-                                side: "second",
-                                point: *second_id,
-                            },
-                        )? - first_position.motion_degrees_per_day.ok_or(
-                            ComparisonArtifactError::MissingMotion {
-                                side: "first",
-                                point: *first_id,
-                            },
-                        )?,
-                    ),
-                };
+                let phase = relative_speed
+                    .map(|speed| classify_phase(signed_separation, definition.kind(), speed));
                 aspects.push(InterChartAspect {
                     first: *first_id,
                     second: *second_id,
@@ -490,13 +530,46 @@ fn calculate_inter_chart_aspects(
                     signed_separation_degrees: signed_separation,
                     orb_degrees: orb,
                     relative_speed_degrees_per_day: relative_speed,
-                    phase: relative_speed
-                        .map(|speed| classify_phase(signed_separation, definition.kind(), speed)),
+                    phase,
                 });
             }
         }
     }
     Ok(aspects)
+}
+
+fn comparison_relative_speed(
+    first: &LayerPoint,
+    second: &LayerPoint,
+    first_id: ChartPointId,
+    second_id: ChartPointId,
+    motion: ComparisonMotionPolicy,
+) -> Result<Option<f64>, ComparisonArtifactError> {
+    match motion {
+        ComparisonMotionPolicy::None => Ok(None),
+        ComparisonMotionPolicy::SecondMovesAgainstFirstFixed => {
+            Ok(Some(second.motion_degrees_per_day.ok_or(
+                ComparisonArtifactError::MissingMotion {
+                    side: "second",
+                    point: second_id,
+                },
+            )?))
+        }
+        ComparisonMotionPolicy::BothInstantaneous => Ok(Some(
+            second
+                .motion_degrees_per_day
+                .ok_or(ComparisonArtifactError::MissingMotion {
+                    side: "second",
+                    point: second_id,
+                })?
+                - first
+                    .motion_degrees_per_day
+                    .ok_or(ComparisonArtifactError::MissingMotion {
+                        side: "first",
+                        point: first_id,
+                    })?,
+        )),
+    }
 }
 
 fn signed_separation(first_longitude: f64, second_longitude: f64) -> f64 {

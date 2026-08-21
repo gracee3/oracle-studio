@@ -5,9 +5,10 @@ use std::{collections::BTreeMap, future::Future, pin::Pin, rc::Rc};
 use astraeus_moshier::MoshierEphemerisAdapter;
 use oracle_studio_app::{
     ChartCalculationRequest, ComparisonCalculationRequest, PreparedWorkbenchPreview,
-    WorkbenchCalculationRequest, calculate_chart, calculate_comparison,
-    calculate_workbench_preview, commit_workbench_save_as, commit_workbench_update,
+    WorkbenchCalculationRequest, calculate_chart, calculate_comparison_with_aspect_set,
+    calculate_workbench_preview_with_aspect_set, commit_workbench_save_as, commit_workbench_update,
 };
+use oracle_studio_aspect_sets::{AspectSetError, AspectSetSettings};
 use oracle_studio_core::{
     PersonProfile, VaultDocument, generate_unique_id, resolve_local_time, select_local_time,
 };
@@ -16,7 +17,8 @@ use oracle_studio_platform::{
     ActiveWorkspace, CapabilityStatus, ChartSummary, EntitySummary, EphemerisStatus,
     PlatformCommand, PlatformError, PlatformErrorCode, PlatformResponse, PreviewCommitOutcome,
     PreviewGeneration, PreviewSaveMode, VaultLockState, VaultSummary, WheelTemplateSettings,
-    WorkbenchChartSummary, WorkbenchPresentation, WorkbenchPreviewSource, WorkspaceSummary,
+    WheelTemplateSettingsV1, WorkbenchChartSummary, WorkbenchPresentation, WorkbenchPreviewSource,
+    WorkspaceSummary,
 };
 use oracle_studio_vault::{UnlockedVault, create, inspect, open, revision};
 use serde::{Deserialize, Serialize};
@@ -38,6 +40,8 @@ pub trait BrowserStore {
     ) -> StoreFuture<'_, ()>;
     fn load_wheel_template_settings(&self) -> StoreFuture<'_, Option<String>>;
     fn save_wheel_template_settings(&self, settings: String) -> StoreFuture<'_, ()>;
+    fn load_aspect_set_settings(&self) -> StoreFuture<'_, Option<String>>;
+    fn save_aspect_set_settings(&self, settings: String) -> StoreFuture<'_, ()>;
     fn request_persistence(&self) -> StoreFuture<'_, bool>;
 }
 
@@ -107,6 +111,7 @@ pub struct BrowserStudioEngine {
     persistence_requested: bool,
     persistence_granted: Option<bool>,
     wheel_templates: WheelTemplateSettings,
+    aspect_sets: AspectSetSettings,
     pending_preview: Option<PendingWorkbenchPreview>,
 }
 
@@ -124,6 +129,7 @@ impl BrowserStudioEngine {
             persistence_requested: false,
             persistence_granted: None,
             wheel_templates: WheelTemplateSettings::default(),
+            aspect_sets: AspectSetSettings::default(),
             pending_preview: None,
         }
     }
@@ -146,6 +152,7 @@ impl BrowserStudioEngine {
                     workspace: self.workspace_summary(),
                     capabilities: self.capabilities(),
                     wheel_templates: self.wheel_templates.clone(),
+                    aspect_sets: self.aspect_sets.clone(),
                 })
             }
             PlatformCommand::CreateScratch => {
@@ -420,13 +427,14 @@ impl BrowserStudioEngine {
                 comparison_preset_id,
                 calculated_at,
             } => {
-                let document = calculate_comparison(
+                let document = calculate_comparison_with_aspect_set(
                     self.active_document()?,
                     ComparisonCalculationRequest {
                         id,
                         comparison_preset_id,
                         calculated_at,
                     },
+                    self.aspect_sets.selected().snapshot(),
                 )
                 .map_err(app_error)?;
                 self.commit_document(document, now_millis, now).await?;
@@ -435,7 +443,7 @@ impl BrowserStudioEngine {
             PlatformCommand::WorkbenchPreview { request } => {
                 let (source_vault_id, source_vault_title, source_vault_revision) =
                     self.preview_source()?;
-                let prepared = calculate_workbench_preview(
+                let prepared = calculate_workbench_preview_with_aspect_set(
                     self.active_document()?,
                     WorkbenchCalculationRequest {
                         inner_chart_definition_id: request.inner_chart_definition_id,
@@ -446,6 +454,7 @@ impl BrowserStudioEngine {
                         outer_ambiguous_time_choice: request.outer_ambiguous_time_choice,
                     },
                     &MoshierEphemerisAdapter::new(),
+                    self.aspect_sets.selected().snapshot(),
                 )
                 .map_err(app_error)?;
                 let presentation = workbench_presentation(
@@ -600,6 +609,12 @@ impl BrowserStudioEngine {
             }
             PlatformCommand::SaveWheelTemplate { template } => {
                 template.validate()?;
+                if template.is_protected() {
+                    return Err(error(
+                        PlatformErrorCode::InvalidInput,
+                        "protected Oracle wheel templates are immutable; duplicate one to customize it",
+                    ));
+                }
                 if let Some(existing) = self
                     .wheel_templates
                     .templates
@@ -635,6 +650,17 @@ impl BrowserStudioEngine {
                 ))
             }
             PlatformCommand::RemoveWheelTemplate { template_id } => {
+                if self
+                    .wheel_templates
+                    .templates
+                    .iter()
+                    .any(|template| template.id == template_id && template.is_protected())
+                {
+                    return Err(error(
+                        PlatformErrorCode::InvalidInput,
+                        "protected Oracle wheel templates cannot be removed",
+                    ));
+                }
                 if self.wheel_templates.templates.len() == 1 {
                     return Err(error(
                         PlatformErrorCode::InvalidInput,
@@ -659,6 +685,86 @@ impl BrowserStudioEngine {
                 Ok(PlatformResponse::WheelTemplates(
                     self.wheel_templates.clone(),
                 ))
+            }
+            PlatformCommand::SaveAspectSet { set } => {
+                self.aspect_sets.save_user(set).map_err(aspect_error)?;
+                self.pending_preview = None;
+                self.persist_aspect_sets().await?;
+                Ok(PlatformResponse::AspectSets(self.aspect_sets.clone()))
+            }
+            PlatformCommand::DuplicateAspectSet {
+                source_id,
+                id,
+                name,
+            } => {
+                let source = self
+                    .aspect_sets
+                    .sets()
+                    .iter()
+                    .find(|set| set.id() == source_id)
+                    .cloned()
+                    .ok_or_else(|| {
+                        error(PlatformErrorCode::NotFound, "aspect set was not found")
+                    })?;
+                let duplicate = source.duplicate(id, name).map_err(aspect_error)?;
+                let duplicate_id = duplicate.id().to_owned();
+                self.aspect_sets
+                    .save_user(duplicate)
+                    .map_err(aspect_error)?;
+                self.aspect_sets
+                    .select(&duplicate_id)
+                    .map_err(aspect_error)?;
+                self.pending_preview = None;
+                self.persist_aspect_sets().await?;
+                Ok(PlatformResponse::AspectSets(self.aspect_sets.clone()))
+            }
+            PlatformCommand::RenameAspectSet { id, name } => {
+                self.aspect_sets.select(&id).map_err(aspect_error)?;
+                self.aspect_sets
+                    .rename_selected(name)
+                    .map_err(aspect_error)?;
+                self.pending_preview = None;
+                self.persist_aspect_sets().await?;
+                Ok(PlatformResponse::AspectSets(self.aspect_sets.clone()))
+            }
+            PlatformCommand::DeleteAspectSet { id } => {
+                self.aspect_sets.select(&id).map_err(aspect_error)?;
+                self.aspect_sets.delete_selected().map_err(aspect_error)?;
+                self.pending_preview = None;
+                self.persist_aspect_sets().await?;
+                Ok(PlatformResponse::AspectSets(self.aspect_sets.clone()))
+            }
+            PlatformCommand::SelectAspectSet { id } => {
+                self.aspect_sets.select(&id).map_err(aspect_error)?;
+                self.persist_aspect_sets().await?;
+                self.pending_preview = None;
+                Ok(PlatformResponse::AspectSets(self.aspect_sets.clone()))
+            }
+            PlatformCommand::ResetAspectSets => {
+                self.aspect_sets.reset_builtins().map_err(aspect_error)?;
+                self.persist_aspect_sets().await?;
+                self.pending_preview = None;
+                Ok(PlatformResponse::AspectSets(self.aspect_sets.clone()))
+            }
+            PlatformCommand::ImportAspectSet { bytes } => {
+                self.aspect_sets.import(&bytes).map_err(aspect_error)?;
+                self.persist_aspect_sets().await?;
+                self.pending_preview = None;
+                Ok(PlatformResponse::AspectSets(self.aspect_sets.clone()))
+            }
+            PlatformCommand::ExportAspectSet { id } => {
+                let set = self
+                    .aspect_sets
+                    .sets()
+                    .iter()
+                    .find(|set| set.id() == id)
+                    .ok_or_else(|| {
+                        error(PlatformErrorCode::NotFound, "aspect set was not found")
+                    })?;
+                Ok(PlatformResponse::Export {
+                    filename: format!("{}.oracle-aspects.json", safe_filename(set.name())),
+                    bytes: set.to_pretty_json().map_err(aspect_error)?,
+                })
             }
             PlatformCommand::SetWorkspace { workspace } => {
                 let document = self
@@ -726,10 +832,38 @@ impl BrowserStudioEngine {
             .load_wheel_template_settings()
             .await
             .map_err(store_error)?
-            && let Ok(settings) = serde_json::from_str::<WheelTemplateSettings>(&raw)
+        {
+            if let Ok(settings) = serde_json::from_str::<WheelTemplateSettings>(&raw)
+                && settings.validate().is_ok()
+            {
+                self.wheel_templates = settings;
+            } else if let Ok(legacy) = serde_json::from_str::<WheelTemplateSettingsV1>(&raw)
+                && let Ok(settings) = legacy.migrate()
+            {
+                let migrated = serde_json::to_string(&settings).map_err(|serialization_error| {
+                    error(
+                        PlatformErrorCode::Internal,
+                        format!(
+                            "could not serialize migrated wheel templates: {serialization_error}"
+                        ),
+                    )
+                })?;
+                self.store
+                    .save_wheel_template_settings(migrated)
+                    .await
+                    .map_err(store_error)?;
+                self.wheel_templates = settings;
+            }
+        }
+        if let Some(raw) = self
+            .store
+            .load_aspect_set_settings()
+            .await
+            .map_err(store_error)?
+            && let Ok(settings) = serde_json::from_str::<AspectSetSettings>(&raw)
             && settings.validate().is_ok()
         {
-            self.wheel_templates = settings;
+            self.aspect_sets = settings;
         }
         self.loaded = true;
         Ok(())
@@ -887,6 +1021,17 @@ impl BrowserStudioEngine {
         })?;
         self.store
             .save_wheel_template_settings(raw)
+            .await
+            .map_err(store_error)
+    }
+
+    async fn persist_aspect_sets(&self) -> Result<(), PlatformError> {
+        self.aspect_sets.validate().map_err(aspect_error)?;
+        let raw = serde_json::to_string(&self.aspect_sets).map_err(|serialization_error| {
+            error(PlatformErrorCode::Internal, serialization_error.to_string())
+        })?;
+        self.store
+            .save_aspect_set_settings(raw)
             .await
             .map_err(store_error)
     }
@@ -1065,6 +1210,9 @@ fn error(code: PlatformErrorCode, message: impl Into<String>) -> PlatformError {
 fn model_error(error_: oracle_studio_core::ModelError) -> PlatformError {
     error(PlatformErrorCode::InvalidInput, error_.to_string())
 }
+fn aspect_error(error_: AspectSetError) -> PlatformError {
+    error(PlatformErrorCode::InvalidInput, error_.to_string())
+}
 fn app_error(error_: oracle_studio_app::AppError) -> PlatformError {
     let code = if matches!(error_, oracle_studio_app::AppError::ProviderUnavailable(_)) {
         PlatformErrorCode::ProviderUnavailable
@@ -1125,6 +1273,7 @@ pub mod testing {
         vaults: RefCell<BTreeMap<String, VaultRecord>>,
         catalog: RefCell<Option<CatalogInstallInput>>,
         wheel_template_settings: RefCell<Option<String>>,
+        aspect_set_settings: RefCell<Option<String>>,
         deny_persistence: Cell<bool>,
     }
 
@@ -1137,6 +1286,12 @@ pub mod testing {
         }
         pub fn force_wheel_template_settings(&self, settings: impl Into<String>) {
             *self.wheel_template_settings.borrow_mut() = Some(settings.into());
+        }
+        pub fn wheel_template_settings(&self) -> Option<String> {
+            self.wheel_template_settings.borrow().clone()
+        }
+        pub fn force_aspect_set_settings(&self, settings: impl Into<String>) {
+            *self.aspect_set_settings.borrow_mut() = Some(settings.into());
         }
     }
 
@@ -1192,6 +1347,13 @@ pub mod testing {
         }
         fn save_wheel_template_settings(&self, settings: String) -> StoreFuture<'_, ()> {
             *self.wheel_template_settings.borrow_mut() = Some(settings);
+            Box::pin(ready(Ok(())))
+        }
+        fn load_aspect_set_settings(&self) -> StoreFuture<'_, Option<String>> {
+            Box::pin(ready(Ok(self.aspect_set_settings.borrow().clone())))
+        }
+        fn save_aspect_set_settings(&self, settings: String) -> StoreFuture<'_, ()> {
+            *self.aspect_set_settings.borrow_mut() = Some(settings);
             Box::pin(ready(Ok(())))
         }
         fn request_persistence(&self) -> StoreFuture<'_, bool> {
@@ -1898,6 +2060,115 @@ mod tests {
     }
 
     #[test]
+    fn corrupt_global_aspect_settings_fall_back_without_blocking_startup() {
+        let store = Rc::new(MemoryStore::default());
+        store.force_aspect_set_settings(
+            r#"{"schema_version":99,"sets":[],"selected_aspect_set_id":"missing"}"#,
+        );
+        let mut engine = BrowserStudioEngine::new(store);
+        let response = run(&mut engine, PlatformCommand::Initialize, 0.0).unwrap();
+        let PlatformResponse::Ready { aspect_sets, .. } = response else {
+            panic!("ready response")
+        };
+        assert_eq!(aspect_sets, AspectSetSettings::default());
+    }
+
+    #[test]
+    fn aspect_set_crud_import_export_and_selection_persist_globally() {
+        let store = Rc::new(MemoryStore::default());
+        let mut engine = BrowserStudioEngine::new(store.clone());
+        run(&mut engine, PlatformCommand::Initialize, 0.0).unwrap();
+        run(
+            &mut engine,
+            PlatformCommand::DuplicateAspectSet {
+                source_id: "builtin.standard".into(),
+                id: "user.reviewed".into(),
+                name: "Reviewed".into(),
+            },
+            1.0,
+        )
+        .unwrap();
+        run(
+            &mut engine,
+            PlatformCommand::RenameAspectSet {
+                id: "user.reviewed".into(),
+                name: "Reviewed v2".into(),
+            },
+            2.0,
+        )
+        .unwrap();
+        let exported = run(
+            &mut engine,
+            PlatformCommand::ExportAspectSet {
+                id: "user.reviewed".into(),
+            },
+            3.0,
+        )
+        .unwrap();
+        let PlatformResponse::Export { filename, bytes } = exported else {
+            panic!("export response")
+        };
+        assert_eq!(filename, "reviewed-v2.oracle-aspects.json");
+        assert!(matches!(
+            run(
+                &mut engine,
+                PlatformCommand::ImportAspectSet {
+                    bytes: bytes.clone()
+                },
+                4.0
+            ),
+            Err(PlatformError {
+                code: PlatformErrorCode::InvalidInput,
+                ..
+            })
+        ));
+        run(
+            &mut engine,
+            PlatformCommand::DeleteAspectSet {
+                id: "user.reviewed".into(),
+            },
+            5.0,
+        )
+        .unwrap();
+        run(&mut engine, PlatformCommand::ImportAspectSet { bytes }, 6.0).unwrap();
+        assert_eq!(engine.aspect_sets.selected_aspect_set_id(), "user.reviewed");
+        run(
+            &mut engine,
+            PlatformCommand::SelectAspectSet {
+                id: "builtin.tight".into(),
+            },
+            7.0,
+        )
+        .unwrap();
+        assert!(matches!(
+            run(
+                &mut engine,
+                PlatformCommand::DeleteAspectSet {
+                    id: "builtin.tight".into()
+                },
+                8.0
+            ),
+            Err(PlatformError {
+                code: PlatformErrorCode::InvalidInput,
+                ..
+            })
+        ));
+
+        let mut reloaded = BrowserStudioEngine::new(store);
+        let response = run(&mut reloaded, PlatformCommand::Initialize, 9.0).unwrap();
+        let PlatformResponse::Ready { aspect_sets, .. } = response else {
+            panic!("ready response")
+        };
+        assert_eq!(aspect_sets.selected_aspect_set_id(), "builtin.tight");
+        assert!(
+            aspect_sets
+                .sets()
+                .iter()
+                .any(|set| set.id() == "user.reviewed" && set.revision() == 2)
+        );
+    }
+
+    #[test]
     fn wheel_templates_persist_globally_and_restore_the_last_selection() {
         let store = Rc::new(MemoryStore::default());
         let mut engine = BrowserStudioEngine::new(store.clone());
@@ -1905,9 +2176,13 @@ mod tests {
         let template = oracle_studio_platform::WheelTemplate {
             id: "paper-compact".into(),
             name: "Paper Compact".into(),
+            mode: oracle_studio_platform::WheelMode::Biwheel,
             orientation: oracle_studio_platform::WheelOrientation::ZodiacZeroTop,
-            palette: oracle_studio_platform::WheelPalette::PaperLight,
+            palette: oracle_studio_platform::WheelPaletteSelection::Explicit(
+                oracle_studio_platform::WheelPalette::PaperLight,
+            ),
             label_density: oracle_studio_platform::LabelDensity::Compact,
+            layout: oracle_studio_platform::WheelLayout::Compact,
         };
         run(
             &mut engine,
@@ -1928,5 +2203,67 @@ mod tests {
         };
         assert_eq!(wheel_templates.last_selected_template_id, template.id);
         assert!(wheel_templates.templates.contains(&template));
+    }
+
+    #[test]
+    fn schema_v1_wheel_templates_migrate_without_losing_custom_ids_or_selection() {
+        let store = Rc::new(MemoryStore::default());
+        store.force_wheel_template_settings(
+            r#"{"schema_version":1,"templates":[{"id":"my-paper","name":"My Paper","orientation":"zodiac-zero-top","palette":"paper-light","label_density":"compact"}],"last_selected_template_id":"my-paper"}"#,
+        );
+        let mut engine = BrowserStudioEngine::new(store.clone());
+        let response = run(&mut engine, PlatformCommand::Initialize, 0.0).unwrap();
+        let PlatformResponse::Ready {
+            wheel_templates, ..
+        } = response
+        else {
+            panic!("ready response")
+        };
+        assert_eq!(wheel_templates.schema_version, 2);
+        assert_eq!(wheel_templates.last_selected_template_id, "my-paper");
+        let migrated = wheel_templates
+            .templates
+            .iter()
+            .find(|template| template.id == "my-paper")
+            .unwrap();
+        assert_eq!(migrated.mode, oracle_studio_platform::WheelMode::Biwheel);
+        assert_eq!(
+            migrated.palette,
+            oracle_studio_platform::WheelPaletteSelection::Explicit(
+                oracle_studio_platform::WheelPalette::PaperLight
+            )
+        );
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&store.wheel_template_settings().unwrap())
+                .unwrap()["schema_version"],
+            2
+        );
+    }
+
+    #[test]
+    fn protected_wheel_templates_are_selectable_but_not_mutable_or_removable() {
+        let store = Rc::new(MemoryStore::default());
+        let mut engine = BrowserStudioEngine::new(store);
+        run(&mut engine, PlatformCommand::Initialize, 0.0).unwrap();
+        let protected = engine.wheel_templates.templates[0].clone();
+        assert!(protected.is_protected());
+        let save_error = run(
+            &mut engine,
+            PlatformCommand::SaveWheelTemplate {
+                template: protected.clone(),
+            },
+            1.0,
+        )
+        .unwrap_err();
+        assert_eq!(save_error.code, PlatformErrorCode::InvalidInput);
+        let remove_error = run(
+            &mut engine,
+            PlatformCommand::RemoveWheelTemplate {
+                template_id: protected.id,
+            },
+            2.0,
+        )
+        .unwrap_err();
+        assert_eq!(remove_error.code, PlatformErrorCode::InvalidInput);
     }
 }

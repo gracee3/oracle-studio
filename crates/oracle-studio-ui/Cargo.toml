@@ -22,6 +22,7 @@ demo = ["dep:oracle-studio-demo"]
 [dependencies]
 js-sys.workspace = true
 leptos.workspace = true
+oracle-studio-aspect-sets = { version = "0.1.0", path = "../oracle-studio-aspect-sets" }
 oracle-studio-core = { version = "0.1.0", path = "../oracle-studio-core" }
 oracle-studio-demo = { version = "0.1.0", path = "../oracle-studio-demo", optional = true, default-features = false }
 oracle-studio-chart-view = { version = "0.1.0", path = "../oracle-studio-chart-view" }
@@ -47,6 +48,7 @@ web-sys = { workspace = true, features = [
     "HtmlTextAreaElement",
     "KeyboardEvent",
     "MouseEvent",
+    "MediaQueryList",
     "PointerEvent",
     "Response",
     "Storage",
