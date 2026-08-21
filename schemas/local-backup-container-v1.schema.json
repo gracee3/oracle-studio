@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oracle-studio.invalid/schemas/local-backup-container-v1.schema.json",
+  "title": "Oracle Studio aggregate local backup v1 (architecture sketch)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "container_id", "created_at", "entries"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "container_id": { "$ref": "#/$defs/uuid" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "entries": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1024,
+      "items": {
+        "oneOf": [
+          { "$ref": "#/$defs/encrypted_vault" },
+          { "$ref": "#/$defs/public_settings" }
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "content_id": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "encrypted_vault": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "vault_id",
+        "title_hint",
+        "revision",
+        "media_type",
+        "encoding",
+        "data"
+      ],
+      "properties": {
+        "kind": { "const": "encrypted_vault" },
+        "vault_id": { "$ref": "#/$defs/uuid" },
+        "title_hint": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "revision": { "$ref": "#/$defs/content_id" },
+        "media_type": { "const": "application/vnd.oracle-studio.vault-v2" },
+        "encoding": { "const": "base64" },
+        "data": {
+          "type": "string",
+          "contentEncoding": "base64",
+          "$comment": "The bounded implementation must inspect the decoded envelope and require its authenticated ID/title and SHA-256 revision to match these untrusted hints."
+        }
+      }
+    },
+    "public_settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "media_type", "document"],
+      "properties": {
+        "kind": { "const": "public_settings" },
+        "media_type": { "const": "application/vnd.oracle-studio.public-settings-v1+json" },
+        "document": { "$ref": "local-settings-bundle-v1.schema.json" }
+      }
+    }
+  }
+}

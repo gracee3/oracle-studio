@@ -3,8 +3,9 @@
 Oracle Studio is an open, browser-local astrology workspace built with Leptos
 and Rust/WebAssembly. It has no application server, account, bearer token, CLI,
 native filesystem storage, or runtime network dependency. A static container
-serves the application; encrypted vaults, catalog objects, and settings live in
-the browser's IndexedDB.
+serves the application. Encrypted vaults, catalog objects, and worker-owned
+settings live in IndexedDB; small prepaint and layout preferences live in
+`localStorage`.
 
 The complete Astraeus calculation engine is maintained in this repository as
 non-publishable `astraeus-*` workspace crates. The subsystem retains its crate
@@ -116,6 +117,7 @@ ignored `var/demo`. No stable encrypted vault is committed. See
 
 See [architecture](docs/STUDIO_ARCHITECTURE.md),
 [schema v5](docs/COMPOSITION_MODEL.md), [envelope v2](docs/VAULT.md),
+[local persistence architecture](docs/PERSISTENCE_ARCHITECTURE.md),
 [aspect-set contract](docs/ASPECT_SETS.md), and the
 [GeoNames contract](docs/LOCATION_CATALOG.md). The presentation-only theme and
 template contract is documented in [chart rendering](docs/CHART_RENDERING.md).
