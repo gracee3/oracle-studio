@@ -7,11 +7,13 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 mod studio;
+mod workbench;
 
 pub use studio::*;
+pub use workbench::*;
 
 pub const VAULT_DOCUMENT_SCHEMA_VERSION: u32 = 4;
-pub const ASTRAEUS_REVISION: &str = "e5d295222018178c46fb882a302a57c810bf8bd1";
+pub const ASTRAEUS_REVISION: &str = "8637ceb64fa11a06c8680b46cb4b57c71d94d37f";
 const MAX_TEXT_BYTES: usize = 32 * 1024;
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]

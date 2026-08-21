@@ -10,4 +10,5 @@ rust-version.workspace = true
 [dependencies]
 oracle-studio-core = { version = "0.1.0", path = "../oracle-studio-core" }
 oracle-studio-location-catalog = { version = "0.1.0", path = "../oracle-studio-location-catalog" }
+oracle-studio-chart-view = { version = "0.1.0", path = "../oracle-studio-chart-view" }
 serde.workspace = true

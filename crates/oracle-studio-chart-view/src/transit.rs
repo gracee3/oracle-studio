@@ -70,6 +70,31 @@ pub struct TransitTimeline {
     pub frames: Vec<TransitFrame>,
 }
 
+/// Apply session-only point and aspect-kind display filters to both rings.
+///
+/// Any aspect connected to a hidden endpoint is removed even when its kind is
+/// enabled.
+pub fn filtered_scene(
+    scene: &ChartScene,
+    visible_point_ids: &std::collections::BTreeSet<String>,
+    visible_aspect_kinds: &std::collections::BTreeSet<String>,
+) -> ChartScene {
+    let mut filtered = scene.clone();
+    filtered
+        .natal
+        .points
+        .retain(|point| visible_point_ids.contains(&point.id));
+    filtered
+        .transit
+        .retain(|point| visible_point_ids.contains(&point.id));
+    filtered.aspects.retain(|aspect| {
+        visible_aspect_kinds.contains(&aspect.kind)
+            && visible_point_ids.contains(&aspect.natal_point_id)
+            && visible_point_ids.contains(&aspect.transit_point_id)
+    });
+    filtered
+}
+
 #[derive(Debug, Error)]
 pub enum TransitTimelineError {
     #[error("invalid Astraeus comparison artifact: {0}")]
@@ -442,5 +467,53 @@ pub(crate) fn stable_slug(value: &str) -> String {
         "unknown".to_owned()
     } else {
         slug
+    }
+}
+
+#[cfg(test)]
+mod filter_tests {
+    use std::collections::BTreeSet;
+
+    use super::*;
+
+    fn point(id: &str) -> ChartPoint {
+        ChartPoint {
+            id: id.into(),
+            longitude_degrees: 0.0,
+            longitude_speed_degrees_per_day: 1.0,
+            retrograde: false,
+        }
+    }
+
+    #[test]
+    fn hiding_a_point_filters_both_rings_and_every_connected_aspect() {
+        let scene = ChartScene {
+            timestamp: "2026-08-20T00:00:00Z".into(),
+            natal: ChartRing {
+                timestamp: "2000-01-01T00:00:00Z".into(),
+                zodiac: "Tropical".into(),
+                house_system: "Placidus".into(),
+                points: vec![point("Sun"), point("Moon")],
+                houses: (0..12).map(|index| f64::from(index) * 30.0).collect(),
+                ascendant_degrees: 0.0,
+            },
+            transit_zodiac: "Tropical".into(),
+            transit_house_system: "Placidus".into(),
+            transit: vec![point("Sun"), point("Moon")],
+            aspects: vec![ChartAspect {
+                id: "sun-moon-square".into(),
+                natal_point_id: "Sun".into(),
+                transit_point_id: "Moon".into(),
+                kind: "Square".into(),
+                orb_degrees: 1.0,
+                phase: None,
+            }],
+        };
+        let visible_points = BTreeSet::from(["Moon".into()]);
+        let visible_aspects = BTreeSet::from(["Square".into()]);
+        let filtered = filtered_scene(&scene, &visible_points, &visible_aspects);
+        assert_eq!(filtered.natal.points, vec![point("Moon")]);
+        assert_eq!(filtered.transit, vec![point("Moon")]);
+        assert!(filtered.aspects.is_empty());
     }
 }

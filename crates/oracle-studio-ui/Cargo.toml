@@ -22,6 +22,7 @@ csr = ["leptos/csr"]
 js-sys.workspace = true
 leptos.workspace = true
 oracle-studio-core = { version = "0.1.0", path = "../oracle-studio-core" }
+oracle-studio-chart-view = { version = "0.1.0", path = "../oracle-studio-chart-view" }
 oracle-studio-location-catalog = { version = "0.1.0", path = "../oracle-studio-location-catalog" }
 oracle-studio-platform = { version = "0.1.0", path = "../oracle-studio-platform" }
 oracle-studio-worker = { version = "0.1.0", path = "../oracle-studio-worker" }
@@ -33,6 +34,7 @@ web-sys = { workspace = true, features = [
     "Document",
     "Element",
     "Event",
+    "EventTarget",
     "File",
     "FileList",
     "HtmlAnchorElement",
@@ -40,6 +42,9 @@ web-sys = { workspace = true, features = [
     "HtmlInputElement",
     "HtmlSelectElement",
     "HtmlTextAreaElement",
+    "KeyboardEvent",
+    "MouseEvent",
+    "PointerEvent",
     "Url",
     "Window",
 ] }

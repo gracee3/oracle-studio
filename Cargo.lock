@@ -74,7 +74,7 @@ dependencies = [
 [[package]]
 name = "astraeus-artifacts"
 version = "0.1.0"
-source = "git+https://github.com/gracee3/astraeus?rev=e5d295222018178c46fb882a302a57c810bf8bd1#e5d295222018178c46fb882a302a57c810bf8bd1"
+source = "git+https://github.com/gracee3/astraeus?rev=8637ceb64fa11a06c8680b46cb4b57c71d94d37f#8637ceb64fa11a06c8680b46cb4b57c71d94d37f"
 dependencies = [
  "astraeus-core",
  "serde",
@@ -86,7 +86,7 @@ dependencies = [
 [[package]]
 name = "astraeus-comparison"
 version = "0.1.0"
-source = "git+https://github.com/gracee3/astraeus?rev=e5d295222018178c46fb882a302a57c810bf8bd1#e5d295222018178c46fb882a302a57c810bf8bd1"
+source = "git+https://github.com/gracee3/astraeus?rev=8637ceb64fa11a06c8680b46cb4b57c71d94d37f#8637ceb64fa11a06c8680b46cb4b57c71d94d37f"
 dependencies = [
  "astraeus-core",
  "astraeus-derived",
@@ -100,7 +100,7 @@ dependencies = [
 [[package]]
 name = "astraeus-core"
 version = "0.1.0"
-source = "git+https://github.com/gracee3/astraeus?rev=e5d295222018178c46fb882a302a57c810bf8bd1#e5d295222018178c46fb882a302a57c810bf8bd1"
+source = "git+https://github.com/gracee3/astraeus?rev=8637ceb64fa11a06c8680b46cb4b57c71d94d37f#8637ceb64fa11a06c8680b46cb4b57c71d94d37f"
 dependencies = [
  "chrono",
  "serde",
@@ -110,7 +110,7 @@ dependencies = [
 [[package]]
 name = "astraeus-derived"
 version = "0.1.0"
-source = "git+https://github.com/gracee3/astraeus?rev=e5d295222018178c46fb882a302a57c810bf8bd1#e5d295222018178c46fb882a302a57c810bf8bd1"
+source = "git+https://github.com/gracee3/astraeus?rev=8637ceb64fa11a06c8680b46cb4b57c71d94d37f#8637ceb64fa11a06c8680b46cb4b57c71d94d37f"
 dependencies = [
  "astraeus-artifacts",
  "astraeus-core",
@@ -122,9 +122,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "astraeus-moshier"
+version = "0.1.0"
+source = "git+https://github.com/gracee3/astraeus?rev=8637ceb64fa11a06c8680b46cb4b57c71d94d37f#8637ceb64fa11a06c8680b46cb4b57c71d94d37f"
+dependencies = [
+ "astraeus-core",
+ "chrono",
+ "swisseph-rs",
+]
+
+[[package]]
 name = "astraeus-specifications"
 version = "0.1.0"
-source = "git+https://github.com/gracee3/astraeus?rev=e5d295222018178c46fb882a302a57c810bf8bd1#e5d295222018178c46fb882a302a57c810bf8bd1"
+source = "git+https://github.com/gracee3/astraeus?rev=8637ceb64fa11a06c8680b46cb4b57c71d94d37f#8637ceb64fa11a06c8680b46cb4b57c71d94d37f"
 dependencies = [
  "astraeus-core",
  "serde",
@@ -135,7 +145,7 @@ dependencies = [
 [[package]]
 name = "astraeus-techniques"
 version = "0.1.0"
-source = "git+https://github.com/gracee3/astraeus?rev=e5d295222018178c46fb882a302a57c810bf8bd1#e5d295222018178c46fb882a302a57c810bf8bd1"
+source = "git+https://github.com/gracee3/astraeus?rev=8637ceb64fa11a06c8680b46cb4b57c71d94d37f#8637ceb64fa11a06c8680b46cb4b57c71d94d37f"
 dependencies = [
  "astraeus-artifacts",
  "astraeus-core",
@@ -238,6 +248,12 @@ checksum = "b1f45e9417d87227c7a56d22e471c6206462cba514c7590c09aff4cf6d1ddcad"
 dependencies = [
  "serde",
 ]
+
+[[package]]
+name = "bitflags"
+version = "2.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da"
 
 [[package]]
 name = "blake2"
@@ -1278,6 +1294,7 @@ dependencies = [
  "astraeus-core",
  "astraeus-derived",
  "astraeus-specifications",
+ "oracle-studio-chart-view",
  "oracle-studio-core",
  "thiserror 2.0.12",
 ]
@@ -1286,6 +1303,7 @@ dependencies = [
 name = "oracle-studio-browser"
 version = "0.1.0"
 dependencies = [
+ "astraeus-moshier",
  "futures",
  "js-sys",
  "oracle-studio-app",
@@ -1361,6 +1379,7 @@ dependencies = [
 name = "oracle-studio-platform"
 version = "0.1.0"
 dependencies = [
+ "oracle-studio-chart-view",
  "oracle-studio-core",
  "oracle-studio-location-catalog",
  "serde",
@@ -1372,6 +1391,7 @@ version = "0.1.0"
 dependencies = [
  "js-sys",
  "leptos",
+ "oracle-studio-chart-view",
  "oracle-studio-core",
  "oracle-studio-location-catalog",
  "oracle-studio-platform",
@@ -1986,6 +2006,15 @@ name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
+
+[[package]]
+name = "swisseph-rs"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d95cf848ff566c12171b0fcfd8c3acbe68b5fe4c57822b701e215a5e38ca7d7"
+dependencies = [
+ "bitflags",
+]
 
 [[package]]
 name = "syn"

@@ -657,12 +657,14 @@ fn svg_is_deterministic_accessible_escaped_and_oriented() {
         &scene,
         &RenderOptions {
             orientation: WheelOrientation::AscendantLeft,
+            ..RenderOptions::default()
         },
     );
     let zodiac = render_biwheel_svg(
         &scene,
         &RenderOptions {
             orientation: WheelOrientation::ZodiacZeroTop,
+            ..RenderOptions::default()
         },
     );
     assert_eq!(
@@ -671,6 +673,7 @@ fn svg_is_deterministic_accessible_escaped_and_oriented() {
             &scene,
             &RenderOptions {
                 orientation: WheelOrientation::AscendantLeft,
+                ..RenderOptions::default()
             }
         )
     );
@@ -679,6 +682,11 @@ fn svg_is_deterministic_accessible_escaped_and_oriented() {
     assert!(ascendant.contains("<title id=\"chart-title\">Transit biwheel</title>"));
     assert!(!ascendant.contains(&scene.timestamp));
     assert!(ascendant.contains("id=\"natal-point-sun\""));
+    assert!(ascendant.contains("role=\"button\" tabindex=\"0\""));
+    assert!(ascendant.contains("data-interaction=\"point\" data-layer=\"natal\""));
+    assert!(ascendant.contains("data-interaction=\"aspect\""));
+    assert!(ascendant.contains("data-palette=\"studio-dark\""));
+    assert!(ascendant.contains("data-label-density=\"full\""));
     assert!(ascendant.contains("id=\"transit-tick-sun\""));
     assert!(ascendant.contains("id=\"aspect-layer\""));
     assert!(!ascendant.contains("NaN"));

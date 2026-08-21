@@ -2,16 +2,21 @@
 
 use std::{collections::BTreeMap, future::Future, pin::Pin, rc::Rc};
 
+use astraeus_moshier::MoshierEphemerisAdapter;
 use oracle_studio_app::{
-    ChartCalculationRequest, ComparisonCalculationRequest, UnavailableEphemeris, calculate_chart,
-    calculate_comparison,
+    ChartCalculationRequest, ComparisonCalculationRequest, PreparedWorkbenchPreview,
+    WorkbenchCalculationRequest, calculate_chart, calculate_comparison,
+    calculate_workbench_preview, commit_workbench_save_as, commit_workbench_update,
 };
-use oracle_studio_core::{PersonProfile, VaultDocument, resolve_local_time, select_local_time};
+use oracle_studio_core::{
+    PersonProfile, VaultDocument, generate_unique_id, resolve_local_time, select_local_time,
+};
 use oracle_studio_location_catalog::{CatalogInstallInput, CatalogMetadata, LocationCatalog};
 use oracle_studio_platform::{
     ActiveWorkspace, CapabilityStatus, ChartSummary, EntitySummary, EphemerisStatus,
-    PlatformCommand, PlatformError, PlatformErrorCode, PlatformResponse, VaultLockState,
-    VaultSummary, WorkspaceSummary,
+    PlatformCommand, PlatformError, PlatformErrorCode, PlatformResponse, PreviewSaveMode,
+    VaultLockState, VaultSummary, WheelTemplateSettings, WorkbenchChartSummary,
+    WorkbenchPresentation, WorkspaceSummary,
 };
 use oracle_studio_vault::{UnlockedVault, create, inspect, open, revision};
 use serde::{Deserialize, Serialize};
@@ -31,6 +36,8 @@ pub trait BrowserStore {
         input: CatalogInstallInput,
         metadata: CatalogMetadata,
     ) -> StoreFuture<'_, ()>;
+    fn load_wheel_template_settings(&self) -> StoreFuture<'_, Option<String>>;
+    fn save_wheel_template_settings(&self, settings: String) -> StoreFuture<'_, ()>;
     fn request_persistence(&self) -> StoreFuture<'_, bool>;
 }
 
@@ -91,6 +98,11 @@ pub struct BrowserStudioEngine {
     catalog: Option<LocationCatalog>,
     persistence_requested: bool,
     persistence_granted: Option<bool>,
+    wheel_templates: WheelTemplateSettings,
+    pending_preview: Option<(
+        oracle_studio_platform::PreviewGeneration,
+        PreparedWorkbenchPreview,
+    )>,
 }
 
 impl BrowserStudioEngine {
@@ -106,6 +118,8 @@ impl BrowserStudioEngine {
             catalog: None,
             persistence_requested: false,
             persistence_granted: None,
+            wheel_templates: WheelTemplateSettings::default(),
+            pending_preview: None,
         }
     }
 
@@ -126,6 +140,7 @@ impl BrowserStudioEngine {
                     vaults: self.vault_summaries(),
                     workspace: self.workspace_summary(),
                     capabilities: self.capabilities(),
+                    wheel_templates: self.wheel_templates.clone(),
                 })
             }
             PlatformCommand::CreateScratch => {
@@ -313,6 +328,37 @@ impl BrowserStudioEngine {
                 self.commit_document(document, now_millis, now).await?;
                 Ok(self.updated())
             }
+            PlatformCommand::UpdateChartBasics {
+                chart_id,
+                label,
+                role,
+                local_input,
+            } => {
+                let existing = self
+                    .active_document()?
+                    .chart_definitions()
+                    .iter()
+                    .find(|chart| chart.id() == &chart_id)
+                    .ok_or_else(|| error(PlatformErrorCode::NotFound, "chart was not found"))?;
+                let chart = oracle_studio_core::ChartDefinition::new(
+                    existing.id().clone(),
+                    label,
+                    role,
+                    existing.person_id().cloned(),
+                    local_input,
+                    existing.calculation_options().clone(),
+                    existing.ordered_points().to_vec(),
+                    existing.default_natal(),
+                )
+                .map_err(model_error)?;
+                let document = self
+                    .active_document()?
+                    .clone()
+                    .with_chart(chart)
+                    .map_err(model_error)?;
+                self.commit_document(document, now_millis, now).await?;
+                Ok(self.updated())
+            }
             PlatformCommand::ResolveLocalTime { input, choice } => {
                 if choice.is_some() {
                     let selected = select_local_time(&input, choice).map_err(model_error)?;
@@ -341,7 +387,7 @@ impl BrowserStudioEngine {
                         ambiguous_time_choice: choice,
                         calculated_at,
                     },
-                    &UnavailableEphemeris,
+                    &MoshierEphemerisAdapter::new(),
                 )
                 .map_err(app_error)?;
                 self.commit_document(document, now_millis, now).await?;
@@ -372,6 +418,152 @@ impl BrowserStudioEngine {
                 .map_err(app_error)?;
                 self.commit_document(document, now_millis, now).await?;
                 Ok(self.updated())
+            }
+            PlatformCommand::WorkbenchPreview { request } => {
+                let prepared = calculate_workbench_preview(
+                    self.active_document()?,
+                    WorkbenchCalculationRequest {
+                        inner_chart_definition_id: request.inner_chart_definition_id,
+                        outer_chart_definition_id: request.outer_chart_definition_id,
+                        inner_saved_location_id: request.inner_saved_location_id,
+                        outer_saved_location_id: request.outer_saved_location_id,
+                        outer_local_input: request.outer_local_input,
+                        outer_ambiguous_time_choice: request.outer_ambiguous_time_choice,
+                    },
+                    &MoshierEphemerisAdapter::new(),
+                )
+                .map_err(app_error)?;
+                let presentation = workbench_presentation(
+                    request.generation,
+                    &prepared,
+                    request.adjustment_notice,
+                );
+                self.pending_preview = Some((request.generation, prepared));
+                Ok(PlatformResponse::WorkbenchPreview(presentation))
+            }
+            PlatformCommand::CommitWorkbenchPreview {
+                generation,
+                save_mode,
+            } => {
+                let (pending_generation, preview) =
+                    self.pending_preview.as_ref().ok_or_else(|| {
+                        error(
+                            PlatformErrorCode::NotFound,
+                            "no workbench preview is available",
+                        )
+                    })?;
+                if *pending_generation != generation {
+                    return Err(error(
+                        PlatformErrorCode::Conflict,
+                        "the workbench preview is stale; wait for the newest calculation",
+                    ));
+                }
+                let document = self.active_document()?;
+                let calculation_ids = document
+                    .chart_calculations()
+                    .iter()
+                    .map(|calculation| calculation.id().as_str().to_owned())
+                    .collect();
+                let calculation_id = generate_unique_id(
+                    "chart-calculation",
+                    &format!("{} calculation", preview.outer.definition.label()),
+                    &calculation_ids,
+                )
+                .map_err(model_error)?;
+                let updated = match save_mode {
+                    PreviewSaveMode::UpdateChart => {
+                        commit_workbench_update(document, preview, calculation_id, now.clone())
+                    }
+                    PreviewSaveMode::SaveAs { name } => {
+                        if name.trim().is_empty() {
+                            return Err(error(
+                                PlatformErrorCode::InvalidInput,
+                                "Save As requires a new chart name",
+                            ));
+                        }
+                        let chart_ids = document
+                            .chart_definitions()
+                            .iter()
+                            .map(|chart| chart.id().as_str().to_owned())
+                            .collect();
+                        let chart_id =
+                            generate_unique_id("chart", &name, &chart_ids).map_err(model_error)?;
+                        commit_workbench_save_as(
+                            document,
+                            preview,
+                            chart_id,
+                            name,
+                            calculation_id,
+                            now.clone(),
+                        )
+                    }
+                }
+                .map_err(app_error)?;
+                self.commit_document(updated, now_millis, now).await?;
+                self.pending_preview = None;
+                Ok(self.updated())
+            }
+            PlatformCommand::SaveWheelTemplate { template } => {
+                template.validate()?;
+                if let Some(existing) = self
+                    .wheel_templates
+                    .templates
+                    .iter_mut()
+                    .find(|existing| existing.id == template.id)
+                {
+                    *existing = template.clone();
+                } else {
+                    self.wheel_templates.templates.push(template.clone());
+                }
+                self.wheel_templates.last_selected_template_id = template.id;
+                self.persist_wheel_templates().await?;
+                Ok(PlatformResponse::WheelTemplates(
+                    self.wheel_templates.clone(),
+                ))
+            }
+            PlatformCommand::SelectWheelTemplate { template_id } => {
+                if !self
+                    .wheel_templates
+                    .templates
+                    .iter()
+                    .any(|template| template.id == template_id)
+                {
+                    return Err(error(
+                        PlatformErrorCode::NotFound,
+                        "wheel template was not found",
+                    ));
+                }
+                self.wheel_templates.last_selected_template_id = template_id;
+                self.persist_wheel_templates().await?;
+                Ok(PlatformResponse::WheelTemplates(
+                    self.wheel_templates.clone(),
+                ))
+            }
+            PlatformCommand::RemoveWheelTemplate { template_id } => {
+                if self.wheel_templates.templates.len() == 1 {
+                    return Err(error(
+                        PlatformErrorCode::InvalidInput,
+                        "at least one wheel template must remain",
+                    ));
+                }
+                let before = self.wheel_templates.templates.len();
+                self.wheel_templates
+                    .templates
+                    .retain(|template| template.id != template_id);
+                if before == self.wheel_templates.templates.len() {
+                    return Err(error(
+                        PlatformErrorCode::NotFound,
+                        "wheel template was not found",
+                    ));
+                }
+                if self.wheel_templates.last_selected_template_id == template_id {
+                    self.wheel_templates.last_selected_template_id =
+                        self.wheel_templates.templates[0].id.clone();
+                }
+                self.persist_wheel_templates().await?;
+                Ok(PlatformResponse::WheelTemplates(
+                    self.wheel_templates.clone(),
+                ))
             }
             PlatformCommand::SetWorkspace { workspace } => {
                 let document = self
@@ -433,6 +625,16 @@ impl BrowserStudioEngine {
             self.catalog = Some(LocationCatalog::from_distribution(&input).map_err(
                 |catalog_error| error(PlatformErrorCode::Storage, catalog_error.to_string()),
             )?);
+        }
+        if let Some(raw) = self
+            .store
+            .load_wheel_template_settings()
+            .await
+            .map_err(store_error)?
+            && let Ok(settings) = serde_json::from_str::<WheelTemplateSettings>(&raw)
+            && settings.validate().is_ok()
+        {
+            self.wheel_templates = settings;
         }
         self.loaded = true;
         Ok(())
@@ -540,6 +742,17 @@ impl BrowserStudioEngine {
         }
     }
 
+    async fn persist_wheel_templates(&self) -> Result<(), PlatformError> {
+        self.wheel_templates.validate()?;
+        let raw = serde_json::to_string(&self.wheel_templates).map_err(|serialization_error| {
+            error(PlatformErrorCode::Internal, serialization_error.to_string())
+        })?;
+        self.store
+            .save_wheel_template_settings(raw)
+            .await
+            .map_err(store_error)
+    }
+
     fn updated(&self) -> PlatformResponse {
         PlatformResponse::Updated {
             vaults: self.vault_summaries(),
@@ -606,6 +819,9 @@ impl BrowserStudioEngine {
                             chart.local_input().local_time(),
                             chart.local_input().time_zone()
                         ),
+                        local_date: chart.local_input().local_date().into(),
+                        local_time: chart.local_input().local_time().into(),
+                        time_zone: chart.local_input().time_zone().into(),
                         current_calculation_id: chart
                             .current_calculation_id()
                             .map(|id| id.as_str().into()),
@@ -627,12 +843,39 @@ impl BrowserStudioEngine {
 
     fn capabilities(&self) -> CapabilityStatus {
         CapabilityStatus {
-            ephemeris: EphemerisStatus::Unavailable,
+            ephemeris: EphemerisStatus::Moshier,
             catalog: self.catalog.as_ref().map(|catalog| catalog.metadata().clone()),
             persistence_requested: self.persistence_requested,
             persistence_granted: self.persistence_granted,
             backup_warning: "Browser eviction or profile deletion can remove local vaults. Export portable .oracle-vault backups regularly.".into(),
         }
+    }
+}
+
+fn workbench_presentation(
+    generation: oracle_studio_platform::PreviewGeneration,
+    preview: &PreparedWorkbenchPreview,
+    adjustment_notice: Option<String>,
+) -> WorkbenchPresentation {
+    let summary = |preview: &oracle_studio_app::PreparedChartPreview| WorkbenchChartSummary {
+        id: preview.definition.id().as_str().into(),
+        label: preview.definition.label().into(),
+        role: format!("{:?}", preview.definition.role()).to_lowercase(),
+        local_input: preview.local_input.clone(),
+        location_label: preview.location.label().into(),
+        zodiac: format!("{:?}", preview.definition.calculation_options().zodiac()),
+        house_system: format!(
+            "{:?}",
+            preview.definition.calculation_options().house_system()
+        ),
+        utc_offset_seconds: preview.resolved_time.utc_offset_seconds(),
+    };
+    WorkbenchPresentation {
+        generation,
+        inner: summary(&preview.inner),
+        outer: summary(&preview.outer),
+        scene: preview.scene.clone(),
+        adjustment_notice,
     }
 }
 
@@ -725,6 +968,7 @@ pub mod testing {
     pub struct MemoryStore {
         vaults: RefCell<BTreeMap<String, VaultRecord>>,
         catalog: RefCell<Option<CatalogInstallInput>>,
+        wheel_template_settings: RefCell<Option<String>>,
         deny_persistence: Cell<bool>,
     }
 
@@ -734,6 +978,9 @@ pub mod testing {
         }
         pub fn force_record(&self, record: VaultRecord) {
             self.vaults.borrow_mut().insert(record.id.clone(), record);
+        }
+        pub fn force_wheel_template_settings(&self, settings: impl Into<String>) {
+            *self.wheel_template_settings.borrow_mut() = Some(settings.into());
         }
     }
 
@@ -782,6 +1029,13 @@ pub mod testing {
             _metadata: CatalogMetadata,
         ) -> StoreFuture<'_, ()> {
             *self.catalog.borrow_mut() = Some(input);
+            Box::pin(ready(Ok(())))
+        }
+        fn load_wheel_template_settings(&self) -> StoreFuture<'_, Option<String>> {
+            Box::pin(ready(Ok(self.wheel_template_settings.borrow().clone())))
+        }
+        fn save_wheel_template_settings(&self, settings: String) -> StoreFuture<'_, ()> {
+            *self.wheel_template_settings.borrow_mut() = Some(settings);
             Box::pin(ready(Ok(())))
         }
         fn request_persistence(&self) -> StoreFuture<'_, bool> {
@@ -1082,5 +1336,55 @@ mod tests {
     fn export_filenames_never_collapse_to_an_empty_basename() {
         assert_eq!(safe_filename("星"), "oracle-vault");
         assert_eq!(safe_filename("  Portable / Studio  "), "portable-studio");
+    }
+
+    #[test]
+    fn corrupt_global_wheel_settings_fall_back_without_blocking_startup() {
+        let store = Rc::new(MemoryStore::default());
+        store.force_wheel_template_settings(
+            r#"{"schema_version":99,"templates":[],"last_selected_template_id":"missing"}"#,
+        );
+        let mut engine = BrowserStudioEngine::new(store);
+        let response = run(&mut engine, PlatformCommand::Initialize, 0.0).unwrap();
+        let PlatformResponse::Ready {
+            wheel_templates, ..
+        } = response
+        else {
+            panic!("ready response")
+        };
+        assert_eq!(wheel_templates, WheelTemplateSettings::default());
+    }
+
+    #[test]
+    fn wheel_templates_persist_globally_and_restore_the_last_selection() {
+        let store = Rc::new(MemoryStore::default());
+        let mut engine = BrowserStudioEngine::new(store.clone());
+        run(&mut engine, PlatformCommand::Initialize, 0.0).unwrap();
+        let template = oracle_studio_platform::WheelTemplate {
+            id: "paper-compact".into(),
+            name: "Paper Compact".into(),
+            orientation: oracle_studio_platform::WheelOrientation::ZodiacZeroTop,
+            palette: oracle_studio_platform::WheelPalette::PaperLight,
+            label_density: oracle_studio_platform::LabelDensity::Compact,
+        };
+        run(
+            &mut engine,
+            PlatformCommand::SaveWheelTemplate {
+                template: template.clone(),
+            },
+            1.0,
+        )
+        .unwrap();
+
+        let mut reloaded = BrowserStudioEngine::new(store);
+        let response = run(&mut reloaded, PlatformCommand::Initialize, 2.0).unwrap();
+        let PlatformResponse::Ready {
+            wheel_templates, ..
+        } = response
+        else {
+            panic!("ready response")
+        };
+        assert_eq!(wheel_templates.last_selected_template_id, template.id);
+        assert!(wheel_templates.templates.contains(&template));
     }
 }

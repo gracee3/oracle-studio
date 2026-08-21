@@ -21,11 +21,19 @@ the browser's IndexedDB.
   Web Worker; manual location entry is always available.
 - Render validated Astraeus chart presentations with the retained Rust SVG and
   animated-HTML renderer.
+- Use a full-viewport, hash-addressable Workbench, Settings, and Files shell;
+  sidebars and route content scroll independently while the chart wheel remains
+  the dominant surface.
+- Preview the fixed inner chart against a moving outer chart with exact civil-
+  time and elapsed-time controls, then explicitly update or clone the outer
+  definition.
+- Save versioned, global wheel templates containing visual options only.
 
-The production build intentionally reports **ephemeris provider unavailable**.
-It never fabricates a chart result. Deterministic providers exist only behind
-test/acceptance configuration; a future pure-Rust or WASM Swiss provider can be
-compiled into the worker through Astraeus' existing `EphemerisAdapter`.
+The production worker compiles Astraeus's pure-Rust Moshier adapter using
+`swisseph-rs` with file and default features disabled. Results explicitly carry
+Moshier provenance. Unsupported dates and Chiron fail visibly; Oracle Studio
+never substitutes a provider or fabricates a chart result. Decrypted documents,
+calculation work, and immutable commits remain worker-owned.
 
 ## Build
 

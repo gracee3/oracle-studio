@@ -2,7 +2,7 @@
 
 These three compact JSON files are original, deterministic test/demo data made
 for Oracle Studio. They were produced with Astraeus's `DeterministicMock` at
-revision `e5d295222018178c46fb882a302a57c810bf8bd1`; they are not ephemeris
+revision `8637ceb64fa11a06c8680b46cb4b57c71d94d37f`; they are not ephemeris
 results and do not describe a person, event, or real location.
 
 The fixed first layer uses the deliberately round timestamp

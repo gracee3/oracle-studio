@@ -34,6 +34,13 @@ permits only same-origin scripts, workers, fonts, WASM, and catalog fetches.
 There are no cross-origin runtime requests. Direct non-loopback deployment
 requires HTTPS supplied outside the static container.
 
-Future pure-Rust/WASM ephemeris code compiles into the worker behind Astraeus'
-`EphemerisAdapter`. Production currently returns provider unavailable; test-only
-deterministic adapters cannot be selected by production UI input.
+Astraeus's pure-Rust Moshier `EphemerisAdapter` compiles directly into the
+worker. Its `swisseph-rs` dependency has default and file features disabled, so
+the static browser build does not fetch ephemeris files. Unsupported dates and
+Chiron return explicit provider errors. Test-only deterministic adapters cannot
+be selected by production UI input.
+
+The UI receives only `WorkspaceSummary`, `WorkbenchPresentation`, global wheel
+template settings, and render-ready `ChartScene` values. Preview calculations
+do not mutate a document. The worker retains one pending generation and commits
+it atomically only after Update Chart or Save As.

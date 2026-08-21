@@ -8,6 +8,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+astraeus-moshier = { version = "0.1.0", git = "https://github.com/gracee3/astraeus", rev = "8637ceb64fa11a06c8680b46cb4b57c71d94d37f" }
 futures.workspace = true
 js-sys.workspace = true
 oracle-studio-app = { version = "0.1.0", path = "../oracle-studio-app" }

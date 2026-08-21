@@ -26,5 +26,5 @@ a saved location never changes a calculation's embedded snapshot.
 
 Text and collections are bounded, unknown fields are rejected, and hostile but
 valid Unicode/HTML-like text round-trips as data. The current Astraeus revision
-is `e5d295222018178c46fb882a302a57c810bf8bd1`; no sibling path dependency is
+is `8637ceb64fa11a06c8680b46cb4b57c71d94d37f`; no sibling path dependency is
 used.

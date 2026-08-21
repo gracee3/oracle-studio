@@ -1,5 +1,15 @@
 # Third-party notices
 
+## swisseph-rs
+
+Oracle Studio uses `swisseph-rs` 0.2.0 through Astraeus's Moshier adapter with
+default and file features disabled.
+
+- Project: <https://github.com/ninthhousestudios/swisseph-rs>
+- Version: 0.2.0
+- License: AGPL-3.0-or-later
+- Use: pure-Rust Moshier planetary and house calculations in the Web Worker
+
 ## Astronomicon font
 
 Oracle Studio embeds the original, unmodified Astronomicon font:
