@@ -462,6 +462,19 @@ mod builder {
                 assert_eq!(opened.document(), &bundle.document);
             }
         }
+
+        #[test]
+        fn every_demo_chart_uses_its_saved_locations_iana_time_zone() {
+            let bundle = build_demo_bundle().unwrap();
+            for calculation in bundle.document.chart_calculations() {
+                assert_eq!(
+                    calculation.local_input_snapshot().time_zone(),
+                    calculation.location_snapshot().time_zone(),
+                    "chart {} and its saved location must share an IANA time zone",
+                    calculation.chart_definition_id().as_str()
+                );
+            }
+        }
     }
 }
 

@@ -1,7 +1,22 @@
 use astraeus_core::{AspectKind, ChartPointId};
 use oracle_studio_aspect_sets::{
-    AspectSet, AspectSetError, AspectSetSettings, MAX_IMPORT_BYTES, STANDARD_ID, builtins,
+    AspectSet, AspectSetError, AspectSetRule, AspectSetSettings, MAX_IMPORT_BYTES, STANDARD_ID,
+    builtins,
 };
+use serde::Serialize;
+use sha2::{Digest, Sha256};
+
+#[derive(Serialize)]
+struct LegacyCanonical<'a> {
+    schema_version: u32,
+    id: &'a str,
+    revision: u32,
+    name: &'a str,
+    description: &'a str,
+    built_in: bool,
+    rules: &'a [AspectSetRule],
+    points: &'a [ChartPointId],
+}
 
 fn rule(set: &AspectSet, kind: AspectKind) -> (f64, f64, f64, f64) {
     let orbs = set
@@ -54,12 +69,13 @@ fn builtins_match_the_reviewed_orb_and_point_contract() {
     assert_eq!(rule(&sets[3], AspectKind::Square), (10.0, 8.0, 8.0, 6.0));
     assert_eq!(rule(&sets[3], AspectKind::Sextile), (8.0, 6.0, 6.0, 4.0));
 
-    assert_eq!(sets[0].points().len(), 12);
-    assert_eq!(sets[1].points().len(), 12);
-    assert_eq!(sets[2].points().len(), 19);
-    assert_eq!(sets[3].points().len(), 19);
-    assert!(sets[2].points().contains(&ChartPointId::Vertex));
-    assert!(!sets[2].points().contains(&ChartPointId::Chiron));
+    assert_eq!(sets[0].displayed_points(), sets[0].aspected_points());
+    assert_eq!(sets[0].aspected_points().len(), 12);
+    assert_eq!(sets[1].aspected_points().len(), 12);
+    assert_eq!(sets[2].aspected_points().len(), 19);
+    assert_eq!(sets[3].aspected_points().len(), 19);
+    assert!(sets[2].aspected_points().contains(&ChartPointId::Vertex));
+    assert!(!sets[2].aspected_points().contains(&ChartPointId::Chiron));
 }
 
 #[test]
@@ -132,7 +148,9 @@ fn imports_are_bounded_strict_complete_and_reserved_safe() {
     );
     assert!(matches!(
         AspectSet::from_json(excessive.as_bytes()),
-        Err(AspectSetError::InvalidOrb(_)) | Err(AspectSetError::ContentIdMismatch { .. })
+        Err(AspectSetError::InvalidOrb(_))
+            | Err(AspectSetError::ContentIdMismatch { .. })
+            | Err(AspectSetError::Json(_))
     ));
 }
 
@@ -206,10 +224,10 @@ fn legacy_uniform_snapshot_preserves_asymmetric_selections_and_disabled_rules() 
 }
 
 #[test]
-fn tracked_json_schema_is_machine_readable_and_matches_wire_v1() {
+fn tracked_json_schema_is_machine_readable_and_matches_wire_v2() {
     let schema: serde_json::Value =
-        serde_json::from_str(include_str!("../../../schemas/aspect-set-v1.schema.json")).unwrap();
-    assert_eq!(schema["properties"]["schema_version"]["const"], 1);
+        serde_json::from_str(include_str!("../../../schemas/aspect-set-v2.schema.json")).unwrap();
+    assert_eq!(schema["properties"]["schema_version"]["const"], 2);
     assert_eq!(schema["properties"]["rules"]["minItems"], 5);
     assert_eq!(schema["properties"]["rules"]["maxItems"], 5);
     assert_eq!(
@@ -223,4 +241,59 @@ fn tracked_json_schema_is_machine_readable_and_matches_wire_v1() {
         assert!(exported.get(required.as_str().unwrap()).is_some());
     }
     assert_eq!(exported["rules"].as_array().unwrap().len(), 5);
+    assert_eq!(exported["displayed_points"], exported["aspected_points"]);
+}
+
+#[test]
+fn displayed_and_aspected_points_are_independent_and_snapshot_only_calculation_points() {
+    let selected = AspectSetSettings::default().selected().clone();
+    let displayed = vec![ChartPointId::Sun, ChartPointId::Moon];
+    let aspected = vec![ChartPointId::Sun, ChartPointId::Mars];
+    let revised = selected
+        .duplicate("user.independent", "Independent points")
+        .unwrap()
+        .revised_with_points(
+            "Independent points",
+            "Displayed and calculated selections differ.",
+            selected.rules().to_vec(),
+            displayed.clone(),
+            aspected.clone(),
+        )
+        .unwrap();
+    assert_eq!(revised.displayed_points(), displayed);
+    assert_eq!(revised.aspected_points(), aspected);
+    assert_eq!(revised.snapshot().points(), aspected);
+}
+
+#[test]
+fn v1_imports_migrate_one_point_selection_into_both_v2_selections() {
+    let mut settings = AspectSetSettings::default();
+    settings
+        .duplicate_selected("user.legacy", "Legacy user set")
+        .unwrap();
+    let set = settings.selected();
+    let canonical = LegacyCanonical {
+        schema_version: 1,
+        id: set.id(),
+        revision: set.revision(),
+        name: set.name(),
+        description: set.description(),
+        built_in: false,
+        rules: set.rules(),
+        points: set.aspected_points(),
+    };
+    let content_id = format!(
+        "sha256:{:x}",
+        Sha256::digest(serde_json::to_vec(&canonical).unwrap())
+    );
+    let mut wire = serde_json::to_value(canonical).unwrap();
+    wire["content_id"] = serde_json::Value::String(content_id);
+
+    let migrated = AspectSet::from_json(&serde_json::to_vec(&wire).unwrap()).unwrap();
+    assert_eq!(migrated.displayed_points(), set.aspected_points());
+    assert_eq!(migrated.aspected_points(), set.aspected_points());
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&migrated.to_pretty_json().unwrap()).unwrap()["schema_version"],
+        2
+    );
 }

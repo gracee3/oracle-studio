@@ -10,12 +10,26 @@ import subprocess
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 from pathlib import Path
 from typing import Any, Callable
 
 ELEMENT = "element-6066-11e4-a52e-4f735466cecf"
+
+
+def validate_loopback_url(url: str, product: str) -> None:
+    parsed = urllib.parse.urlsplit(url)
+    if (
+        parsed.scheme != "http"
+        or parsed.hostname != "127.0.0.1"
+        or parsed.port is None
+        or parsed.path != "/"
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise RuntimeError(f"{product} acceptance requires a loopback HTTP origin")
 
 
 class Driver:
@@ -300,6 +314,39 @@ def run_acceptance(driver: Driver, launch_url: str, downloads: Path) -> None:
         driver.wait_text("São José")
     print("PASS locations: manual fallback and uploaded Unicode GeoNames search run in the worker")
 
+    built_in_aspect_sets = driver.execute(
+        "return [...document.querySelectorAll('.aspect-set-settings select option')].map(option => option.textContent.trim())"
+    )
+    if built_in_aspect_sets[:4] != [
+        "Tight · built-in",
+        "Standard · built-in",
+        "Synastry · built-in",
+        "Synwide · built-in",
+    ]:
+        raise RuntimeError(f"reviewed aspect presets are not discoverable: {built_in_aspect_sets}")
+    driver.set_value(
+        driver.element("input[aria-label='New aspect-set name']"), "Fictional Focus"
+    )
+    driver.click_text("Create / duplicate")
+    driver.wait_text("Fictional Focus")
+    displayed_pluto = "//fieldset[legend[normalize-space()='Displayed points']]//label[.//span[normalize-space()='Pluto']]//input"
+    aspected_pluto = "//fieldset[legend[normalize-space()='Aspected points']]//label[.//span[normalize-space()='Pluto']]//input"
+    driver.click(driver.element(displayed_pluto, "xpath"))
+    independent_points = driver.wait(
+        lambda: driver.execute(
+            "return {displayed: arguments[0].checked, aspected: arguments[1].checked}",
+            [
+                driver.element(displayed_pluto, "xpath"),
+                driver.element(aspected_pluto, "xpath"),
+            ],
+        )
+        == {"displayed": False, "aspected": True},
+        "independent displayed and aspected point selections",
+    )
+    if not independent_points:
+        raise RuntimeError("displayed and aspected point selections did not diverge")
+    print("PASS aspect settings: built-ins, editable copy, and independent point selections succeed")
+
     fill_chart(driver, "Fictional natal", "natal", "2000-01-15")
     fill_chart(driver, "Fictional transit", "transit", "2026-08-17")
     driver.execute("document.querySelector('details.advanced').open = true")
@@ -316,7 +363,7 @@ def run_acceptance(driver: Driver, launch_url: str, downloads: Path) -> None:
     driver.click(driver.child(transit_card, ".//button[normalize-space()='Use as Outer']", "xpath"))
     driver.wait(
         lambda: driver.execute(
-            "return document.querySelector('.outer-meta').textContent.includes('Fictional transit') && Boolean(document.querySelector('#oracle-transit-biwheel'))"
+            "return document.querySelector('.outer-identity')?.textContent.includes('Fictional transit') && Boolean(document.querySelector('#oracle-transit-biwheel'))"
         ),
         "Moshier workbench wheel",
         timeout=120,
@@ -429,7 +476,7 @@ def run_acceptance(driver: Driver, launch_url: str, downloads: Path) -> None:
     driver.click(driver.element(".time-column:nth-child(4) button:nth-child(2)"))
     driver.wait(
         lambda: "2026-08-18" in driver.execute(
-            "return document.querySelector('.outer-meta').textContent"
+            "return document.querySelector('.outer-identity').getAttribute('title')"
         ),
         "one-day Moshier preview",
         timeout=120,
@@ -438,11 +485,21 @@ def run_acceptance(driver: Driver, launch_url: str, downloads: Path) -> None:
         raise RuntimeError("workbench still exposes chart persistence controls")
     if "Unsaved preview" not in driver.body() or "Review in Files" not in driver.body():
         raise RuntimeError("workbench does not expose the unsaved-preview Files handoff")
-    pluto = driver.element(".filters-module .filter-grid label:nth-child(10) input")
-    driver.click(pluto)
+    hidden_point_policy = driver.execute(
+        """
+        return {
+          point: document.querySelectorAll('[data-interaction=point][data-point-id=Pluto]').length,
+          lines: document.querySelectorAll('[data-interaction=aspect][data-natal-id=Pluto], [data-interaction=aspect][data-transit-id=Pluto]').length,
+        };
+        """
+    )
+    if hidden_point_policy != {"point": 0, "lines": 0}:
+        raise RuntimeError(f"hidden aspected point leaked onto the wheel: {hidden_point_policy}")
+    neptune = driver.element(".filters-module .filter-grid label:nth-child(9) input")
+    driver.click(neptune)
     driver.wait(
         lambda: driver.execute(
-            "return document.querySelectorAll('[data-interaction=point][data-point-id=Pluto]').length === 0"
+            "return document.querySelectorAll('[data-interaction=point][data-point-id=Neptune]').length === 0"
         ),
         "session point filter",
     )
@@ -460,15 +517,20 @@ def run_acceptance(driver: Driver, launch_url: str, downloads: Path) -> None:
 
     presentation_ui = driver.execute(
         """
-        const cards = [...document.querySelectorAll('.chart-meta')];
+        const cards = [...document.querySelectorAll('.chart-identity')];
         const labels = cards.map(card => ({
           kicker: card.querySelector('.meta-kicker')?.textContent.trim(),
           heading: card.querySelector('h2')?.textContent.trim(),
-          terms: [...card.querySelectorAll('dt')].map(item => item.textContent.trim()),
           fontSize: parseFloat(getComputedStyle(card).fontSize),
+          title: card.getAttribute('title'),
         }));
+        const status = document.querySelector('.status-metrics');
         return {
           labels,
+          status: status ? {
+            values: [...status.querySelectorAll('b, span')].map(item => item.textContent.trim()),
+            title: status.getAttribute('title'),
+          } : null,
           zoomButtons: [...document.querySelectorAll('.zoom-controls button')]
             .map(button => button.getAttribute('aria-label')),
           zoomHint: document.querySelector('#zoom-help')?.textContent,
@@ -479,10 +541,11 @@ def run_acceptance(driver: Driver, launch_url: str, downloads: Path) -> None:
     if (
         [item["kicker"] for item in presentation_ui["labels"]] != ["Chart 1", "Chart 2"]
         or any(item["fontSize"] < 14.4 for item in presentation_ui["labels"])
-        or any(
-            item["terms"] != ["Layer", "Date and time", "Location"]
-            for item in presentation_ui["labels"]
-        )
+        or any(not item["heading"] or "America/New_York" not in item["title"] for item in presentation_ui["labels"])
+        or presentation_ui["status"] is None
+        or len(presentation_ui["status"]["values"]) != 4
+        or "Provider:" not in presentation_ui["status"]["title"]
+        or "/home/" in presentation_ui["status"]["title"]
         or presentation_ui["zoomButtons"]
         != ["Zoom out", "Reset chart zoom", "Zoom in"]
         or "Ctrl-wheel remains browser page zoom" not in presentation_ui["zoomHint"]
@@ -600,7 +663,7 @@ def run_acceptance(driver: Driver, launch_url: str, downloads: Path) -> None:
         "focused-stage zero key",
     )
 
-    outer_before_layout = driver.execute("return document.querySelector('.outer-meta').textContent")
+    outer_before_layout = driver.execute("return document.querySelector('.outer-identity').textContent")
     stage_width = driver.execute("return document.querySelector('#wheel-stage').clientWidth")
     driver.click(driver.element("button[aria-label='Collapse Charts sidebar']"))
     driver.click(driver.element("button[aria-label='Collapse Controls sidebar']"))
@@ -619,7 +682,7 @@ def run_acceptance(driver: Driver, launch_url: str, downloads: Path) -> None:
         """
         return {
           width: document.querySelector('#wheel-stage').clientWidth,
-          outer: document.querySelector('.outer-meta').textContent,
+          outer: document.querySelector('.outer-identity').textContent,
           wheel: Boolean(document.querySelector('#oracle-transit-biwheel')),
           stored: JSON.parse(localStorage.getItem('oracle-studio.layout.v1')),
         };
@@ -643,7 +706,7 @@ def run_acceptance(driver: Driver, launch_url: str, downloads: Path) -> None:
         """
         return {
           overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
-          cards: [...document.querySelectorAll('.chart-meta')].map(card => parseFloat(getComputedStyle(card).fontSize)),
+          cards: [...document.querySelectorAll('.chart-identity')].map(card => parseFloat(getComputedStyle(card).fontSize)),
           chartsToggle: getComputedStyle(document.querySelector('.charts-toggle')).display !== 'none',
         };
         """
@@ -660,12 +723,12 @@ def run_acceptance(driver: Driver, launch_url: str, downloads: Path) -> None:
     )
     mobile = driver.execute(
         """
-        const strip=document.querySelector('.chart-meta-strip').getBoundingClientRect();
+        const strip=document.querySelector('.wheel-identities').getBoundingClientRect();
         const viewport=document.querySelector('.chart-viewport').getBoundingClientRect();
         return {
           overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
           separated: strip.bottom <= viewport.top + 1,
-          cards: [...document.querySelectorAll('.chart-meta')].map(card => parseFloat(getComputedStyle(card).fontSize)),
+          cards: [...document.querySelectorAll('.chart-identity')].map(card => parseFloat(getComputedStyle(card).fontSize)),
         };
         """
     )
@@ -707,7 +770,7 @@ def run_acceptance(driver: Driver, launch_url: str, downloads: Path) -> None:
     driver.click(driver.element(".time-column:nth-child(4) button:nth-child(2)"))
     driver.wait(
         lambda: "2026-08-19" in driver.execute(
-            "return document.querySelector('.outer-meta').textContent"
+            "return document.querySelector('.outer-identity').getAttribute('title')"
         ),
         "second unsaved workbench preview",
         timeout=120,
@@ -749,6 +812,12 @@ def run_acceptance(driver: Driver, launch_url: str, downloads: Path) -> None:
     driver.click(driver.child(card, ".//button[normalize-space()='Unlock']", "xpath"))
     driver.click_text("Settings", "a")
     driver.wait_text("Fictional Person", timeout=90)
+    driver.wait_text("Fictional Focus", timeout=90)
+    persisted_aspect_set = driver.execute(
+        "return document.querySelector('.aspect-set-settings select').selectedOptions[0].textContent.trim()"
+    )
+    if persisted_aspect_set != "Fictional Focus":
+        raise RuntimeError(f"aspect-set selection did not persist locally: {persisted_aspect_set}")
     driver.click_text("Files", "a")
     card = driver.element("//article[.//h2[normalize-space()='Fictional Portable Studio']]", "xpath")
     driver.click(driver.child(card, ".//button[normalize-space()='Lock']", "xpath"))
@@ -825,8 +894,7 @@ def wait_for_driver(url: str) -> None:
 
 def main() -> int:
     launch_url = os.environ.get("ORACLE_STUDIO_URL", "http://127.0.0.1:8080/")
-    if launch_url != "http://127.0.0.1:8080/":
-        raise RuntimeError("acceptance requires the stable loopback origin")
+    validate_loopback_url(launch_url, "production")
     check_headers(launch_url)
     downloads = Path("/tmp/oracle-downloads")
     downloads.mkdir(mode=0o700)

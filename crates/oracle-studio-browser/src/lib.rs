@@ -2,6 +2,9 @@
 
 use std::{collections::BTreeMap, future::Future, pin::Pin, rc::Rc};
 
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
+
 use astraeus_moshier::MoshierEphemerisAdapter;
 use oracle_studio_app::{
     ChartCalculationRequest, ComparisonCalculationRequest, PreparedWorkbenchPreview,
@@ -14,16 +17,49 @@ use oracle_studio_core::{
 };
 use oracle_studio_location_catalog::{CatalogInstallInput, CatalogMetadata, LocationCatalog};
 use oracle_studio_platform::{
-    ActiveWorkspace, CapabilityStatus, ChartSummary, EntitySummary, EphemerisStatus,
-    PlatformCommand, PlatformError, PlatformErrorCode, PlatformResponse, PreviewCommitOutcome,
-    PreviewGeneration, PreviewSaveMode, VaultLockState, VaultSummary, WheelTemplateSettings,
-    WheelTemplateSettingsV1, WorkbenchChartSummary, WorkbenchPresentation, WorkbenchPreviewSource,
-    WorkspaceSummary,
+    ActiveWorkspace, CalculationStatus, CapabilityStatus, ChartSummary, EntitySummary,
+    EphemerisStatus, PlatformCommand, PlatformError, PlatformErrorCode, PlatformResponse,
+    PreviewCommitOutcome, PreviewGeneration, PreviewSaveMode, VaultLockState, VaultSummary,
+    WheelTemplateSettings, WheelTemplateSettingsV1, WorkbenchChartSummary, WorkbenchPresentation,
+    WorkbenchPreviewSource, WorkspaceSummary,
 };
 use oracle_studio_vault::{UnlockedVault, create, inspect, open, revision};
 use serde::{Deserialize, Serialize};
 
 pub const IDLE_LOCK_MILLIS: f64 = 15.0 * 60.0 * 1000.0;
+
+struct CalculationTimer {
+    #[cfg(target_arch = "wasm32")]
+    started_millis: f64,
+    #[cfg(not(target_arch = "wasm32"))]
+    started: Instant,
+}
+
+impl CalculationTimer {
+    fn start() -> Self {
+        Self {
+            #[cfg(target_arch = "wasm32")]
+            started_millis: js_sys::Date::now(),
+            #[cfg(not(target_arch = "wasm32"))]
+            started: Instant::now(),
+        }
+    }
+
+    fn elapsed_micros(&self) -> u64 {
+        #[cfg(target_arch = "wasm32")]
+        {
+            ((js_sys::Date::now() - self.started_millis).max(0.0) * 1_000.0).round() as u64
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.started
+                .elapsed()
+                .as_micros()
+                .try_into()
+                .unwrap_or(u64::MAX)
+        }
+    }
+}
 
 type StoreFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, StoreError>> + 'a>>;
 
@@ -443,6 +479,8 @@ impl BrowserStudioEngine {
             PlatformCommand::WorkbenchPreview { request } => {
                 let (source_vault_id, source_vault_title, source_vault_revision) =
                     self.preview_source()?;
+                let aspect_set_name = self.aspect_sets.selected().name().to_owned();
+                let calculation_timer = CalculationTimer::start();
                 let prepared = calculate_workbench_preview_with_aspect_set(
                     self.active_document()?,
                     WorkbenchCalculationRequest {
@@ -464,6 +502,10 @@ impl BrowserStudioEngine {
                     source_vault_id.clone(),
                     source_vault_title.clone(),
                     source_vault_revision.clone(),
+                    PresentationCalculationContext {
+                        aspect_set_name,
+                        duration_micros: calculation_timer.elapsed_micros(),
+                    },
                 );
                 self.pending_preview = Some(PendingWorkbenchPreview {
                     generation: request.generation,
@@ -1145,6 +1187,11 @@ impl BrowserStudioEngine {
     }
 }
 
+struct PresentationCalculationContext {
+    aspect_set_name: String,
+    duration_micros: u64,
+}
+
 fn workbench_presentation(
     generation: PreviewGeneration,
     preview: &PreparedWorkbenchPreview,
@@ -1152,6 +1199,7 @@ fn workbench_presentation(
     source_vault_id: Option<String>,
     source_vault_title: String,
     source_vault_revision: Option<String>,
+    calculation_context: PresentationCalculationContext,
 ) -> WorkbenchPresentation {
     let summary = |preview: &oracle_studio_app::PreparedChartPreview| WorkbenchChartSummary {
         id: preview.definition.id().as_str().into(),
@@ -1166,6 +1214,7 @@ fn workbench_presentation(
         ),
         utc_offset_seconds: preview.resolved_time.utc_offset_seconds(),
     };
+    let provenance = preview.inner.snapshot.result().provenance();
     WorkbenchPresentation {
         generation,
         source: Box::new(WorkbenchPreviewSource {
@@ -1176,6 +1225,16 @@ fn workbench_presentation(
         inner: summary(&preview.inner),
         outer: summary(&preview.outer),
         scene: preview.scene.clone(),
+        calculation: CalculationStatus {
+            duration_micros: calculation_context.duration_micros,
+            provider: provenance.provider().into(),
+            provider_version: provenance.provider_version().into(),
+            ephemeris_mode: "file-free Moshier".into(),
+            aspect_set_name: calculation_context.aspect_set_name,
+            aspect_set_id: preview.aspect_set_snapshot.aspect_set_id().into(),
+            aspect_set_revision: preview.aspect_set_snapshot.revision(),
+            aspect_set_content_id: preview.aspect_set_snapshot.content_id().into(),
+        },
         adjustment_notice,
     }
 }
@@ -1492,6 +1551,10 @@ mod tests {
                 }
             })
         );
+        assert_eq!(presentation.calculation.provider, "swisseph-rs Moshier");
+        assert_eq!(presentation.calculation.ephemeris_mode, "file-free Moshier");
+        assert_eq!(presentation.calculation.aspect_set_name, "Standard");
+        assert_eq!(presentation.calculation.aspect_set_id, "builtin.standard");
         assert_eq!(
             presentation.source.vault_revision.as_deref(),
             presentation

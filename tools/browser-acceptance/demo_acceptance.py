@@ -10,7 +10,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from acceptance import Driver, check_headers, wait_for_driver
+from acceptance import Driver, check_headers, validate_loopback_url, wait_for_driver
 
 
 def run_acceptance(driver: Driver, launch_url: str, downloads: Path) -> None:
@@ -73,8 +73,8 @@ def run_acceptance(driver: Driver, launch_url: str, downloads: Path) -> None:
     if initial_problem:
         raise RuntimeError(f"initial demo preview failed: {initial_problem}")
     initial_pair = driver.execute(
-        "return [document.querySelector('.inner-meta').textContent, "
-        "document.querySelector('.outer-meta').textContent]"
+        "return [document.querySelector('.inner-identity').textContent, "
+        "document.querySelector('.outer-identity').textContent]"
     )
     if "Avery North" not in initial_pair[0] or "Mira Vale" not in initial_pair[1]:
         raise RuntimeError(f"unexpected initial demo chart pair: {initial_pair}")
@@ -126,7 +126,7 @@ def run_acceptance(driver: Driver, launch_url: str, downloads: Path) -> None:
     driver.click(driver.child(transit_card, ".//button[normalize-space()='Use as Outer']", "xpath"))
     driver.wait(
         lambda: driver.execute(
-            "return document.querySelector('.outer-meta').textContent.includes('Harbor Transit') "
+            "return document.querySelector('.outer-identity').textContent.includes('Harbor Transit') "
             "&& Boolean(document.querySelector('#oracle-transit-biwheel'))"
         ),
         "demo Moshier workbench wheel",
@@ -213,8 +213,7 @@ def run_acceptance(driver: Driver, launch_url: str, downloads: Path) -> None:
 
 def main() -> int:
     launch_url = os.environ.get("ORACLE_STUDIO_URL", "http://127.0.0.1:8080/")
-    if launch_url != "http://127.0.0.1:8080/":
-        raise RuntimeError("demo acceptance requires the stable loopback origin")
+    validate_loopback_url(launch_url, "demo")
     check_headers(launch_url)
     downloads = Path("/tmp/oracle-demo-downloads")
     downloads.mkdir(mode=0o700)

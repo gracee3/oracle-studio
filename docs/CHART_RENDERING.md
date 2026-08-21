@@ -29,6 +29,21 @@ is presentation dispatch over the same `ChartScene`; it never requests a new
 calculation or changes an Astraeus artifact, canonical byte sequence, content
 ID, provider provenance, or vault record.
 
+The workbench keeps wheel identity deliberately quiet: only `Chart 1`/`Chart 2`
+and their names appear behind the desktop wheel, with the full date, location,
+and time-zone label available as an accessible tooltip. On small screens the
+same identities become a short strip above the wheel so they cannot overlap the
+chart. A compact status block reports local calculation time, ephemeris mode,
+the active aspect set, and wheel template. Its tooltip carries exact provider,
+aspect revision, and content-ID detail without exposing filesystem paths.
+
+Displayed and aspected point selections are independent. Displayed points are
+a session presentation filter. Aspected points are part of the calculation
+rules and immutable saved snapshot. A hidden point may therefore continue to
+participate in calculated results and tables, while its glyph and any aspect
+line touching it are omitted from the rendered wheel. Neither selection alters
+the underlying Astraeus artifact format.
+
 ## Themes and template settings v2
 
 `oracle-studio.theme.v1` is an optional browser-local `light` or `dark`

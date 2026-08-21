@@ -224,6 +224,7 @@ pub struct CapabilityStatus {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[allow(clippy::large_enum_variant)] // Browser-local messages favor a direct typed API over heap indirection.
 pub enum PlatformResponse {
     Ready {
         vaults: Vec<VaultSummary>,
@@ -317,7 +318,21 @@ pub struct WorkbenchPresentation {
     pub inner: WorkbenchChartSummary,
     pub outer: WorkbenchChartSummary,
     pub scene: ChartScene,
+    pub calculation: CalculationStatus,
     pub adjustment_notice: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CalculationStatus {
+    pub duration_micros: u64,
+    pub provider: String,
+    pub provider_version: String,
+    pub ephemeris_mode: String,
+    pub aspect_set_name: String,
+    pub aspect_set_id: String,
+    pub aspect_set_revision: u32,
+    pub aspect_set_content_id: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
