@@ -8,6 +8,10 @@ astraeus_swiss_ephemeris_path := env_var_or_default("ASTRAEUS_SWISS_EPHEMERIS_PA
 default:
     @just --list
 
+# Validate the reviewed public-record catalog and fixed Moshier vectors offline.
+public-records-check:
+    cargo test -p oracle-studio-public-records --locked
+
 # Download and verify the pinned Swiss Ephemeris data files.
 astraeus-swiss-download data_dir=astraeus_swiss_ephemeris_path:
     #!/usr/bin/env bash

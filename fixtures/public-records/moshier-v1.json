@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "engine": "swisseph-rs Moshier",
+  "engine_version": "0.2.0",
+  "vectors": [
+    {
+      "record_id": "public-record.event.eclipse-2017-08-21-greatest",
+      "artifact_content_id": "sha256:3e353d89990f198d088f2f496b2f6f4817bfc798d37490b216c4b692fb4be15c",
+      "sun_longitude_degrees": 148.8790923638484,
+      "moon_longitude_degrees": 148.83642632350163,
+      "ascendant_degrees": 236.0003538833342,
+      "midheaven_degrees": 157.2302895830308
+    },
+    {
+      "record_id": "public-record.event.eclipse-2024-04-08-greatest",
+      "artifact_content_id": "sha256:23adf6e1402f5f138b00d90219eaaf7ce079df836ab9f19022ff7e1539fe4ecb",
+      "sun_longitude_degrees": 19.39798341580757,
+      "moon_longitude_degrees": 19.362307556347176,
+      "ascendant_degrees": 107.42821515240243,
+      "midheaven_degrees": 8.392006867491256
+    },
+    {
+      "record_id": "public-record.event.earthquake-1906-san-francisco",
+      "artifact_content_id": "sha256:f359aeae0915fcc39bdd13c5b88b6bd7d5885b7dbd9f23d8af934dde2a1573c5",
+      "sun_longitude_degrees": 27.581596433462163,
+      "moon_longitude_degrees": 330.02102036011337,
+      "ascendant_degrees": 18.32873496366869,
+      "midheaven_degrees": 280.38815805224806
+    }
+  ]
+}

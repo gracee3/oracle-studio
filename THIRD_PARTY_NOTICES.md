@@ -1,5 +1,23 @@
 # Third-party notices
 
+## Reviewed public-record data
+
+`catalog/public-records-v1.json` contains a small, source-revision-pinned set of
+structured factual fields:
+
+- NASA GSFC eclipse predictions. Required acknowledgment: **Eclipse Predictions
+  by Fred Espenak, NASA's GSFC**. The source pages grant reproduction permission
+  when this acknowledgment accompanies the data.
+- U.S. Geological Survey earthquake-origin data. USGS explains that works
+  produced wholly by U.S. Government employees are public domain in the United
+  States; Oracle retains USGS attribution and source identity as provenance.
+- Wikidata main-namespace structured data under CC0 1.0. Oracle includes only
+  selected factual fields and revision identifiers, not article text or images.
+
+Exact source URLs, revisions, rights URLs, attribution, precision, and ethical
+notes are stored with every record. See
+[`docs/PUBLIC_RECORD_CATALOG.md`](docs/PUBLIC_RECORD_CATALOG.md).
+
 ## swisseph-rs
 
 Oracle Studio uses `swisseph-rs` 0.2.0 through Astraeus's Moshier adapter with
