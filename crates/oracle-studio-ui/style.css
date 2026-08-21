@@ -125,6 +125,8 @@ body:not(:has(.route:target)) #workbench { display: grid; }
 .settings-form, .settings-stack { display: grid; align-content: start; gap: .7rem; padding: 1rem; border: 1px solid #41344d; border-radius: .6rem; background: #141019; }
 .settings-stack { padding: 0; border: 0; background: none; }
 .settings-form h2, .settings-form h3 { margin: 0; font-size: 1rem; }
+.catalog-attribution { font-size: .88rem; color: #c8bcd0; }
+.catalog-attribution a { color: #dbbd91; }
 .entity-list, .search-results { display: grid; gap: .35rem; margin: .7rem 0 0; padding: 0; list-style: none; }
 .entity-list li, .search-results li { display: flex; justify-content: space-between; gap: 1rem; padding: .55rem; border-bottom: 1px solid #352a40; }
 .entity-list small, .search-results small { color: var(--muted); }
