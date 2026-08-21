@@ -267,8 +267,14 @@ def run_acceptance(driver: Driver, launch_url: str, downloads: Path) -> None:
     driver.click_text("Save comparison preset")
     driver.wait_text("Fictional comparison")
     driver.click_text("Workbench", "a")
+    transit_card = driver.element(
+        "//article[.//strong[normalize-space()='Fictional transit']]", "xpath"
+    )
+    driver.click(driver.child(transit_card, ".//button[normalize-space()='Use as Outer']", "xpath"))
     driver.wait(
-        lambda: driver.execute("return Boolean(document.querySelector('#oracle-transit-biwheel'))"),
+        lambda: driver.execute(
+            "return document.querySelector('.outer-meta').textContent.includes('Fictional transit') && Boolean(document.querySelector('#oracle-transit-biwheel'))"
+        ),
         "Moshier workbench wheel",
         timeout=120,
     )
