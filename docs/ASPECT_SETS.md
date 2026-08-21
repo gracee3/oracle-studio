@@ -5,7 +5,7 @@ Studio previews. They never contain people, dates, locations, vault IDs, or
 calculation results. The selected set controls only new previews and newly
 saved comparisons. Every vault-v5 comparison calculation stores an immutable
 snapshot of the resolved set ID, revision, content ID, complete rules, and
-participating points, so later global edits cannot change a saved result.
+calculation-participating points, so later global edits cannot change a saved result.
 
 ## Calculation semantics
 
@@ -48,15 +48,16 @@ ship a guessed “Huber,” “Medieval,” or “moiety” preset. Research ref
 [Deborah Houlding on traditional aspects](https://www.skyscript.co.uk/aspects.html),
 and the [School of Traditional Astrology moiety definition](https://sta.co/portal/mod/glossary/showentry.php?eid=440).
 
-## Global workflows and JSON v1
+## Global workflows and JSON v2
 
-Settings supports selecting, creating by duplication, editing rules and points,
+Settings supports selecting, creating by duplication, editing rules and independent
+displayed/aspected point selections,
 renaming, deleting, resetting built-ins, importing, and exporting. Built-ins are
 immutable but duplicable. Reset restores only the four reviewed built-ins and
 retains user sets.
 
 The exchange format is defined by
-[`schemas/aspect-set-v1.schema.json`](../schemas/aspect-set-v1.schema.json).
+[`schemas/aspect-set-v2.schema.json`](../schemas/aspect-set-v2.schema.json).
 Canonical identity covers every field except `content_id`, which is the
 lowercase SHA-256 of compact canonical JSON. Imports are limited to 64 KiB,
 deny unknown fields, require all five unique rules and display orders, allow
@@ -69,3 +70,14 @@ Global selection is stored in IndexedDB under settings schema v1. Changing,
 editing, importing, deleting, or resetting a set invalidates any worker-held
 pending preview. A new preview must finish under the resolved selection before
 it can be committed.
+
+The browser store trait owns persistence, while the aspect-set model remains
+independent of IndexedDB. This keeps local storage as the only current provider
+without coupling the wire model to a future optional synchronization provider.
+Demo builds expose the same four reviewed built-ins and do not overwrite an
+existing global selection when a demo vault is loaded or reset.
+
+Version 1 imports and locally persisted sets migrate by copying their single
+`points` selection into both v2 selections. Displayed-only points render without
+entering aspect calculation. Aspected-but-hidden points remain in calculated
+data, but aspect lines connected to hidden endpoints are omitted from the wheel.

@@ -34,8 +34,8 @@ mod browser {
         PlatformCommand, PlatformErrorCode, PlatformResponse, PreviewCommitOutcome,
         PreviewGeneration, PreviewSaveMode, StudioPlatform, VaultLockState, VaultSummary,
         WheelLayout, WheelMode, WheelOrientation, WheelPalette, WheelPaletteSelection,
-        WheelTemplate, WheelTemplateSettings, WorkbenchPresentation, WorkbenchPreviewRequest,
-        WorkspaceSummary,
+        WheelTemplate, WheelTemplateSettings, WorkbenchChartSummary, WorkbenchPresentation,
+        WorkbenchPreviewRequest, WorkspaceSummary,
     };
     use oracle_studio_worker::BrowserStudioPlatform;
     use wasm_bindgen::{JsCast, JsValue, closure::Closure};
@@ -211,6 +211,7 @@ mod browser {
         selected_aspects: RwSignal<BTreeSet<String>>,
         latest_generation: RwSignal<u64>,
         calculating: RwSignal<bool>,
+        preview_problem: RwSignal<Option<String>>,
         notice: RwSignal<Option<String>>,
         problem: RwSignal<Option<String>>,
         busy: RwSignal<bool>,
@@ -259,6 +260,7 @@ mod browser {
                 selected_aspects: RwSignal::new(BTreeSet::new()),
                 latest_generation: RwSignal::new(0),
                 calculating: RwSignal::new(false),
+                preview_problem: RwSignal::new(None),
                 notice: RwSignal::new(None),
                 problem: RwSignal::new(None),
                 busy: RwSignal::new(false),
@@ -629,29 +631,21 @@ mod browser {
         view! {
             <section id="wheel-stage" class="wheel-stage" aria-label="Chart workbench" aria-describedby="zoom-help" tabindex="0" data-zoom-percent=move || model.zoom_percent.get().to_string() on:keydown=wheel_key>
                 <div class="wheel-frame" class:is-calculating=move || model.calculating.get()>
-                    <div class="chart-meta-strip" aria-label="Chart metadata">
+                    <div class="wheel-identities" aria-label="Charts shown on the wheel">
                         {move || model.presentation.get().map(|presentation| view! {
-                            <article class="chart-meta inner-meta" aria-labelledby="chart-1-heading">
+                            <article class="chart-identity inner-identity" aria-labelledby="chart-1-heading" title=full_chart_label(&presentation.inner)>
                                 <p class="meta-kicker">"Chart 1"</p>
-                                <h2 id="chart-1-heading">{presentation.inner.label}</h2>
-                                <dl>
-                                    <div><dt>"Layer"</dt><dd>"Inner · fixed"</dd></div>
-                                    <div><dt>"Date and time"</dt><dd>{format!("{} {}", presentation.inner.local_input.local_date(), presentation.inner.local_input.local_time())}</dd></div>
-                                    <div><dt>"Location"</dt><dd>{presentation.inner.location_label}</dd></div>
-                                </dl>
+                                <h2 id="chart-1-heading">{presentation.inner.label.clone()}</h2>
                             </article>
                         }).into_any()}
-                        {move || model.presentation.get().map(|presentation| view! {
-                            <article class="chart-meta outer-meta" aria-labelledby="chart-2-heading">
+                        {move || if model.wheel_templates.get().selected().mode == WheelMode::Biwheel {
+                            model.presentation.get().map(|presentation| view! {
+                            <article class="chart-identity outer-identity" aria-labelledby="chart-2-heading" title=full_chart_label(&presentation.outer)>
                                 <p class="meta-kicker">"Chart 2"</p>
-                                <h2 id="chart-2-heading">{presentation.outer.label}</h2>
-                                <dl>
-                                    <div><dt>"Layer"</dt><dd>"Outer · moving"</dd></div>
-                                    <div><dt>"Date and time"</dt><dd>{format!("{} {}", presentation.outer.local_input.local_date(), presentation.outer.local_input.local_time())}</dd></div>
-                                    <div><dt>"Location"</dt><dd>{presentation.outer.location_label}</dd></div>
-                                </dl>
+                                <h2 id="chart-2-heading">{presentation.outer.label.clone()}</h2>
                             </article>
-                        }).into_any()}
+                            }).into_any()
+                        } else { ().into_any() }}
                     </div>
                     <div class="chart-viewport" on:click=wheel_click on:wheel=modifier_wheel>
                         {move || if let Some(presentation) = model.presentation.get() {
@@ -696,6 +690,40 @@ mod browser {
                             <button class="zoom-reset" type="button" aria-label="Reset chart zoom" title="Reset chart zoom (0)" on:click=move |_| reset_zoom(model)><span class="zoom-readout" aria-live="polite">{move || format!("{}%", model.zoom_percent.get())}</span><small>"Reset"</small></button>
                             <button type="button" aria-label="Zoom in" title="Zoom in (+)" on:click=move |_| adjust_zoom(model, 1)>"+"</button>
                         </div>
+                        <aside class="wheel-status" aria-label="Chart calculation and configuration status" aria-live="polite">
+                            {move || {
+                                let aspect_set = model.aspect_sets.get();
+                                let template = model.wheel_templates.get();
+                                let aspect_name = aspect_set.selected().name().to_owned();
+                                let template_name = template.selected().name.clone();
+                                if model.calculating.get() {
+                                    view! { <span class="status-state">"Calculating…"</span><span>{aspect_name}</span><span>{template_name}</span> }.into_any()
+                                } else if let Some(presentation) = model.presentation.get() {
+                                    let calculation = presentation.calculation;
+                                    let stale = model.preview_problem.get().is_some();
+                                    let title = format!(
+                                        "{}Calculation: {} · Provider: {} {} · Mode: {} · Aspect set: {} revision {} ({}) · Wheel template: {}",
+                                        if stale { "Previous rendered result · " } else { "" },
+                                        format_duration(calculation.duration_micros),
+                                        calculation.provider,
+                                        calculation.provider_version,
+                                        calculation.ephemeris_mode,
+                                        calculation.aspect_set_name,
+                                        calculation.aspect_set_revision,
+                                        calculation.aspect_set_content_id,
+                                        template_name,
+                                    );
+                                    view! {
+                                        {stale.then(|| view! { <span class="status-state status-error">"Previous result · newest calculation unavailable"</span> })}
+                                        <span class="status-metrics" title=title><b>{format_duration(calculation.duration_micros)}</b><span>{calculation.ephemeris_mode}</span><span>{calculation.aspect_set_name}</span><span>{template_name}</span></span>
+                                    }.into_any()
+                                } else if model.preview_problem.get().is_some() {
+                                    view! { <span class="status-state status-error">"Calculation unavailable"</span><span>{aspect_name}</span><span>{template_name}</span> }.into_any()
+                                } else {
+                                    view! { <span class="status-state">"No calculation yet"</span><span>{aspect_name}</span><span>{template_name}</span> }.into_any()
+                                }
+                            }}
+                        </aside>
                         <p id="zoom-help" class="zoom-help">"Focus chart: + / − / 0 · Alt/Option-wheel zooms toward the pointer. Ctrl-wheel remains browser page zoom."</p>
                         <div class="calculation-indicator" role="status">{move || if model.calculating.get() { "Calculating newest cursor…" } else { "" }}</div>
                     </div>
@@ -983,11 +1011,12 @@ mod browser {
                 let selected = model.aspect_sets.get_untracked().selected().clone();
                 let description = text_value(description).ok_or("description is required")?;
                 selected
-                    .revised(
+                    .revised_with_points(
                         selected.name(),
                         description,
                         selected.rules().to_vec(),
-                        selected.points().to_vec(),
+                        selected.displayed_points().to_vec(),
+                        selected.aspected_points().to_vec(),
                     )
                     .map_err(|error| error.to_string())
             })();
@@ -1060,19 +1089,33 @@ mod browser {
                     </div>
 
                     <div class="settings-form">
-                        <h3>"Participating points"</h3>
-                        <p>"Synastry presets include all 19 browser-supported points; Chiron is deliberately unsupported."</p>
-                        <div class="aspect-point-grid">
+                        <h3>"Displayed and aspected points"</h3>
+                        <p>"Displayed points appear on the wheel. Aspected points participate in calculation independently. Hidden aspected points remain available to data views but do not draw wheel lines. Chiron is deliberately unsupported."</p>
+                        <div class="aspect-point-selections">
+                        <fieldset><legend>"Displayed points"</legend><div class="aspect-point-grid">
                             {POINT_FILTERS.into_iter().map(|(id, label)| {
                                 let point = chart_point_from_ui_id(id).expect("UI point IDs are supported");
                                 view! {
                                     <label class="check-label"><input type="checkbox"
                                         disabled=move || model.aspect_sets.get().selected().built_in()
-                                        checked=move || model.aspect_sets.get().selected().points().contains(&point)
-                                        on:change=move |event| revise_aspect_point(platform, model, point, event_target_checked(&event))
+                                        checked=move || model.aspect_sets.get().selected().displayed_points().contains(&point)
+                                        on:change=move |event| revise_aspect_point(platform, model, PointSelectionKind::Displayed, point, event_target_checked(&event))
                                     /><span>{label}</span></label>
                                 }
                             }).collect_view()}
+                        </div></fieldset>
+                        <fieldset><legend>"Aspected points"</legend><div class="aspect-point-grid">
+                            {POINT_FILTERS.into_iter().map(|(id, label)| {
+                                let point = chart_point_from_ui_id(id).expect("UI point IDs are supported");
+                                view! {
+                                    <label class="check-label"><input type="checkbox"
+                                        disabled=move || model.aspect_sets.get().selected().built_in()
+                                        checked=move || model.aspect_sets.get().selected().aspected_points().contains(&point)
+                                        on:change=move |event| revise_aspect_point(platform, model, PointSelectionKind::Aspected, point, event_target_checked(&event))
+                                    /><span>{label}</span></label>
+                                }
+                            }).collect_view()}
+                        </div></fieldset>
                         </div>
                     </div>
                 </div>
@@ -1123,11 +1166,12 @@ mod browser {
                     })
                     .collect();
                 selected
-                    .revised(
+                    .revised_with_points(
                         selected.name(),
                         selected.description(),
                         rules,
-                        selected.points().to_vec(),
+                        selected.displayed_points().to_vec(),
+                        selected.aspected_points().to_vec(),
                     )
                     .map_err(|error| error.to_string())
             })();
@@ -1439,7 +1483,7 @@ mod browser {
                 <div>
                     <p class="eyebrow">"Demo-only build"</p>
                     <h2 id="demo-heading">"Fictional workspace"</h2>
-                    <p>"Loads two fictional people, two locations, four calculated charts, and three comparisons. It never changes an unrelated vault or a global preference."</p>
+                    <p>"Loads two fictional people, two locations, four calculated charts, and three comparisons. Tight, Standard, Synastry, and Synwide remain available as local demo presets. Loading never changes an unrelated vault or a global preference."</p>
                     <p class="demo-password"><strong>"Public, non-secret password"</strong><code>{DEMO_PASSWORD}</code></p>
                 </div>
                 <div class="button-row">
@@ -1718,6 +1762,7 @@ mod browser {
                 model.workspace.set(workspace);
                 model.capabilities.set(Some(capabilities));
                 model.wheel_templates.set(wheel_templates);
+                sync_displayed_points(model, &aspect_sets);
                 model.aspect_sets.set(aspect_sets);
                 model.notice.set(Some("Browser-local studio ready.".into()));
                 true
@@ -1757,6 +1802,7 @@ mod browser {
                 false
             }
             PlatformResponse::AspectSets(settings) => {
+                sync_displayed_points(model, &settings);
                 model.aspect_sets.set(settings);
                 model
                     .notice
@@ -1959,6 +2005,7 @@ mod browser {
     fn send_preview(platform: Platform, model: Model, generation: u64, payload: PreviewPayload) {
         model.latest_generation.set(generation);
         model.calculating.set(true);
+        model.preview_problem.set(None);
         model.problem.set(None);
         let request = WorkbenchPreviewRequest {
             generation: PreviewGeneration::new(generation),
@@ -1987,6 +2034,7 @@ mod browser {
                         .set(Some(presentation.outer.local_input.clone()));
                     model.notice.set(presentation.adjustment_notice.clone());
                     model.presentation.set(Some(presentation));
+                    model.preview_problem.set(None);
                     model.preview_pending.set(true);
                     model.fallback_presentation.set(None);
                 }
@@ -2011,6 +2059,7 @@ mod browser {
                     } else if let Some(last) = model.presentation.get_untracked() {
                         model.desired_outer.set(Some(last.outer.local_input));
                     }
+                    model.preview_problem.set(Some(error.message.clone()));
                     model.problem.set(Some(error.message));
                     model.calculating.set(false);
                     return;
@@ -2525,6 +2574,42 @@ mod browser {
         }
     }
 
+    const fn chart_point_ui_id(point: ChartPointId) -> &'static str {
+        match point {
+            ChartPointId::Sun => "Sun",
+            ChartPointId::Moon => "Moon",
+            ChartPointId::Mercury => "Mercury",
+            ChartPointId::Venus => "Venus",
+            ChartPointId::Mars => "Mars",
+            ChartPointId::Jupiter => "Jupiter",
+            ChartPointId::Saturn => "Saturn",
+            ChartPointId::Uranus => "Uranus",
+            ChartPointId::Neptune => "Neptune",
+            ChartPointId::Pluto => "Pluto",
+            ChartPointId::MeanNode => "MeanNode",
+            ChartPointId::MeanSouthNode => "MeanSouthNode",
+            ChartPointId::TrueNode => "TrueNode",
+            ChartPointId::TrueSouthNode => "TrueSouthNode",
+            ChartPointId::Ascendant => "Ascendant",
+            ChartPointId::Midheaven => "Midheaven",
+            ChartPointId::Descendant => "Descendant",
+            ChartPointId::ImumCoeli => "ImumCoeli",
+            ChartPointId::Vertex => "Vertex",
+            ChartPointId::Chiron => "Chiron",
+        }
+    }
+
+    fn sync_displayed_points(model: Model, settings: &AspectSetSettings) {
+        model.visible_points.set(
+            settings
+                .selected()
+                .displayed_points()
+                .iter()
+                .map(|point| chart_point_ui_id(*point).to_owned())
+                .collect(),
+        );
+    }
+
     fn save_revised_aspect_set(
         platform: Platform,
         model: Model,
@@ -2536,21 +2621,39 @@ mod browser {
         }
     }
 
-    fn revise_aspect_point(platform: Platform, model: Model, point: ChartPointId, enabled: bool) {
+    #[derive(Clone, Copy)]
+    enum PointSelectionKind {
+        Displayed,
+        Aspected,
+    }
+
+    fn revise_aspect_point(
+        platform: Platform,
+        model: Model,
+        selection: PointSelectionKind,
+        point: ChartPointId,
+        enabled: bool,
+    ) {
         let result = (|| {
             let selected = model.aspect_sets.get_untracked().selected().clone();
-            let mut points = selected.points().to_vec();
+            let mut displayed_points = selected.displayed_points().to_vec();
+            let mut aspected_points = selected.aspected_points().to_vec();
+            let points = match selection {
+                PointSelectionKind::Displayed => &mut displayed_points,
+                PointSelectionKind::Aspected => &mut aspected_points,
+            };
             if enabled && !points.contains(&point) {
                 points.push(point);
             } else if !enabled {
                 points.retain(|candidate| *candidate != point);
             }
             selected
-                .revised(
+                .revised_with_points(
                     selected.name(),
                     selected.description(),
                     selected.rules().to_vec(),
-                    points,
+                    displayed_points,
+                    aspected_points,
                 )
                 .map_err(|error| error.to_string())
         })();
@@ -2573,6 +2676,27 @@ mod browser {
                 "That local clock time does not exist because of a daylight-saving transition."
                     .into()
             }
+        }
+    }
+
+    fn full_chart_label(chart: &WorkbenchChartSummary) -> String {
+        format!(
+            "{} — {} {} {} — {}",
+            chart.label,
+            chart.local_input.local_date(),
+            chart.local_input.local_time(),
+            chart.local_input.time_zone(),
+            chart.location_label
+        )
+    }
+
+    fn format_duration(micros: u64) -> String {
+        if micros < 1_000 {
+            format!("{micros} µs")
+        } else if micros < 100_000 {
+            format!("{:.1} ms", micros as f64 / 1_000.0)
+        } else {
+            format!("{} ms", micros / 1_000)
         }
     }
 }

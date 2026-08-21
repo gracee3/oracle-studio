@@ -11,7 +11,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-pub const ASPECT_SET_SCHEMA_VERSION: u32 = 1;
+pub const ASPECT_SET_SCHEMA_VERSION: u32 = 2;
 pub const ASPECT_SET_SETTINGS_VERSION: u32 = 1;
 pub const MAX_IMPORT_BYTES: usize = 64 * 1024;
 pub const STANDARD_ID: &str = "builtin.standard";
@@ -76,8 +76,7 @@ impl AspectSetRule {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct AspectSet {
     schema_version: u32,
     id: String,
@@ -86,7 +85,8 @@ pub struct AspectSet {
     description: String,
     built_in: bool,
     rules: Vec<AspectSetRule>,
-    points: Vec<ChartPointId>,
+    displayed_points: Vec<ChartPointId>,
+    aspected_points: Vec<ChartPointId>,
     content_id: String,
 }
 
@@ -99,7 +99,61 @@ struct CanonicalAspectSetRef<'a> {
     description: &'a str,
     built_in: bool,
     rules: &'a [AspectSetRule],
+    displayed_points: &'a [ChartPointId],
+    aspected_points: &'a [ChartPointId],
+}
+
+#[derive(Serialize)]
+struct CanonicalAspectSetV1Ref<'a> {
+    schema_version: u32,
+    id: &'a str,
+    revision: u32,
+    name: &'a str,
+    description: &'a str,
+    built_in: bool,
+    rules: &'a [AspectSetRule],
     points: &'a [ChartPointId],
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AspectSetWireV2 {
+    schema_version: u32,
+    id: String,
+    revision: u32,
+    name: String,
+    description: String,
+    built_in: bool,
+    rules: Vec<AspectSetRule>,
+    displayed_points: Vec<ChartPointId>,
+    aspected_points: Vec<ChartPointId>,
+    content_id: String,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct AspectSetWireV1 {
+    schema_version: u32,
+    id: String,
+    revision: u32,
+    name: String,
+    description: String,
+    built_in: bool,
+    rules: Vec<AspectSetRule>,
+    points: Vec<ChartPointId>,
+    content_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum AspectSetWire {
+    V2(AspectSetWireV2),
+    V1(AspectSetWireV1),
+}
+
+struct AspectPointSelections {
+    displayed: Vec<ChartPointId>,
+    aspected: Vec<ChartPointId>,
 }
 
 impl AspectSet {
@@ -110,7 +164,29 @@ impl AspectSet {
         rules: Vec<AspectSetRule>,
         points: Vec<ChartPointId>,
     ) -> Result<Self, AspectSetError> {
-        Self::new_internal(id, 1, name, description, false, rules, points)
+        Self::new_user_with_points(id, name, description, rules, points.clone(), points)
+    }
+
+    pub fn new_user_with_points(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        description: impl Into<String>,
+        rules: Vec<AspectSetRule>,
+        displayed_points: Vec<ChartPointId>,
+        aspected_points: Vec<ChartPointId>,
+    ) -> Result<Self, AspectSetError> {
+        Self::new_internal(
+            id,
+            1,
+            name,
+            description,
+            false,
+            rules,
+            AspectPointSelections {
+                displayed: displayed_points,
+                aspected: aspected_points,
+            },
+        )
     }
 
     fn new_internal(
@@ -120,7 +196,7 @@ impl AspectSet {
         description: impl Into<String>,
         built_in: bool,
         rules: Vec<AspectSetRule>,
-        points: Vec<ChartPointId>,
+        points: AspectPointSelections,
     ) -> Result<Self, AspectSetError> {
         let mut set = Self {
             schema_version: ASPECT_SET_SCHEMA_VERSION,
@@ -130,7 +206,8 @@ impl AspectSet {
             description: description.into(),
             built_in,
             rules,
-            points,
+            displayed_points: points.displayed,
+            aspected_points: points.aspected,
             content_id: String::new(),
         };
         set.validate_without_identity()?;
@@ -173,8 +250,15 @@ impl AspectSet {
     pub fn rules(&self) -> &[AspectSetRule] {
         &self.rules
     }
+    pub fn displayed_points(&self) -> &[ChartPointId] {
+        &self.displayed_points
+    }
+    pub fn aspected_points(&self) -> &[ChartPointId] {
+        &self.aspected_points
+    }
+    /// Compatibility alias for the calculation-participating selection.
     pub fn points(&self) -> &[ChartPointId] {
-        &self.points
+        self.aspected_points()
     }
     pub fn content_id(&self) -> &str {
         &self.content_id
@@ -185,21 +269,23 @@ impl AspectSet {
         id: impl Into<String>,
         name: impl Into<String>,
     ) -> Result<Self, AspectSetError> {
-        Self::new_user(
+        Self::new_user_with_points(
             id,
             name,
             format!("Copy of {}. {}", self.name, self.description),
             self.rules.clone(),
-            self.points.clone(),
+            self.displayed_points.clone(),
+            self.aspected_points.clone(),
         )
     }
 
     pub fn renamed(&self, name: impl Into<String>) -> Result<Self, AspectSetError> {
-        self.revised(
+        self.revised_with_points(
             name,
             self.description.clone(),
             self.rules.clone(),
-            self.points.clone(),
+            self.displayed_points.clone(),
+            self.aspected_points.clone(),
         )
     }
 
@@ -209,6 +295,17 @@ impl AspectSet {
         description: impl Into<String>,
         rules: Vec<AspectSetRule>,
         points: Vec<ChartPointId>,
+    ) -> Result<Self, AspectSetError> {
+        self.revised_with_points(name, description, rules, points.clone(), points)
+    }
+
+    pub fn revised_with_points(
+        &self,
+        name: impl Into<String>,
+        description: impl Into<String>,
+        rules: Vec<AspectSetRule>,
+        displayed_points: Vec<ChartPointId>,
+        aspected_points: Vec<ChartPointId>,
     ) -> Result<Self, AspectSetError> {
         if self.built_in {
             return Err(AspectSetError::ImmutableBuiltin(self.id.clone()));
@@ -222,7 +319,10 @@ impl AspectSet {
             description,
             false,
             rules,
-            points,
+            AspectPointSelections {
+                displayed: displayed_points,
+                aspected: aspected_points,
+            },
         )
     }
 
@@ -232,7 +332,7 @@ impl AspectSet {
             revision: self.revision,
             content_id: self.content_id.clone(),
             rules: self.rules.clone(),
-            points: self.points.clone(),
+            points: self.aspected_points.clone(),
         }
     }
 
@@ -259,7 +359,8 @@ impl AspectSet {
         validate_text("name", &self.name, 256)?;
         validate_text("description", &self.description, 4096)?;
         validate_rules(&self.rules)?;
-        validate_points(&self.points)
+        validate_points(&self.displayed_points)?;
+        validate_points(&self.aspected_points)
     }
 
     fn computed_content_id(&self) -> Result<String, AspectSetError> {
@@ -271,12 +372,93 @@ impl AspectSet {
             description: &self.description,
             built_in: self.built_in,
             rules: &self.rules,
-            points: &self.points,
+            displayed_points: &self.displayed_points,
+            aspected_points: &self.aspected_points,
         };
         Ok(format!(
             "sha256:{:x}",
             Sha256::digest(serde_json::to_vec(&canonical)?)
         ))
+    }
+}
+
+impl<'de> Deserialize<'de> for AspectSet {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let set = match AspectSetWire::deserialize(deserializer)? {
+            AspectSetWire::V2(wire) => {
+                let set = Self {
+                    schema_version: wire.schema_version,
+                    id: wire.id,
+                    revision: wire.revision,
+                    name: wire.name,
+                    description: wire.description,
+                    built_in: wire.built_in,
+                    rules: wire.rules,
+                    displayed_points: wire.displayed_points,
+                    aspected_points: wire.aspected_points,
+                    content_id: wire.content_id,
+                };
+                set.validate().map_err(serde::de::Error::custom)?;
+                set
+            }
+            AspectSetWire::V1(wire) => {
+                if wire.schema_version != 1 {
+                    return Err(serde::de::Error::custom(AspectSetError::UnsupportedSchema(
+                        wire.schema_version,
+                    )));
+                }
+                validate_id(&wire.id, wire.built_in).map_err(serde::de::Error::custom)?;
+                if wire.revision == 0 {
+                    return Err(serde::de::Error::custom(AspectSetError::InvalidRevision));
+                }
+                validate_text("name", &wire.name, 256).map_err(serde::de::Error::custom)?;
+                validate_text("description", &wire.description, 4096)
+                    .map_err(serde::de::Error::custom)?;
+                validate_rules(&wire.rules).map_err(serde::de::Error::custom)?;
+                validate_points(&wire.points).map_err(serde::de::Error::custom)?;
+                let canonical = CanonicalAspectSetV1Ref {
+                    schema_version: 1,
+                    id: &wire.id,
+                    revision: wire.revision,
+                    name: &wire.name,
+                    description: &wire.description,
+                    built_in: wire.built_in,
+                    rules: &wire.rules,
+                    points: &wire.points,
+                };
+                let actual = format!(
+                    "sha256:{:x}",
+                    Sha256::digest(
+                        serde_json::to_vec(&canonical).map_err(serde::de::Error::custom)?
+                    )
+                );
+                if wire.content_id != actual {
+                    return Err(serde::de::Error::custom(
+                        AspectSetError::ContentIdMismatch {
+                            expected: wire.content_id,
+                            actual,
+                        },
+                    ));
+                }
+                Self::new_internal(
+                    wire.id,
+                    wire.revision,
+                    wire.name,
+                    wire.description,
+                    wire.built_in,
+                    wire.rules,
+                    AspectPointSelections {
+                        displayed: wire.points.clone(),
+                        aspected: wire.points,
+                    },
+                )
+                .map_err(serde::de::Error::custom)?
+            }
+        };
+        Ok(set)
     }
 }
 
@@ -702,7 +884,10 @@ fn preset(
             rule(AspectKind::Trine, square_trine, 3),
             rule(AspectKind::Sextile, sextile, 4),
         ],
-        points,
+        AspectPointSelections {
+            displayed: points.clone(),
+            aspected: points,
+        },
     )
     .expect("built-in aspect set is valid")
 }
