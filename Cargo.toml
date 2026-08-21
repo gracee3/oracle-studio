@@ -1,5 +1,18 @@
 [workspace]
 members = [
+    "crates/astraeus-artifacts",
+    "crates/astraeus-cli",
+    "crates/astraeus-comparison",
+    "crates/astraeus-core",
+    "crates/astraeus-derived",
+    "crates/astraeus-events",
+    "crates/astraeus-fixtures",
+    "crates/astraeus-moshier",
+    "crates/astraeus-specifications",
+    "crates/astraeus-swiss",
+    "crates/astraeus-techniques",
+    "crates/astraeus-timeseries",
+    "crates/astraeus-western",
     "crates/oracle-studio-app",
     "crates/oracle-studio-browser",
     "crates/oracle-studio-chart-player",
@@ -21,6 +34,19 @@ rust-version = "1.97"
 
 [workspace.dependencies]
 argon2 = "=0.5.3"
+astraeus-artifacts = { version = "0.1.0", path = "crates/astraeus-artifacts" }
+astraeus-cli = { version = "0.1.0", path = "crates/astraeus-cli" }
+astraeus-comparison = { version = "0.1.0", path = "crates/astraeus-comparison" }
+astraeus-core = { version = "0.1.0", path = "crates/astraeus-core" }
+astraeus-derived = { version = "0.1.0", path = "crates/astraeus-derived" }
+astraeus-events = { version = "0.1.0", path = "crates/astraeus-events" }
+astraeus-fixtures = { version = "0.1.0", path = "crates/astraeus-fixtures" }
+astraeus-moshier = { version = "0.1.0", path = "crates/astraeus-moshier" }
+astraeus-specifications = { version = "0.1.0", path = "crates/astraeus-specifications" }
+astraeus-swiss = { version = "0.1.0", path = "crates/astraeus-swiss" }
+astraeus-techniques = { version = "0.1.0", path = "crates/astraeus-techniques" }
+astraeus-timeseries = { version = "0.1.0", path = "crates/astraeus-timeseries" }
+astraeus-western = { version = "0.1.0", path = "crates/astraeus-western" }
 base64 = "=0.22.1"
 chacha20poly1305 = "=0.10.1"
 chrono = { version = "=0.4.41", default-features = false, features = ["clock", "serde", "std"] }
@@ -33,8 +59,11 @@ js-sys = "=0.3.103"
 leptos = { version = "=0.8.20", default-features = false }
 rexie = "=0.6.2"
 serde = { version = "=1.0.229", features = ["derive"] }
-serde_json = "=1.0.151"
+serde_json = { version = "=1.0.151", features = ["float_roundtrip"] }
 sha2 = "=0.10.9"
+sweph-sys = "=0.3.0"
+swisseph-rs = { version = "=0.2.0", default-features = false }
+tempfile = "=3.27.0"
 thiserror = "=2.0.12"
 uuid = { version = "=1.24.1", features = ["js", "serde", "v4"] }
 wasm-bindgen = "=0.2.126"

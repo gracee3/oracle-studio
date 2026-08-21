@@ -1,17 +1,16 @@
 [package]
-name = "oracle-studio-core"
+name = "astraeus-artifacts"
 version = "0.1.0"
-description = "Validated chart-only records for Oracle Studio"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+description = "Versioned calculation artifacts for Astraeus"
+publish = false
 
 [dependencies]
-astraeus-artifacts.workspace = true
-astraeus-comparison.workspace = true
-chrono.workspace = true
-chrono-tz.workspace = true
+astraeus-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 thiserror.workspace = true

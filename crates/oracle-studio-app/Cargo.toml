@@ -11,11 +11,11 @@ rust-version.workspace = true
 test-ephemeris = []
 
 [dependencies]
-astraeus-artifacts = { version = "0.1.0", git = "https://github.com/gracee3/astraeus", rev = "8637ceb64fa11a06c8680b46cb4b57c71d94d37f" }
-astraeus-comparison = { version = "0.1.0", git = "https://github.com/gracee3/astraeus", rev = "8637ceb64fa11a06c8680b46cb4b57c71d94d37f" }
-astraeus-core = { version = "0.1.0", git = "https://github.com/gracee3/astraeus", rev = "8637ceb64fa11a06c8680b46cb4b57c71d94d37f" }
-astraeus-derived = { version = "0.1.0", git = "https://github.com/gracee3/astraeus", rev = "8637ceb64fa11a06c8680b46cb4b57c71d94d37f" }
-astraeus-specifications = { version = "0.1.0", git = "https://github.com/gracee3/astraeus", rev = "8637ceb64fa11a06c8680b46cb4b57c71d94d37f" }
+astraeus-artifacts.workspace = true
+astraeus-comparison.workspace = true
+astraeus-core.workspace = true
+astraeus-derived.workspace = true
+astraeus-specifications.workspace = true
 oracle-studio-core = { version = "0.1.0", path = "../oracle-studio-core" }
 oracle-studio-chart-view = { version = "0.1.0", path = "../oracle-studio-chart-view" }
 thiserror.workspace = true
