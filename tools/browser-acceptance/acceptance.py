@@ -216,7 +216,8 @@ def run_acceptance(driver: Driver, launch_url: str, downloads: Path) -> None:
     driver.click_text("New scratch")
     driver.wait_text("Scratch")
     driver.click_text("Settings", "a")
-    driver.wait_text("Studio preferences")
+    # innerText reflects the eyebrow's rendered uppercase styling.
+    driver.wait_text("STUDIO PREFERENCES")
     person_form = "form.person-editor"
     driver.set_value(driver.control(person_form, "Display name"), "Fictional Person")
     driver.click_text("Add person")

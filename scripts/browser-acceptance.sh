@@ -11,7 +11,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-if ss -H -ltn 'sport = :8080' | rg -q .; then
+if ss -H -ltn 'sport = :8080' | grep -q .; then
     echo "127.0.0.1:8080 is already in use; acceptance will not disturb it" >&2
     exit 1
 fi
