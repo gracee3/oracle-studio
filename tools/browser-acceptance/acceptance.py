@@ -477,9 +477,14 @@ def run_acceptance(driver: Driver, launch_url: str, downloads: Path) -> None:
     driver.click(driver.element("button[aria-label='Collapse Controls sidebar']"))
     driver.wait(
         lambda: driver.execute(
-            "return document.querySelector('#workbench').classList.contains('left-collapsed') && document.querySelector('#workbench').classList.contains('right-collapsed')"
+            f"""
+            const workbench=document.querySelector('#workbench');
+            return workbench.classList.contains('left-collapsed')
+              && workbench.classList.contains('right-collapsed')
+              && document.querySelector('#wheel-stage').clientWidth > {stage_width};
+            """
         ),
-        "independent desktop sidebar rails",
+        "completed independent desktop sidebar rail transition",
     )
     collapsed_layout = driver.execute(
         """
