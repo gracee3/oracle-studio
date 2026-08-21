@@ -43,5 +43,15 @@ be selected by production UI input.
 
 The UI receives only `WorkspaceSummary`, `WorkbenchPresentation`, global wheel
 template settings, and render-ready `ChartScene` values. Preview calculations
-do not mutate a document. The worker retains one pending generation and commits
-it atomically only after Update Chart or Save As.
+do not mutate a document. The worker retains one pending generation together
+with its source vault ID and encrypted-record revision. Hash-route navigation
+does not disturb that transient record.
+
+Chart persistence lives on Files, not beside the wheel. An update requires
+confirmation and preserves the outer chart's stable identity. Save-as creates a
+new stable identity, rejects case-insensitive name collisions, and never
+overwrites. The pending preview can commit only to its still-active, mounted
+source vault at the exact captured revision. Switching or locking the vault,
+reloading the page, or losing the IndexedDB compare-and-swap invalidates it;
+the UI removes the persistence actions and reports why. Scratch previews remain
+renderable but cannot commit until scratch is first saved as an encrypted vault.

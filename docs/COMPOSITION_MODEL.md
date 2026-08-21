@@ -24,6 +24,11 @@ ownership, comparison source IDs, and current-result pointers. Recalculation
 appends history and advances only the owning definition/preset pointer. Editing
 a saved location never changes a calculation's embedded snapshot.
 
+Workbench previews are not schema-v4 records. Files can commit one either by
+updating the preview's source chart without changing its stable ID, or by
+creating a separately named chart with a new stable ID. Both operations append
+an immutable calculation; neither mutates an existing calculation record.
+
 Text and collections are bounded, unknown fields are rejected, and hostile but
 valid Unicode/HTML-like text round-trips as data. The current Astraeus revision
 is `8637ceb64fa11a06c8680b46cb4b57c71d94d37f`; no sibling path dependency is

@@ -294,8 +294,7 @@ def run_acceptance(driver: Driver, launch_url: str, downloads: Path) -> None:
         for column, label in zip(controller, expected_labels, strict=True)
     ):
         raise RuntimeError(f"time controller does not preserve the exact eight columns: {controller}")
-    day_forward = driver.element(".time-column:nth-child(4) button:nth-child(2)")
-    driver.click(day_forward)
+    driver.click(driver.element(".time-column:nth-child(4) button:nth-child(2)"))
     driver.wait(
         lambda: "2026-08-18" in driver.execute(
             "return document.querySelector('.outer-meta').textContent"
@@ -303,6 +302,10 @@ def run_acceptance(driver: Driver, launch_url: str, downloads: Path) -> None:
         "one-day Moshier preview",
         timeout=120,
     )
+    if len(driver.elements(".wheel-actions button, .wheel-actions form")) != 0:
+        raise RuntimeError("workbench still exposes chart persistence controls")
+    if "Unsaved preview" not in driver.body() or "Review in Files" not in driver.body():
+        raise RuntimeError("workbench does not expose the unsaved-preview Files handoff")
     pluto = driver.element(".filters-module .filter-grid label:nth-child(10) input")
     driver.click(pluto)
     driver.wait(
@@ -324,12 +327,51 @@ def run_acceptance(driver: Driver, launch_url: str, downloads: Path) -> None:
     print("PASS chart domain: real Moshier wheel, exact time controller, filters, and SVG metadata")
 
     driver.click_text("Files", "a")
+    driver.wait_text("Charts in active workspace")
+    driver.wait_text("Scratch workspace · save it as an encrypted vault first")
     scratch_form = "form.save-scratch"
     driver.set_value(driver.control(scratch_form, "Public title"), "Fictional Portable Studio")
     driver.set_value(driver.control(scratch_form, "Password"), "fictional browser password")
     driver.click_text("Save encrypted vault")
     driver.wait_text("Fictional Portable Studio", timeout=90)
     driver.wait_text("ACTIVE", timeout=90)
+    driver.wait_text("Ready to save into the currently active unlocked vault.", timeout=120)
+
+    save_as_form = "form.save-as-chart"
+    driver.set_value(driver.control(save_as_form, "New chart name"), "fictional TRANSIT")
+    driver.click_text("Save as new chart")
+    driver.wait_text("a chart with that name already exists; Save As never overwrites")
+    driver.set_value(driver.control(save_as_form, "New chart name"), "Fictional Transit Copy")
+    driver.click_text("Save as new chart")
+    driver.wait_text("Saved new chart “Fictional Transit Copy”.", timeout=120)
+
+    driver.click_text("Workbench", "a")
+    if len(driver.elements("//article[.//strong[normalize-space()='Fictional transit']]", "xpath")) != 1:
+        raise RuntimeError("save-as overwrote or duplicated the source chart")
+    if len(driver.elements("//article[.//strong[normalize-space()='Fictional Transit Copy']]", "xpath")) != 1:
+        raise RuntimeError("save-as did not create a distinct chart")
+    driver.click(driver.element(".time-column:nth-child(4) button:nth-child(2)"))
+    driver.wait(
+        lambda: "2026-08-19" in driver.execute(
+            "return document.querySelector('.outer-meta').textContent"
+        ),
+        "second unsaved workbench preview",
+        timeout=120,
+    )
+    driver.click_text("Files", "a")
+    driver.wait_text("Ready to save into the currently active unlocked vault.", timeout=120)
+    driver.execute("window.confirm = () => true")
+    driver.click_text("Update existing chart")
+    driver.wait_text("Updated existing chart “Fictional transit”.", timeout=120)
+    driver.click_text("Workbench", "a")
+    transit_card = driver.element(
+        "//article[.//strong[normalize-space()='Fictional transit']]", "xpath"
+    )
+    if "2026-08-19" not in driver.execute("return arguments[0].innerText", [transit_card]):
+        raise RuntimeError("update did not preserve and advance the source chart identity")
+    print("PASS chart files: route handoff, collision-safe save-as, confirmation, and identity-preserving update succeed")
+
+    driver.click_text("Files", "a")
 
     driver.execute("location.reload()")
     driver.wait_text("Browser-local studio ready.")

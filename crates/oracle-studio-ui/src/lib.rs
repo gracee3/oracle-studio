@@ -26,9 +26,10 @@ mod browser {
     };
     use oracle_studio_platform::{
         ActiveWorkspace, CapabilityStatus, ChartSummary, LabelDensity, PlatformCommand,
-        PlatformResponse, PreviewGeneration, PreviewSaveMode, StudioPlatform, VaultLockState,
-        VaultSummary, WheelOrientation, WheelPalette, WheelTemplate, WheelTemplateSettings,
-        WorkbenchPresentation, WorkbenchPreviewRequest, WorkspaceSummary,
+        PlatformErrorCode, PlatformResponse, PreviewCommitOutcome, PreviewGeneration,
+        PreviewSaveMode, StudioPlatform, VaultLockState, VaultSummary, WheelOrientation,
+        WheelPalette, WheelTemplate, WheelTemplateSettings, WorkbenchPresentation,
+        WorkbenchPreviewRequest, WorkspaceSummary,
     };
     use oracle_studio_worker::BrowserStudioPlatform;
     use wasm_bindgen::{JsCast, closure::Closure};
@@ -151,6 +152,7 @@ mod browser {
         wheel_templates: RwSignal<WheelTemplateSettings>,
         catalog_results: RwSignal<Vec<CatalogSearchMatch>>,
         presentation: RwSignal<Option<WorkbenchPresentation>>,
+        preview_pending: RwSignal<bool>,
         fallback_presentation: RwSignal<Option<WorkbenchPresentation>>,
         desired_outer: RwSignal<Option<LocalDateTimeInput>>,
         outer_ambiguous_choice: RwSignal<Option<AmbiguousTimeChoice>>,
@@ -182,6 +184,7 @@ mod browser {
                 wheel_templates: RwSignal::new(WheelTemplateSettings::default()),
                 catalog_results: RwSignal::new(Vec::new()),
                 presentation: RwSignal::new(None),
+                preview_pending: RwSignal::new(false),
                 fallback_presentation: RwSignal::new(None),
                 desired_outer: RwSignal::new(None),
                 outer_ambiguous_choice: RwSignal::new(None),
@@ -396,7 +399,6 @@ mod browser {
 
     #[component]
     fn WheelStage(platform: Platform, model: Model) -> impl IntoView {
-        let save_as_name = NodeRef::<Input>::new();
         let wheel_click = move |event: leptos::ev::MouseEvent| {
             if let Some(element) = interaction_element(event.target()) {
                 toggle_interaction(model, &element);
@@ -436,7 +438,7 @@ mod browser {
                             <div class="wheel-empty">
                                 <span aria-hidden="true">"☉"</span>
                                 <h2>{if workspace.active.is_none() { "Open a workspace" } else { "Two charts and a location make a wheel" }}</h2>
-                                <p>"Calculated Moshier previews stay transient until you choose Update Chart or Save As."</p>
+                                <p>"Calculated Moshier previews stay transient until you review them in Files."</p>
                                 {if workspace.active.is_none() {
                                     view! { <button class="primary" on:click=move |_| dispatch(platform, model, PlatformCommand::CreateScratch)>"Open scratch"</button> }.into_any()
                                 } else {
@@ -448,19 +450,15 @@ mod browser {
                     <div class="calculation-indicator" role="status">{move || if model.calculating.get() { "Calculating newest cursor…" } else { "" }}</div>
                 </div>
                 <div class="wheel-actions">
-                    <button class="primary" type="button" disabled=move || model.presentation.get().is_none() || model.calculating.get() on:click=move |_| commit_preview(platform, model, PreviewSaveMode::UpdateChart)>"Update Chart"</button>
-                    <form on:submit=move |event: SubmitEvent| {
-                        event.prevent_default();
-                        if let Some(name) = value(save_as_name) {
-                            commit_preview(platform, model, PreviewSaveMode::SaveAs { name });
-                        } else {
-                            model.problem.set(Some("Save As requires a new name.".into()));
-                        }
-                    }>
-                        <input node_ref=save_as_name aria-label="New chart name" placeholder="New chart name" required />
-                        <button type="submit" disabled=move || model.presentation.get().is_none() || model.calculating.get()>"Save As"</button>
-                    </form>
-                    <span>{move || model.presentation.get().and_then(|p| p.adjustment_notice).unwrap_or_default()}</span>
+                    {move || if model.preview_pending.get() {
+                        view! {
+                            <strong class="unsaved-preview">"Unsaved preview"</strong>
+                            <a class="button-link" href="#files">"Review in Files"</a>
+                        }.into_any()
+                    } else {
+                        view! { <span class="preview-saved">"No unsaved chart preview"</span> }.into_any()
+                    }}
+                    <span class="adjustment-notice">{move || model.presentation.get().and_then(|p| p.adjustment_notice).unwrap_or_default()}</span>
                 </div>
             </section>
         }
@@ -882,6 +880,7 @@ mod browser {
             <main id="files" class="route scroll-route" tabindex="-1">
                 <div class="route-heading"><div><p class="eyebrow">"Portable, browser-local storage"</p><h1>"Files"</h1></div><a href="#workbench">"Back to workbench"</a></div>
                 <section class="file-warning"><strong>"Exports are your backups."</strong><span>{move || model.capabilities.get().map(|status| status.backup_warning).unwrap_or_else(|| "Browser storage can be evicted.".into())}</span></section>
+                <PendingChartActions platform model />
                 <section class="file-toolbar">
                     <button class="primary" on:click=move |_| dispatch(platform, model, PlatformCommand::CreateScratch)>"New scratch"</button>
                     <label class="file-action">"Import .oracle-vault"<input node_ref=import type="file" accept=".oracle-vault,application/octet-stream" on:change=move |_| {
@@ -899,6 +898,83 @@ mod browser {
                     {move || if model.vaults.get().is_empty() { view! { <div class="empty-card"><span>"◇"</span><p>"No encrypted vaults in this browser."</p></div> }.into_any() } else { ().into_any() }}
                 </section>
             </main>
+        }
+    }
+
+    #[component]
+    fn PendingChartActions(platform: Platform, model: Model) -> impl IntoView {
+        let save_as_name = NodeRef::<Input>::new();
+        view! {
+            <section class="pending-chart-actions" aria-labelledby="pending-chart-heading">
+                <div class="pending-chart-copy">
+                    <p class="eyebrow">"Chart persistence"</p>
+                    <h2 id="pending-chart-heading">"Charts in active workspace"</h2>
+                    {move || if model.preview_pending.get() {
+                        model.presentation.get().map(|preview| {
+                            let destination = if preview.source.vault_id.is_some() {
+                                format!("{} · active revision {}", preview.source.vault_title, preview.source.vault_revision.as_deref().unwrap_or("unavailable"))
+                            } else {
+                                "Scratch workspace · save it as an encrypted vault first".into()
+                            };
+                            view! {
+                                <div class="pending-chart-summary">
+                                    <span class="pending-badge">"Unsaved preview"</span>
+                                    <strong>{preview.outer.label}</strong>
+                                    <span>{format!("{} {} · {}", preview.outer.local_input.local_date(), preview.outer.local_input.local_time(), preview.outer.location_label)}</span>
+                                    <small>{destination}</small>
+                                </div>
+                            }
+                        }).into_any()
+                    } else {
+                        view! {
+                            <div class="pending-chart-empty">
+                                <p>"There is no unsaved chart preview. Adjust a chart in Workbench, then return here to update or save it as a new chart."</p>
+                                <a class="button-link" href="#workbench">"Open Workbench"</a>
+                            </div>
+                        }.into_any()
+                    }}
+                </div>
+                {move || if model.preview_pending.get() && model.presentation.get().is_some() {
+                    let target = model.presentation.get().map(|preview| preview.outer.label).unwrap_or_default();
+                    view! {
+                        <div class="pending-chart-forms">
+                            <div class="chart-persist-option">
+                                <h3>"Update existing chart"</h3>
+                                <p>{format!("Preserve the identity of “{target}” and replace its current definition with this preview.")}</p>
+                                <button class="primary" type="button"
+                                    disabled=move || model.busy.get() || !pending_destination_ready(model)
+                                    on:click=move |_| {
+                                        if confirm(&format!("Update the existing chart “{target}” in the active vault?")) {
+                                            commit_preview(platform, model, PreviewSaveMode::UpdateChart { confirmed: true });
+                                        }
+                                    }>
+                                    "Update existing chart"
+                                </button>
+                            </div>
+                            <form class="chart-persist-option save-as-chart" on:submit=move |event: SubmitEvent| {
+                                event.prevent_default();
+                                if let Some(name) = value(save_as_name) {
+                                    commit_preview(platform, model, PreviewSaveMode::SaveAs { name });
+                                } else {
+                                    model.problem.set(Some("Save As requires a new name.".into()));
+                                }
+                            }>
+                                <h3>"Save as a new chart"</h3>
+                                <p>"Create a distinct chart. Names are unique without regard to letter case, and an existing chart is never overwritten."</p>
+                                <label><span>"New chart name"</span><input node_ref=save_as_name required maxlength="256" /></label>
+                                <button type="submit" disabled=move || model.busy.get() || !pending_destination_ready(model)>"Save as new chart"</button>
+                            </form>
+                            {move || if pending_destination_ready(model) {
+                                view! { <p class="destination-status ready" role="status">"Ready to save into the currently active unlocked vault."</p> }.into_any()
+                            } else {
+                                view! { <p class="destination-status blocked" role="alert">"This preview has no valid destination. Save scratch first, or return to Workbench after unlocking and activating the intended vault."</p> }.into_any()
+                            }}
+                        </div>
+                    }.into_any()
+                } else {
+                    ().into_any()
+                }}
+            </section>
         }
     }
 
@@ -935,7 +1011,14 @@ mod browser {
                         queue_selected_preview(platform, model, None);
                     }
                 }
-                Err(error) => model.problem.set(Some(error.message)),
+                Err(error) => {
+                    if error.code == PlatformErrorCode::StalePreview {
+                        model.presentation.set(None);
+                        model.fallback_presentation.set(None);
+                        model.preview_pending.set(false);
+                    }
+                    model.problem.set(Some(error.message));
+                }
             }
             model.busy.set(false);
         });
@@ -949,6 +1032,8 @@ mod browser {
                 capabilities,
                 wheel_templates,
             } => {
+                model.presentation.set(None);
+                model.preview_pending.set(false);
                 model.vaults.set(vaults);
                 model.workspace.set(workspace);
                 model.capabilities.set(Some(capabilities));
@@ -961,13 +1046,29 @@ mod browser {
                 false
             }
             PlatformResponse::Workspace(workspace) => {
+                if model.preview_pending.get_untracked() {
+                    model.notice.set(Some(
+                        "The active workspace changed; its unsaved preview was invalidated.".into(),
+                    ));
+                }
+                model.presentation.set(None);
+                model.preview_pending.set(false);
                 model.workspace.set(workspace);
                 true
             }
             PlatformResponse::Updated { vaults, workspace } => {
+                let invalidated = model.preview_pending.get_untracked();
+                model.presentation.set(None);
+                model.fallback_presentation.set(None);
+                model.preview_pending.set(false);
                 model.vaults.set(vaults);
                 model.workspace.set(workspace);
-                model.notice.set(Some("Local workspace updated.".into()));
+                model.notice.set(Some(if invalidated {
+                    "The workspace or vault revision changed; its prior unsaved preview was invalidated."
+                        .into()
+                } else {
+                    "Local workspace updated.".into()
+                }));
                 true
             }
             PlatformResponse::WheelTemplates(settings) => {
@@ -976,6 +1077,26 @@ mod browser {
             }
             PlatformResponse::WorkbenchPreview(presentation) => {
                 model.presentation.set(Some(presentation));
+                model.preview_pending.set(true);
+                false
+            }
+            PlatformResponse::WorkbenchPreviewCommitted {
+                vaults,
+                workspace,
+                outcome,
+            } => {
+                model.vaults.set(vaults);
+                model.workspace.set(workspace);
+                model.preview_pending.set(false);
+                let message = match outcome {
+                    PreviewCommitOutcome::Updated { label, .. } => {
+                        format!("Updated existing chart “{label}”.")
+                    }
+                    PreviewCommitOutcome::SavedAs { label, .. } => {
+                        format!("Saved new chart “{label}”.")
+                    }
+                };
+                model.notice.set(Some(message));
                 false
             }
             PlatformResponse::Export { filename, bytes } => {
@@ -1018,6 +1139,7 @@ mod browser {
             || workspace.locations.is_empty()
         {
             model.presentation.set(None);
+            model.preview_pending.set(false);
             return false;
         }
         if !workspace
@@ -1163,6 +1285,7 @@ mod browser {
                         .set(Some(presentation.outer.local_input.clone()));
                     model.notice.set(presentation.adjustment_notice.clone());
                     model.presentation.set(Some(presentation));
+                    model.preview_pending.set(true);
                     model.fallback_presentation.set(None);
                 }
                 Ok(PlatformResponse::WorkbenchPreview(presentation)) => {
@@ -1181,6 +1304,7 @@ mod browser {
                             .desired_outer
                             .set(Some(fallback.outer.local_input.clone()));
                         model.presentation.set(Some(fallback));
+                        model.preview_pending.set(true);
                         model.fallback_presentation.set(None);
                     } else if let Some(last) = model.presentation.get_untracked() {
                         model.desired_outer.set(Some(last.outer.local_input));
@@ -1315,6 +1439,28 @@ mod browser {
         workspace.charts.iter().find(|chart| chart.id == id)
     }
 
+    fn pending_destination_ready(model: Model) -> bool {
+        let Some(preview) = model.presentation.get_untracked() else {
+            return false;
+        };
+        let (Some(source_id), Some(source_revision)) = (
+            preview.source.vault_id.as_deref(),
+            preview.source.vault_revision.as_deref(),
+        ) else {
+            return false;
+        };
+        if model.workspace.get_untracked().active
+            != Some(ActiveWorkspace::Vault(source_id.to_owned()))
+        {
+            return false;
+        }
+        model.vaults.get_untracked().iter().any(|vault| {
+            vault.id == source_id
+                && vault.revision == source_revision
+                && vault.lock_state == VaultLockState::Active
+        })
+    }
+
     fn chart_input(
         chart: &ChartSummary,
     ) -> Result<LocalDateTimeInput, oracle_studio_core::ModelError> {
@@ -1348,9 +1494,13 @@ mod browser {
     fn install_lifecycle_guards(model: Model) {
         let before_unload =
             Closure::<dyn FnMut(BeforeUnloadEvent)>::new(move |event: BeforeUnloadEvent| {
-                if model.workspace.get_untracked().scratch_dirty {
+                if model.workspace.get_untracked().scratch_dirty
+                    || model.preview_pending.get_untracked()
+                {
                     event.prevent_default();
-                    event.set_return_value("Unsaved scratch work will be lost.");
+                    event.set_return_value(
+                        "Unsaved scratch work or a transient chart preview will be lost.",
+                    );
                 }
             });
         let blur_model = model;
