@@ -9,7 +9,7 @@ Implemented foundation:
 - volatile scratch, multiple mounts, active switching, idle lock, import/export;
 - pure GeoNames parsing/search with upload and image-pinned same-origin inputs;
 - open Leptos vault library and chart workflow shell;
-- static unprivileged container and generated bootstrap CSP hashes.
+- static unprivileged container and generated bootstrap/wheel-style CSP hashes.
 
 Review gates before merge include browser IndexedDB/Chrome acceptance and the
 usual locked Rust, WASM, Clippy, rustdoc, dependency, Trunk, Docker, security

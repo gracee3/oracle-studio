@@ -29,8 +29,9 @@ Persistent browser storage is requested after the first vault save or catalog
 installation. Denial is nonfatal; the UI always warns that portable exports are
 required backups.
 
-The product CSP hashes Trunk's exact inline bootstrap at image build time and
-permits only same-origin scripts, workers, fonts, WASM, and catalog fetches.
+The product CSP hashes Trunk's exact inline bootstrap and the renderer's exact
+embedded wheel stylesheet at image build time. It permits only same-origin
+scripts, workers, fonts, WASM, and catalog fetches.
 There are no cross-origin runtime requests. Direct non-loopback deployment
 requires HTTPS supplied outside the static container.
 
