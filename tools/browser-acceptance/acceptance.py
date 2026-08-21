@@ -192,17 +192,14 @@ def make_catalog(root: Path) -> tuple[Path, Path, Path]:
     return cities, admin1, admin2
 
 
-def fill_chart(driver: Driver, record_id: str, label: str, role: str, date: str) -> None:
-    form = "form.chart-editor"
-    driver.set_value(driver.control(form, "Chart ID"), record_id)
-    driver.set_value(driver.control(form, "Chart label"), label)
+def fill_chart(driver: Driver, label: str, role: str, date: str) -> None:
+    form = "form.new-chart-editor"
+    driver.set_value(driver.control(form, "Chart name"), label)
     driver.set_value(driver.control(form, "Role", "select"), role)
-    driver.set_value(driver.control(form, "Local date"), date)
-    driver.set_value(driver.control(form, "Local time"), "12:00:00")
+    driver.set_value(driver.control(form, "Date"), date)
+    driver.set_value(driver.control(form, "Time"), "12:00:00")
     driver.set_value(driver.control(form, "IANA time zone"), "America/New_York")
-    driver.click_text("Check DST resolution")
-    driver.wait_text("UTC-04:00" if date.startswith("2026-08") else "UTC-05:00")
-    driver.click_text("Save chart definition")
+    driver.click_text("Create chart")
     driver.wait_text(label)
 
 
@@ -212,16 +209,18 @@ def run_acceptance(driver: Driver, launch_url: str, downloads: Path) -> None:
     current = driver.execute("return location.href")
     if "#token=" in current or current != launch_url:
         raise RuntimeError(f"application did not use the stable token-free origin: {current}")
-    driver.wait_text("Exports are your backups.")
     print("PASS launch: open static application loaded without authentication")
 
-    driver.click_text("New chart in scratch")
-    driver.wait_text("Chart subjects")
-    person_form = "#people form.studio-form"
-    driver.set_value(driver.control(person_form, "Record ID"), "fictional_person")
+    driver.click_text("Files", "a")
+    driver.wait_text("Exports are your backups.")
+    driver.click_text("New scratch")
+    driver.wait_text("Scratch")
+    driver.click_text("Settings", "a")
+    driver.wait_text("Studio preferences")
+    person_form = "form.person-editor"
     driver.set_value(driver.control(person_form, "Display name"), "Fictional Person")
-    driver.click_text("Save person")
-    driver.wait_text("Unsaved changes")
+    driver.click_text("Add person")
+    driver.wait_text("Fictional Person")
     warned = driver.execute(
         "const event = new Event('beforeunload', {cancelable:true}); window.dispatchEvent(event); return event.defaultPrevented;"
     )
@@ -229,11 +228,10 @@ def run_acceptance(driver: Driver, launch_url: str, downloads: Path) -> None:
         raise RuntimeError("dirty scratch did not install a page-exit warning")
     print("PASS scratch: volatile work becomes dirty and warns before page exit")
 
-    location_form = "#locations .two-column form:first-child"
+    location_form = "form.location-editor"
     for label, value in (
-        ("Record ID", "fictional_harbor"),
-        ("Label", "Fictional Harbor"),
-        ("Country code", "US"),
+        ("Location name", "Fictional Harbor"),
+        ("Country", "US"),
         ("IANA time zone", "America/New_York"),
         ("Latitude", "40.0"),
         ("Longitude", "-75.0"),
@@ -242,41 +240,83 @@ def run_acceptance(driver: Driver, launch_url: str, downloads: Path) -> None:
     driver.submit(location_form)
     driver.wait_text("Fictional Harbor")
 
-    driver.click_text("Install image-pinned catalog")
+    driver.click_text("Install pinned catalog")
     driver.wait_text("GeoNames places.", timeout=240)
 
     with tempfile.TemporaryDirectory(prefix="oracle-geonames-") as fixture_dir:
         paths = make_catalog(Path(fixture_dir))
-        catalog_form = "form.catalog-form"
+        catalog_form = "form.catalog-upload"
         for label, path in zip(
             ("cities500.zip", "admin1CodesASCII.txt", "admin2Codes.txt"), paths, strict=True
         ):
             driver.set_file(driver.control(catalog_form, label), path)
         driver.click_text("Install local catalog")
         driver.wait_text("Installed 1 GeoNames places.")
-        driver.set_value(driver.control("form.catalog-search", "Search the active catalog"), "sao jose")
+        driver.set_value(driver.element("form.inline-search input"), "sao jose")
         driver.click_text("Search locally")
         driver.wait_text("São José")
     print("PASS locations: manual fallback and uploaded Unicode GeoNames search run in the worker")
 
-    fill_chart(driver, "natal", "Fictional natal", "natal", "2000-01-15")
-    fill_chart(driver, "transit", "Fictional transit", "transit", "2026-08-17")
-    driver.wait_text("Ephemeris provider unavailable")
-    comparison = "form.comparison-builder"
-    for label, value in (
-        ("Preset ID", "fictional_comparison"),
-        ("Preset label", "Fictional comparison"),
-        ("Inner chart ID", "natal"),
-        ("Outer chart ID", "transit"),
-    ):
-        driver.set_value(driver.control(comparison, label), value)
+    fill_chart(driver, "Fictional natal", "natal", "2000-01-15")
+    fill_chart(driver, "Fictional transit", "transit", "2026-08-17")
+    driver.execute("document.querySelector('details.advanced').open = true")
+    comparison = "form.comparison-editor"
+    driver.set_value(driver.control(comparison, "Preset name"), "Fictional comparison")
+    driver.set_value(driver.control(comparison, "Inner chart", "select"), "fictional-natal")
+    driver.set_value(driver.control(comparison, "Outer chart", "select"), "fictional-transit")
     driver.click_text("Save comparison preset")
     driver.wait_text("Fictional comparison")
-    print("PASS chart domain: DST offsets and comparison references are preserved without fabricated results")
+    driver.click_text("Workbench", "a")
+    driver.wait(
+        lambda: driver.execute("return Boolean(document.querySelector('#oracle-transit-biwheel'))"),
+        "Moshier workbench wheel",
+        timeout=120,
+    )
+    controller = driver.execute(
+        """
+        return [...document.querySelectorAll('.time-column')].map(column =>
+          [...column.children].map(item => item.textContent.trim()));
+        """
+    )
+    expected_labels = ["1m", "10m", "1h", "1d", "5d", "30d", "1y", "10y"]
+    if len(controller) != 8 or any(
+        column != [">>", ">", label, "<", "<<"]
+        for column, label in zip(controller, expected_labels, strict=True)
+    ):
+        raise RuntimeError(f"time controller does not preserve the exact eight columns: {controller}")
+    day_forward = driver.element(".time-column:nth-child(4) button:nth-child(2)")
+    driver.click(day_forward)
+    driver.wait(
+        lambda: "2026-08-18" in driver.execute(
+            "return document.querySelector('.outer-meta').textContent"
+        ),
+        "one-day Moshier preview",
+        timeout=120,
+    )
+    pluto = driver.element(".filters-module .filter-grid label:nth-child(10) input")
+    driver.click(pluto)
+    driver.wait(
+        lambda: driver.execute(
+            "return document.querySelectorAll('[data-interaction=point][data-point-id=Pluto]').length === 0"
+        ),
+        "session point filter",
+    )
+    metadata = driver.execute(
+        """
+        const point = document.querySelector('[data-interaction=point]');
+        const aspect = document.querySelector('[data-interaction=aspect]');
+        return {point: Boolean(point && point.tabIndex === 0 && point.getAttribute('aria-label')),
+                aspect: Boolean(aspect && aspect.tabIndex === 0 && aspect.dataset.natalId && aspect.dataset.transitId)};
+        """
+    )
+    if metadata != {"point": True, "aspect": True}:
+        raise RuntimeError(f"SVG interaction metadata is incomplete: {metadata}")
+    print("PASS chart domain: real Moshier wheel, exact time controller, filters, and SVG metadata")
 
-    scratch_form = "form.inline-form"
+    driver.click_text("Files", "a")
+    scratch_form = "form.save-scratch"
     driver.set_value(driver.control(scratch_form, "Public vault title"), "Fictional Portable Studio")
-    driver.set_value(driver.control(scratch_form, "Vault password"), "fictional browser password")
+    driver.set_value(driver.control(scratch_form, "Password"), "fictional browser password")
     driver.click_text("Save encrypted vault")
     driver.wait_text("Fictional Portable Studio", timeout=90)
     driver.wait_text("Active", timeout=90)
@@ -284,16 +324,18 @@ def run_acceptance(driver: Driver, launch_url: str, downloads: Path) -> None:
     driver.execute("location.reload()")
     driver.wait_text("Browser-local studio ready.")
     driver.wait_text("Fictional Portable Studio")
-    driver.wait_text("LOCKED")
-    card = driver.element("//article[.//h3[normalize-space()='Fictional Portable Studio']]", "xpath")
+    driver.wait_text("Locked")
+    card = driver.element("//article[.//h2[normalize-space()='Fictional Portable Studio']]", "xpath")
     password = driver.child(card, ".//label[.//span[normalize-space()='Password']]//input", "xpath")
     driver.set_value(password, "fictional browser password")
     driver.click(driver.child(card, ".//button[normalize-space()='Unlock']", "xpath"))
+    driver.click_text("Settings", "a")
     driver.wait_text("Fictional Person", timeout=90)
-    card = driver.element("//article[.//h3[normalize-space()='Fictional Portable Studio']]", "xpath")
+    driver.click_text("Files", "a")
+    card = driver.element("//article[.//h2[normalize-space()='Fictional Portable Studio']]", "xpath")
     driver.click(driver.child(card, ".//button[normalize-space()='Lock']", "xpath"))
-    driver.wait_text("LOCKED")
-    card = driver.element("//article[.//h3[normalize-space()='Fictional Portable Studio']]", "xpath")
+    driver.wait_text("Locked")
+    card = driver.element("//article[.//h2[normalize-space()='Fictional Portable Studio']]", "xpath")
     driver.click(driver.child(card, ".//button[normalize-space()='Export']", "xpath"))
     driver.wait_text("Downloaded fictional-portable-studio.oracle-vault.")
     driver.wait(lambda: any(downloads.glob("*.oracle-vault")), "portable vault download")
@@ -317,6 +359,10 @@ def run_acceptance(driver: Driver, launch_url: str, downloads: Path) -> None:
     )
     if mobile_overflow:
         raise RuntimeError("mobile viewport has horizontal overflow")
+    driver.click_text("Workbench", "a")
+    driver.click_text("Controls")
+    if len(driver.elements(".right-sidebar.drawer-open .time-column")) != 8:
+        raise RuntimeError("mobile Controls drawer lost one or more time columns")
     accessibility = driver.request(
         "POST", driver.path("/goog/cdp/execute"), {"cmd": "Accessibility.getFullAXTree", "params": {}}
     )
@@ -325,10 +371,10 @@ def run_acceptance(driver: Driver, launch_url: str, downloads: Path) -> None:
         for node in accessibility.get("nodes", [])
         if node.get("name")
     }
-    if "Studio sections" not in names:
+    if "Application views" not in names:
         raise RuntimeError("accessibility tree is missing the named navigation landmark")
     focus = driver.execute(
-        "const main=document.querySelector('#main-content'); main.focus(); return document.activeElement===main && main.tabIndex===-1;"
+        "const main=document.querySelector('#workbench'); main.focus(); return document.activeElement===main && main.tabIndex===-1;"
     )
     if not focus:
         raise RuntimeError("main focus target is unavailable")

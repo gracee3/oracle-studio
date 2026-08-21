@@ -21,7 +21,9 @@ mod browser {
         StableId, StepDirection, TimeInterval, WheelOrientation as ComparisonWheelOrientation,
         ZodiacId, default_aspects, default_chart_points, generate_unique_id, step_local_time,
     };
-    use oracle_studio_location_catalog::CatalogSearchMatch;
+    use oracle_studio_location_catalog::{
+        CatalogInstallInput, CatalogRetrieval, CatalogSearchMatch,
+    };
     use oracle_studio_platform::{
         ActiveWorkspace, CapabilityStatus, ChartSummary, LabelDensity, PlatformCommand,
         PlatformResponse, PreviewGeneration, PreviewSaveMode, StudioPlatform, VaultLockState,
@@ -653,7 +655,7 @@ mod browser {
         };
         view! {
             <section class="settings-panel"><div><p class="eyebrow">"Encrypted records"</p><h2>"People"</h2><EntityList items=Signal::derive(move || model.workspace.get().people) /></div>
-                <form class="settings-form" on:submit=submit><label><span>"Display name"</span><input node_ref=name required /></label><label><span>"Notes"</span><textarea node_ref=notes></textarea></label><button class="primary" type="submit">"Add person"</button></form>
+                <form class="settings-form person-editor" on:submit=submit><label><span>"Display name"</span><input node_ref=name required /></label><label><span>"Notes"</span><textarea node_ref=notes></textarea></label><button class="primary" type="submit">"Add person"</button></form>
             </section>
         }
     }
@@ -666,6 +668,9 @@ mod browser {
         let latitude = NodeRef::<Input>::new();
         let longitude = NodeRef::<Input>::new();
         let query = NodeRef::<Input>::new();
+        let cities = NodeRef::<Input>::new();
+        let admin1 = NodeRef::<Input>::new();
+        let admin2 = NodeRef::<Input>::new();
         let submit = move |event: SubmitEvent| {
             event.prevent_default();
             let result = (|| {
@@ -706,11 +711,44 @@ mod browser {
                 Err(message) => model.problem.set(Some(message)),
             }
         };
+        let install_local = move |event: SubmitEvent| {
+            event.prevent_default();
+            let files = [cities, admin1, admin2].map(|input| {
+                input
+                    .get()
+                    .and_then(|element| element.files())
+                    .and_then(|files| files.item(0))
+            });
+            let [Some(cities_file), Some(admin1_file), Some(admin2_file)] = files else {
+                model
+                    .problem
+                    .set(Some("Choose all three GeoNames files.".into()));
+                return;
+            };
+            spawn_local(async move {
+                let result = async {
+                    Ok::<_, String>(CatalogInstallInput {
+                        cities500_zip: read_file(cities_file).await?,
+                        admin1_codes: read_file(admin1_file).await?,
+                        admin2_codes: read_file(admin2_file).await?,
+                        retrieved_at: canonical_now(),
+                        retrieval: CatalogRetrieval::LocalFiles,
+                    })
+                }
+                .await;
+                match result {
+                    Ok(input) => {
+                        dispatch(platform, model, PlatformCommand::InstallCatalog { input })
+                    }
+                    Err(message) => model.problem.set(Some(message)),
+                }
+            });
+        };
         view! {
             <section class="settings-panel"><div><p class="eyebrow">"Encrypted snapshots"</p><h2>"Locations / GeoNames"</h2><EntityList items=Signal::derive(move || model.workspace.get().locations) /></div>
                 <div class="settings-stack">
-                    <form class="settings-form" on:submit=submit><label><span>"Location name"</span><input node_ref=label required /></label><div class="field-row"><label><span>"Country"</span><input node_ref=country maxlength="2" required value="US" /></label><label><span>"IANA time zone"</span><input node_ref=zone required value="America/New_York" /></label></div><div class="field-row"><label><span>"Latitude"</span><input node_ref=latitude required inputmode="decimal" /></label><label><span>"Longitude"</span><input node_ref=longitude required inputmode="decimal" /></label></div><button class="primary">"Save location"</button></form>
-                    <div class="settings-form"><h3>"Local GeoNames catalog"</h3><p>{move || model.capabilities.get().and_then(|status| status.catalog).map(|catalog| format!("{} local places · {}", catalog.place_count, catalog.content_id)).unwrap_or_else(|| "No catalog installed; manual locations remain available.".into())}</p><button on:click=move |_| dispatch(platform, model, PlatformCommand::InstallPinnedCatalog)>"Install pinned catalog"</button><form class="inline-search" on:submit=move |event: SubmitEvent| { event.prevent_default(); if let Some(query) = value(query) { dispatch(platform, model, PlatformCommand::SearchCatalog { query, limit: 20 }); } }><input node_ref=query aria-label="Search GeoNames" required /><button>"Search locally"</button></form><ul class="search-results">{move || model.catalog_results.get().into_iter().map(|result| view! { <li><strong>{result.place().name().to_owned()}</strong><small>{format!("{} · {}", result.place().country_code(), result.place().time_zone())}</small></li> }).collect_view()}</ul></div>
+                    <form class="settings-form location-editor" on:submit=submit><label><span>"Location name"</span><input node_ref=label required /></label><div class="field-row"><label><span>"Country"</span><input node_ref=country maxlength="2" required value="US" /></label><label><span>"IANA time zone"</span><input node_ref=zone required value="America/New_York" /></label></div><div class="field-row"><label><span>"Latitude"</span><input node_ref=latitude required inputmode="decimal" /></label><label><span>"Longitude"</span><input node_ref=longitude required inputmode="decimal" /></label></div><button class="primary">"Save location"</button></form>
+                    <div class="settings-form catalog-controls"><h3>"Local GeoNames catalog"</h3><p>{move || model.capabilities.get().and_then(|status| status.catalog).map(|catalog| format!("{} local places · {}", catalog.place_count, catalog.content_id)).unwrap_or_else(|| "No catalog installed; manual locations remain available.".into())}</p><button on:click=move |_| dispatch(platform, model, PlatformCommand::InstallPinnedCatalog)>"Install pinned catalog"</button><form class="catalog-upload" on:submit=install_local><label><span>"cities500.zip"</span><input node_ref=cities type="file" required accept=".zip" /></label><label><span>"admin1CodesASCII.txt"</span><input node_ref=admin1 type="file" required accept=".txt,text/plain" /></label><label><span>"admin2Codes.txt"</span><input node_ref=admin2 type="file" required accept=".txt,text/plain" /></label><button>"Install local catalog"</button></form><form class="inline-search" on:submit=move |event: SubmitEvent| { event.prevent_default(); if let Some(query) = value(query) { dispatch(platform, model, PlatformCommand::SearchCatalog { query, limit: 20 }); } }><input node_ref=query aria-label="Search GeoNames" required /><button>"Search locally"</button></form><ul class="search-results">{move || model.catalog_results.get().into_iter().map(|result| view! { <li><strong>{result.place().name().to_owned()}</strong><small>{format!("{} · {}", result.place().country_code(), result.place().time_zone())}</small></li> }).collect_view()}</ul></div>
                 </div>
             </section>
         }
@@ -777,7 +815,7 @@ mod browser {
         };
         view! {
             <section class="settings-panel"><div><p class="eyebrow">"Definitions and defaults"</p><h2>"Charts"</h2><ul class="entity-list">{move || model.workspace.get().charts.into_iter().map(|chart| view! { <li><strong>{chart.label}</strong><small>{chart.local_input}</small></li> }).collect_view()}</ul></div>
-                <form class="settings-form" on:submit=submit><label><span>"Chart name"</span><input node_ref=label required /></label><div class="field-row"><label><span>"Role"</span><select node_ref=role><option value="natal">"Natal"</option><option value="transit">"Transit"</option><option value="event">"Event"</option></select></label><label><span>"Zodiac"</span><select node_ref=zodiac><option value="tropical">"Tropical"</option><option value="sidereal">"Sidereal · Lahiri"</option></select></label></div><div class="field-row"><label><span>"Date"</span><input node_ref=date type="date" required /></label><label><span>"Time"</span><input node_ref=time type="time" step="1" required /></label></div><label><span>"IANA time zone"</span><input node_ref=zone required value="America/New_York" /></label><label><span>"House system"</span><select node_ref=houses><option value="placidus">"Placidus"</option><option value="whole-sign">"Whole Sign"</option><option value="equal">"Equal"</option></select></label><button class="primary">"Create chart"</button></form>
+                <form class="settings-form new-chart-editor" on:submit=submit><label><span>"Chart name"</span><input node_ref=label required /></label><div class="field-row"><label><span>"Role"</span><select node_ref=role><option value="natal">"Natal"</option><option value="transit">"Transit"</option><option value="event">"Event"</option></select></label><label><span>"Zodiac"</span><select node_ref=zodiac><option value="tropical">"Tropical"</option><option value="sidereal">"Sidereal · Lahiri"</option></select></label></div><div class="field-row"><label><span>"Date"</span><input node_ref=date type="date" required /></label><label><span>"Time"</span><input node_ref=time type="time" step="1" required /></label></div><label><span>"IANA time zone"</span><input node_ref=zone required value="America/New_York" /></label><label><span>"House system"</span><select node_ref=houses><option value="placidus">"Placidus"</option><option value="whole-sign">"Whole Sign"</option><option value="equal">"Equal"</option></select></label><button class="primary">"Create chart"</button></form>
             </section>
         }
     }
@@ -825,7 +863,7 @@ mod browser {
             }
         };
         view! {
-            <details class="settings-panel advanced"><summary><span><span class="eyebrow">"Advanced"</span><strong>"Comparison records"</strong></span></summary><div><p>"Saved comparison presets remain separate from global visual wheel templates."</p><EntityList items=Signal::derive(move || model.workspace.get().comparisons) /></div><form class="settings-form" on:submit=submit><label><span>"Preset name"</span><input node_ref=label required /></label><label><span>"Inner chart"</span><select node_ref=inner required>{move || chart_options(&model.workspace.get(), "")}</select></label><label><span>"Outer chart"</span><select node_ref=outer required>{move || chart_options(&model.workspace.get(), "")}</select></label><button>"Save comparison preset"</button></form></details>
+            <details class="settings-panel advanced"><summary><span><span class="eyebrow">"Advanced"</span><strong>"Comparison records"</strong></span></summary><div><p>"Saved comparison presets remain separate from global visual wheel templates."</p><EntityList items=Signal::derive(move || model.workspace.get().comparisons) /></div><form class="settings-form comparison-editor" on:submit=submit><label><span>"Preset name"</span><input node_ref=label required /></label><label><span>"Inner chart"</span><select node_ref=inner required>{move || chart_options(&model.workspace.get(), "")}</select></label><label><span>"Outer chart"</span><select node_ref=outer required>{move || chart_options(&model.workspace.get(), "")}</select></label><button>"Save comparison preset"</button></form></details>
         }
     }
 
@@ -1375,6 +1413,15 @@ mod browser {
         web_sys::window()
             .and_then(|window| window.confirm_with_message(message).ok())
             .unwrap_or(false)
+    }
+
+    fn canonical_now() -> String {
+        let iso = js_sys::Date::new_0()
+            .to_iso_string()
+            .as_string()
+            .unwrap_or_else(|| "1970-01-01T00:00:00.000Z".into());
+        iso.split_once('.')
+            .map_or(iso.clone(), |(seconds, _)| format!("{seconds}Z"))
     }
 
     fn active_label(workspace: &WorkspaceSummary) -> String {
