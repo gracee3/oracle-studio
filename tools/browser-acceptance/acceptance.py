@@ -212,6 +212,9 @@ def fill_chart(driver: Driver, label: str, role: str, date: str) -> None:
 def run_acceptance(driver: Driver, launch_url: str, downloads: Path) -> None:
     driver.request("POST", driver.path("/url"), {"url": launch_url})
     driver.wait_text("Browser-local studio ready.")
+    driver.request(
+        "POST", driver.path("/window/rect"), {"width": 1440, "height": 900, "x": 0, "y": 0}
+    )
     current = driver.execute("return location.href")
     if "#token=" in current or current != launch_url:
         raise RuntimeError(f"application did not use the stable token-free origin: {current}")
@@ -294,8 +297,7 @@ def run_acceptance(driver: Driver, launch_url: str, downloads: Path) -> None:
         for column, label in zip(controller, expected_labels, strict=True)
     ):
         raise RuntimeError(f"time controller does not preserve the exact eight columns: {controller}")
-    day_forward = driver.element(".time-column:nth-child(4) button:nth-child(2)")
-    driver.click(day_forward)
+    driver.click(driver.element(".time-column:nth-child(4) button:nth-child(2)"))
     driver.wait(
         lambda: "2026-08-18" in driver.execute(
             "return document.querySelector('.outer-meta').textContent"
@@ -303,6 +305,10 @@ def run_acceptance(driver: Driver, launch_url: str, downloads: Path) -> None:
         "one-day Moshier preview",
         timeout=120,
     )
+    if len(driver.elements(".wheel-actions button, .wheel-actions form")) != 0:
+        raise RuntimeError("workbench still exposes chart persistence controls")
+    if "Unsaved preview" not in driver.body() or "Review in Files" not in driver.body():
+        raise RuntimeError("workbench does not expose the unsaved-preview Files handoff")
     pluto = driver.element(".filters-module .filter-grid label:nth-child(10) input")
     driver.click(pluto)
     driver.wait(
@@ -323,16 +329,288 @@ def run_acceptance(driver: Driver, launch_url: str, downloads: Path) -> None:
         raise RuntimeError(f"SVG interaction metadata is incomplete: {metadata}")
     print("PASS chart domain: real Moshier wheel, exact time controller, filters, and SVG metadata")
 
+    presentation_ui = driver.execute(
+        """
+        const cards = [...document.querySelectorAll('.chart-meta')];
+        const labels = cards.map(card => ({
+          kicker: card.querySelector('.meta-kicker')?.textContent.trim(),
+          heading: card.querySelector('h2')?.textContent.trim(),
+          terms: [...card.querySelectorAll('dt')].map(item => item.textContent.trim()),
+          fontSize: parseFloat(getComputedStyle(card).fontSize),
+        }));
+        return {
+          labels,
+          zoomButtons: [...document.querySelectorAll('.zoom-controls button')]
+            .map(button => button.getAttribute('aria-label')),
+          zoomHint: document.querySelector('#zoom-help')?.textContent,
+          width: document.querySelector('#wheel-stage').clientWidth,
+        };
+        """
+    )
+    if (
+        [item["kicker"] for item in presentation_ui["labels"]] != ["Chart 1", "Chart 2"]
+        or any(item["fontSize"] < 14.4 for item in presentation_ui["labels"])
+        or any(
+            item["terms"] != ["Layer", "Date and time", "Location"]
+            for item in presentation_ui["labels"]
+        )
+        or presentation_ui["zoomButtons"]
+        != ["Zoom out", "Reset chart zoom", "Zoom in"]
+        or "Ctrl-wheel remains browser page zoom" not in presentation_ui["zoomHint"]
+    ):
+        raise RuntimeError(f"chart presentation controls are incomplete: {presentation_ui}")
+
+    driver.click(driver.element("button[aria-label='Zoom in']"))
+    driver.wait(
+        lambda: driver.execute(
+            "return document.querySelector('#wheel-stage').dataset.zoomPercent === '110'"
+        ),
+        "visible zoom-in control",
+    )
+    driver.execute(
+        "for (let i=0; i<40; i++) document.querySelector(\"button[aria-label='Zoom in']\").click()"
+    )
+    driver.wait(
+        lambda: driver.execute(
+            "return document.querySelector('#wheel-stage').dataset.zoomPercent === '300'"
+        ),
+        "bounded maximum chart zoom",
+    )
+    driver.execute(
+        "for (let i=0; i<50; i++) document.querySelector(\"button[aria-label='Zoom out']\").click()"
+    )
+    driver.wait(
+        lambda: driver.execute(
+            "return document.querySelector('#wheel-stage').dataset.zoomPercent === '75'"
+        ),
+        "bounded minimum chart zoom",
+    )
+    driver.click(driver.element("button[aria-label='Reset chart zoom']"))
+    driver.wait(
+        lambda: driver.execute(
+            "return document.querySelector('#wheel-stage').dataset.zoomPercent === '100'"
+        ),
+        "chart zoom reset",
+    )
+    wheel_result = driver.execute(
+        """
+        const chart = document.querySelector('.wheel-svg');
+        const bounds = chart.getBoundingClientRect();
+        const event = new WheelEvent('wheel', {
+          bubbles: true, cancelable: true, altKey: true, deltaY: -120,
+          clientX: bounds.left + bounds.width * .1,
+          clientY: bounds.top + bounds.height * .1,
+        });
+        return {dispatchAllowed: chart.dispatchEvent(event), defaultPrevented: event.defaultPrevented};
+        """
+    )
+    driver.wait(
+        lambda: driver.execute(
+            """
+            const stage=document.querySelector('#wheel-stage'), chart=document.querySelector('.wheel-svg');
+            return stage.dataset.zoomPercent === '110'
+              && chart.classList.contains('origin-x-left')
+              && chart.classList.contains('origin-y-top');
+            """
+        ),
+        "pointer-relative Alt/Option-wheel zoom",
+    )
+    if wheel_result != {"dispatchAllowed": False, "defaultPrevented": True}:
+        raise RuntimeError(f"Alt/Option-wheel did not suppress chart-area scrolling: {wheel_result}")
+    ctrl_result = driver.execute(
+        """
+        const chart = document.querySelector('.wheel-svg');
+        const event = new WheelEvent('wheel', {
+          bubbles: true, cancelable: true, ctrlKey: true, deltaY: -120,
+        });
+        return {dispatchAllowed: chart.dispatchEvent(event), defaultPrevented: event.defaultPrevented,
+                zoom: document.querySelector('#wheel-stage').dataset.zoomPercent};
+        """
+    )
+    if ctrl_result != {"dispatchAllowed": True, "defaultPrevented": False, "zoom": "110"}:
+        raise RuntimeError(f"Ctrl-wheel was incorrectly intercepted: {ctrl_result}")
+    driver.execute(
+        """
+        const stage=document.querySelector('#wheel-stage');
+        stage.focus();
+        stage.dispatchEvent(new KeyboardEvent('keydown', {key: '-', bubbles:true, cancelable:true}));
+        """
+    )
+    driver.wait(
+        lambda: driver.execute(
+            "return document.querySelector('#wheel-stage').dataset.zoomPercent === '100'"
+        ),
+        "focused-stage keyboard zoom",
+    )
+    driver.click(driver.element("button[aria-label='Zoom in']"))
+    driver.click(driver.element(".template-list button.selected"))
+    driver.wait(
+        lambda: driver.execute(
+            "return document.querySelector('#wheel-stage').dataset.zoomPercent === '100'"
+        ),
+        "template-change zoom reset",
+    )
+    if driver.execute("return document.activeElement !== document.querySelector('#wheel-stage')"):
+        driver.execute("document.querySelector('#wheel-stage').focus()")
+    driver.execute(
+        "document.querySelector('#wheel-stage').dispatchEvent(new KeyboardEvent('keydown', {key:'+', bubbles:true, cancelable:true}))"
+    )
+    driver.wait(
+        lambda: driver.execute(
+            "return document.querySelector('#wheel-stage').dataset.zoomPercent === '110'"
+        ),
+        "focused-stage plus key",
+    )
+    driver.execute(
+        "document.querySelector('#wheel-stage').dispatchEvent(new KeyboardEvent('keydown', {key:'0', bubbles:true, cancelable:true}))"
+    )
+    driver.wait(
+        lambda: driver.execute(
+            "return document.querySelector('#wheel-stage').dataset.zoomPercent === '100'"
+        ),
+        "focused-stage zero key",
+    )
+
+    outer_before_layout = driver.execute("return document.querySelector('.outer-meta').textContent")
+    stage_width = driver.execute("return document.querySelector('#wheel-stage').clientWidth")
+    driver.click(driver.element("button[aria-label='Collapse Charts sidebar']"))
+    driver.click(driver.element("button[aria-label='Collapse Controls sidebar']"))
+    driver.wait(
+        lambda: driver.execute(
+            f"""
+            const workbench=document.querySelector('#workbench');
+            return workbench.classList.contains('left-collapsed')
+              && workbench.classList.contains('right-collapsed')
+              && document.querySelector('#wheel-stage').clientWidth > {stage_width};
+            """
+        ),
+        "completed independent desktop sidebar rail transition",
+    )
+    collapsed_layout = driver.execute(
+        """
+        return {
+          width: document.querySelector('#wheel-stage').clientWidth,
+          outer: document.querySelector('.outer-meta').textContent,
+          wheel: Boolean(document.querySelector('#oracle-transit-biwheel')),
+          stored: JSON.parse(localStorage.getItem('oracle-studio.layout.v1')),
+        };
+        """
+    )
+    if (
+        collapsed_layout["width"] <= stage_width
+        or collapsed_layout["outer"] != outer_before_layout
+        or not collapsed_layout["wheel"]
+        or collapsed_layout["stored"]
+        != {"schema_version": 1, "left_collapsed": True, "right_collapsed": True}
+    ):
+        raise RuntimeError(f"desktop sidebar collapse disturbed chart state: {collapsed_layout}")
+    driver.click(driver.element("button[aria-label='Expand Charts sidebar']"))
+    driver.click(driver.element("button[aria-label='Expand Controls sidebar']"))
+
+    driver.request(
+        "POST", driver.path("/window/rect"), {"width": 768, "height": 1024, "x": 0, "y": 0}
+    )
+    tablet = driver.execute(
+        """
+        return {
+          overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+          cards: [...document.querySelectorAll('.chart-meta')].map(card => parseFloat(getComputedStyle(card).fontSize)),
+          chartsToggle: getComputedStyle(document.querySelector('.charts-toggle')).display !== 'none',
+        };
+        """
+    )
+    if tablet["overflow"] or not tablet["chartsToggle"] or any(size < 14.4 for size in tablet["cards"]):
+        raise RuntimeError(f"768x1024 chart layout is not readable and responsive: {tablet}")
+    driver.click_text("Charts")
+    if len(driver.elements(".left-sidebar.drawer-open")) != 1:
+        raise RuntimeError("768x1024 Charts drawer did not open")
+    driver.click(driver.element(".left-sidebar .drawer-close"))
+
+    driver.request(
+        "POST", driver.path("/window/rect"), {"width": 390, "height": 844, "x": 0, "y": 0}
+    )
+    mobile = driver.execute(
+        """
+        const strip=document.querySelector('.chart-meta-strip').getBoundingClientRect();
+        const viewport=document.querySelector('.chart-viewport').getBoundingClientRect();
+        return {
+          overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+          separated: strip.bottom <= viewport.top + 1,
+          cards: [...document.querySelectorAll('.chart-meta')].map(card => parseFloat(getComputedStyle(card).fontSize)),
+        };
+        """
+    )
+    if mobile["overflow"] or not mobile["separated"] or any(size < 14.4 for size in mobile["cards"]):
+        raise RuntimeError(f"390x844 metadata strip overlaps or is unreadable: {mobile}")
+    driver.click_text("Controls")
+    if len(driver.elements(".right-sidebar.drawer-open .time-column")) != 8:
+        raise RuntimeError("390x844 Controls drawer lost one or more time columns")
+    driver.click(driver.element(".right-sidebar .drawer-close"))
+    driver.request(
+        "POST", driver.path("/window/rect"), {"width": 1440, "height": 900, "x": 0, "y": 0}
+    )
+    print("PASS chart workspace: zoom, persistent desktop rails, readable metadata, and three responsive viewports")
+
     driver.click_text("Files", "a")
+    driver.wait_text("Charts in active workspace")
+    driver.wait_text("Scratch workspace · save it as an encrypted vault first")
     scratch_form = "form.save-scratch"
     driver.set_value(driver.control(scratch_form, "Public title"), "Fictional Portable Studio")
     driver.set_value(driver.control(scratch_form, "Password"), "fictional browser password")
     driver.click_text("Save encrypted vault")
     driver.wait_text("Fictional Portable Studio", timeout=90)
     driver.wait_text("ACTIVE", timeout=90)
+    driver.wait_text("Ready to save into the currently active unlocked vault.", timeout=120)
+
+    save_as_form = "form.save-as-chart"
+    driver.set_value(driver.control(save_as_form, "New chart name"), "fictional TRANSIT")
+    driver.click_text("Save as new chart")
+    driver.wait_text("a chart with that name already exists; Save As never overwrites")
+    driver.set_value(driver.control(save_as_form, "New chart name"), "Fictional Transit Copy")
+    driver.click_text("Save as new chart")
+    driver.wait_text("Saved new chart “Fictional Transit Copy”.", timeout=120)
+
+    driver.click_text("Workbench", "a")
+    if len(driver.elements("//article[.//strong[normalize-space()='Fictional transit']]", "xpath")) != 1:
+        raise RuntimeError("save-as overwrote or duplicated the source chart")
+    if len(driver.elements("//article[.//strong[normalize-space()='Fictional Transit Copy']]", "xpath")) != 1:
+        raise RuntimeError("save-as did not create a distinct chart")
+    driver.click(driver.element(".time-column:nth-child(4) button:nth-child(2)"))
+    driver.wait(
+        lambda: "2026-08-19" in driver.execute(
+            "return document.querySelector('.outer-meta').textContent"
+        ),
+        "second unsaved workbench preview",
+        timeout=120,
+    )
+    driver.click_text("Files", "a")
+    driver.wait_text("Ready to save into the currently active unlocked vault.", timeout=120)
+    driver.execute("window.confirm = () => true")
+    driver.click_text("Update existing chart")
+    driver.wait_text("Updated existing chart “Fictional transit”.", timeout=120)
+    driver.click_text("Workbench", "a")
+    transit_card = driver.element(
+        "//article[.//strong[normalize-space()='Fictional transit']]", "xpath"
+    )
+    if "2026-08-19" not in driver.execute("return arguments[0].innerText", [transit_card]):
+        raise RuntimeError("update did not preserve and advance the source chart identity")
+    print("PASS chart files: route handoff, collision-safe save-as, confirmation, and identity-preserving update succeed")
+
+    driver.click(driver.element("button[aria-label='Collapse Charts sidebar']"))
+    driver.click(driver.element("button[aria-label='Collapse Controls sidebar']"))
+    driver.click_text("Files", "a")
 
     driver.execute("location.reload()")
     driver.wait_text("Browser-local studio ready.")
+    persisted_layout = driver.execute(
+        """
+        const workbench=document.querySelector('#workbench');
+        return workbench.classList.contains('left-collapsed')
+          && workbench.classList.contains('right-collapsed');
+        """
+    )
+    if not persisted_layout:
+        raise RuntimeError("desktop sidebar preferences did not survive reload")
     driver.click_text("Files", "a")
     driver.wait_text("Fictional Portable Studio")
     driver.wait_text("LOCKED")
@@ -353,6 +631,9 @@ def run_acceptance(driver: Driver, launch_url: str, downloads: Path) -> None:
     exported = next(downloads.glob("*.oracle-vault"))
     if exported.stat().st_size < 100:
         raise RuntimeError("portable vault export is unexpectedly small")
+    driver.click_text("Workbench", "a")
+    driver.click(driver.element("button[aria-label='Expand Charts sidebar']"))
+    driver.click(driver.element("button[aria-label='Expand Controls sidebar']"))
     print("PASS vault: IndexedDB reload, unlock, export, and independent lock succeed")
 
     metrics = driver.execute(

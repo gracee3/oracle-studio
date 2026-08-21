@@ -31,9 +31,15 @@ and the full-history import is recorded in [the migration record](docs/astraeus/
 - Use a full-viewport, hash-addressable Workbench, Settings, and Files shell;
   sidebars and route content scroll independently while the chart wheel remains
   the dominant surface.
+- Collapse the desktop Charts and Controls sidebars independently into narrow
+  rails with global `oracle-studio.layout.v1` preferences; tablet and mobile
+  layouts retain their existing drawers.
+- Zoom the chart from 75% to 300% with visible controls, focused-stage keyboard
+  shortcuts, or pointer-relative Alt/Option-wheel input. Ctrl-wheel remains
+  available to the browser for page zoom.
 - Preview the fixed inner chart against a moving outer chart with exact civil-
-  time and elapsed-time controls, then explicitly update or clone the outer
-  definition.
+  time and elapsed-time controls, then use Files to confirm an identity-
+  preserving update or save the preview under a unique new chart name.
 - Save versioned, global wheel templates containing visual options only.
 
 The production worker compiles Astraeus's pure-Rust Moshier adapter using
@@ -58,8 +64,20 @@ trunk build --release --locked=true
 ```
 
 Ordinary Trunk builds contain no GeoNames bytes and offer local upload/manual
-entry. The Docker build fetches the three official GeoNames inputs, verifies the
-hashes in `catalog/geonames.lock`, and publishes them on the same static origin.
+entry. For an explicit catalog-enabled local build, use the shared lock-backed
+workflow:
+
+```bash
+just geonames-download
+just geonames-check
+just geonames-build
+just geonames-serve
+```
+
+The default Docker target uses the same download, verification, attribution,
+and staging implementation. `acceptance-runtime` remains catalog-free. Upstream
+drift fails closed; `just geonames-candidate-lock` writes only ignored review
+artifacts and never edits `catalog/geonames.lock`.
 
 ```bash
 docker build -t oracle-studio:browser-local .

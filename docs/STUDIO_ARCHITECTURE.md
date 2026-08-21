@@ -43,5 +43,21 @@ be selected by production UI input.
 
 The UI receives only `WorkspaceSummary`, `WorkbenchPresentation`, global wheel
 template settings, and render-ready `ChartScene` values. Preview calculations
-do not mutate a document. The worker retains one pending generation and commits
-it atomically only after Update Chart or Save As.
+do not mutate a document. The worker retains one pending generation together
+with its source vault ID and encrypted-record revision. Hash-route navigation
+does not disturb that transient record.
+
+Chart zoom is session-only presentation state and never enters a worker message,
+calculation artifact, or vault. Desktop sidebar collapse preferences are global,
+unencrypted browser settings stored as `oracle-studio.layout.v1`; they affect only
+the responsive shell. Both states leave the active chart, filters, selections,
+preview generation, and encrypted workspace untouched.
+
+Chart persistence lives on Files, not beside the wheel. An update requires
+confirmation and preserves the outer chart's stable identity. Save-as creates a
+new stable identity, rejects case-insensitive name collisions, and never
+overwrites. The pending preview can commit only to its still-active, mounted
+source vault at the exact captured revision. Switching or locking the vault,
+reloading the page, or losing the IndexedDB compare-and-swap invalidates it;
+the UI removes the persistence actions and reports why. Scratch previews remain
+renderable but cannot commit until scratch is first saved as an encrypted vault.
