@@ -47,6 +47,12 @@ do not mutate a document. The worker retains one pending generation together
 with its source vault ID and encrypted-record revision. Hash-route navigation
 does not disturb that transient record.
 
+Chart zoom is session-only presentation state and never enters a worker message,
+calculation artifact, or vault. Desktop sidebar collapse preferences are global,
+unencrypted browser settings stored as `oracle-studio.layout.v1`; they affect only
+the responsive shell. Both states leave the active chart, filters, selections,
+preview generation, and encrypted workspace untouched.
+
 Chart persistence lives on Files, not beside the wheel. An update requires
 confirmation and preserves the outer chart's stable identity. Save-as creates a
 new stable identity, rejects case-insensitive name collisions, and never
