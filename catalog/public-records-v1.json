@@ -1,0 +1,351 @@
+{
+  "schema_version": 1,
+  "catalog_id": "public-record-catalog.oracle-v1",
+  "catalog_content_id": "sha256:206bbe1b68efc7b4d2e838f2b63603fd173f1d906a097ed2540f451f6033107b",
+  "records": [
+    {
+      "record_id": "public-record.event.eclipse-2017-08-21-greatest",
+      "content_id": "sha256:1f5be511a56f9d3b47215043c24adacbc2a31cacf2e95e3507060debdc94cfaf",
+      "title": "2017 August 21 Total Solar Eclipse — Greatest Eclipse",
+      "provenance": {
+        "source_name": "NASA GSFC Solar Eclipse Search Engine",
+        "canonical_url": "https://eclipse.gsfc.nasa.gov/SEsearch/SEdata.php?Ecl=20170821",
+        "source_revision": "page-updated-2023-10-30",
+        "retrieved_at": "2026-08-21T06:30:00Z"
+      },
+      "rights": {
+        "license_or_status": "NASA reproduction permission with required acknowledgment",
+        "license_url": "https://eclipse.gsfc.nasa.gov/SEsearch/SEdata.php?Ecl=20170821",
+        "attribution": "Eclipse Predictions by Fred Espenak, NASA's GSFC",
+        "redistribution_notes": "NASA GSFC grants permission to reproduce these eclipse data when accompanied by the stated acknowledgment."
+      },
+      "reliability": {
+        "classification": "source_stated_exact",
+        "source_precision": "Greatest-eclipse time stated to one second; coordinates stated to 0.1 degree.",
+        "notes": "Uses NASA's stated greatest-eclipse instant and geographic point, not a local observer contact time."
+      },
+      "ethical_notes": "Public astronomical event with no personal data.",
+      "chart_readiness": {
+        "status": "chart_ready",
+        "reason": "The authoritative source states an exact UTC instant and coordinates."
+      },
+      "data": {
+        "record_kind": "public_event",
+        "category": "astronomical_event",
+        "temporal": {
+          "value": "2017-08-21T18:25:30Z",
+          "precision": "second",
+          "time_scale": "utc",
+          "exact_time_known": true
+        },
+        "location": {
+          "label": "Greatest eclipse point",
+          "latitude_degrees": 37.0,
+          "longitude_degrees": -87.7,
+          "coordinate_precision_degrees": 0.1,
+          "elevation_meters": 0.0,
+          "elevation_policy": "surface_for_chart",
+          "iana_time_zone": null
+        },
+        "event_metadata": {
+          "event_type": "total_solar_eclipse",
+          "source_magnitude": 1.0306,
+          "source_depth_km": null,
+          "notes": "NASA states a 114.7 km path width and approximately 1–2 km path-edge accuracy."
+        }
+      }
+    },
+    {
+      "record_id": "public-record.event.eclipse-2024-04-08-greatest",
+      "content_id": "sha256:05e28cf28380f5e7e8cc5dfbc5112d92ce5acab0f2bdf0197316054d147bb59d",
+      "title": "2024 April 8 Total Solar Eclipse — Greatest Eclipse",
+      "provenance": {
+        "source_name": "NASA GSFC Solar Eclipse Search Engine",
+        "canonical_url": "https://eclipse.gsfc.nasa.gov/SEsearch/SEdata.php?Ecl=20240408",
+        "source_revision": "page-updated-2023-10-30",
+        "retrieved_at": "2026-08-21T06:30:00Z"
+      },
+      "rights": {
+        "license_or_status": "NASA reproduction permission with required acknowledgment",
+        "license_url": "https://eclipse.gsfc.nasa.gov/SEsearch/SEdata.php?Ecl=20240408",
+        "attribution": "Eclipse Predictions by Fred Espenak, NASA's GSFC",
+        "redistribution_notes": "NASA GSFC grants permission to reproduce these eclipse data when accompanied by the stated acknowledgment."
+      },
+      "reliability": {
+        "classification": "source_stated_exact",
+        "source_precision": "Greatest-eclipse time stated to one second; coordinates stated to 0.1 degree.",
+        "notes": "Uses NASA's stated greatest-eclipse instant and geographic point, not a local observer contact time."
+      },
+      "ethical_notes": "Public astronomical event with no personal data.",
+      "chart_readiness": {
+        "status": "chart_ready",
+        "reason": "The authoritative source states an exact UTC instant and coordinates."
+      },
+      "data": {
+        "record_kind": "public_event",
+        "category": "astronomical_event",
+        "temporal": {
+          "value": "2024-04-08T18:17:15Z",
+          "precision": "second",
+          "time_scale": "utc",
+          "exact_time_known": true
+        },
+        "location": {
+          "label": "Greatest eclipse point",
+          "latitude_degrees": 25.3,
+          "longitude_degrees": -104.1,
+          "coordinate_precision_degrees": 0.1,
+          "elevation_meters": 0.0,
+          "elevation_policy": "surface_for_chart",
+          "iana_time_zone": null
+        },
+        "event_metadata": {
+          "event_type": "total_solar_eclipse",
+          "source_magnitude": 1.0566,
+          "source_depth_km": null,
+          "notes": "NASA states a 197.5 km path width and approximately 1–2 km path-edge accuracy."
+        }
+      }
+    },
+    {
+      "record_id": "public-record.event.earthquake-1906-san-francisco",
+      "content_id": "sha256:b2dc833909af87ddf89d5929dd71f55eb14ec9d11c82b4068ac7758f126e65b0",
+      "title": "1906 San Francisco Earthquake",
+      "provenance": {
+        "source_name": "U.S. Geological Survey Earthquake Hazards Program",
+        "canonical_url": "https://earthquake.usgs.gov/earthquakes/eventpage/iscgem16957905/origin",
+        "source_revision": "origin-official19060418131226300_12-updated-2018-02-05T20:06:09Z",
+        "retrieved_at": "2026-08-21T06:30:00Z"
+      },
+      "rights": {
+        "license_or_status": "U.S. Government public-domain data",
+        "license_url": "https://www.usgs.gov/data-management/data-licensing",
+        "attribution": "U.S. Geological Survey",
+        "redistribution_notes": "USGS explains that works produced wholly by U.S. Government employees are public domain in the United States; attribution is retained as provenance."
+      },
+      "reliability": {
+        "classification": "source_stated_exact",
+        "source_precision": "Preferred origin time stated to one millisecond; coordinates retained to 0.001 degree; depth stated to 0.1 km.",
+        "notes": "The event page also exposes alternate historical origins; this record deliberately uses its highest-weight preferred official origin."
+      },
+      "ethical_notes": "Historical natural disaster. Use factual language and avoid entertainment framing or victim-level personal data.",
+      "chart_readiness": {
+        "status": "chart_ready",
+        "reason": "The preferred USGS origin states an exact UTC instant and epicentral coordinates."
+      },
+      "data": {
+        "record_kind": "public_event",
+        "category": "natural_event",
+        "temporal": {
+          "value": "1906-04-18T13:12:26.300Z",
+          "precision": "millisecond",
+          "time_scale": "utc",
+          "exact_time_known": true
+        },
+        "location": {
+          "label": "Preferred official epicenter",
+          "latitude_degrees": 37.75,
+          "longitude_degrees": -122.55,
+          "coordinate_precision_degrees": 0.001,
+          "elevation_meters": 0.0,
+          "elevation_policy": "surface_for_chart",
+          "iana_time_zone": null
+        },
+        "event_metadata": {
+          "event_type": "earthquake",
+          "source_magnitude": 7.9,
+          "source_depth_km": 11.7,
+          "notes": "The 11.7 km hypocentral depth is event metadata. Chart calculation uses surface elevation, not negative depth."
+        }
+      }
+    },
+    {
+      "record_id": "public-record.person.ada-lovelace",
+      "content_id": "sha256:5da8b8c5e2ac4fbf14e1bcfc3c0d3852aee71e568f9388a663a00c3d297b75c9",
+      "title": "Ada Lovelace",
+      "provenance": {
+        "source_name": "Wikidata structured data",
+        "canonical_url": "https://www.wikidata.org/wiki/Q7259",
+        "source_revision": "Q7259-oldid-2531694935",
+        "retrieved_at": "2026-08-21T06:30:00Z"
+      },
+      "rights": {
+        "license_or_status": "CC0 1.0",
+        "license_url": "https://www.wikidata.org/wiki/Wikidata:Licensing",
+        "attribution": "Wikidata entity Q7259",
+        "redistribution_notes": "Only selected structured factual fields are included; no article text or images are copied."
+      },
+      "reliability": {
+        "classification": "date_only_exact_time_unknown",
+        "source_precision": "Birth and death are day-precision Wikidata statements; no exact birth time is asserted.",
+        "notes": "Suitable for provenance and uncertainty research, not natal calculation."
+      },
+      "ethical_notes": "Deceased historical person. Exact birth time is unknown and must not be replaced with an invented noon.",
+      "chart_readiness": {
+        "status": "research_only",
+        "reason": "Day-precision birth date has no exact source time or chart coordinates."
+      },
+      "data": {
+        "record_kind": "deceased_person",
+        "aliases": ["Augusta Ada King, Countess of Lovelace", "Ada Byron"],
+        "birth": {"value": "1815-12-10", "precision": "day", "time_scale": "civil_date", "exact_time_known": false},
+        "death": {"value": "1852-11-27", "precision": "day", "time_scale": "civil_date", "exact_time_known": false},
+        "birthplaces": [
+          {
+            "place_entity_id": "Q84",
+            "label": "London",
+            "catalog_role": "sole",
+            "source_rank": "normal",
+            "statement_id": "q7259$9ABE9EA6-922A-404E-9580-AF3D3DF0FAD7",
+            "place_source_revision": "Q84-oldid-2533249908"
+          }
+        ]
+      }
+    },
+    {
+      "record_id": "public-record.person.alan-turing",
+      "content_id": "sha256:27f9e460ba78c129c455c0b4eff149bc1b37106671612a761204fd7577cd18bc",
+      "title": "Alan Turing",
+      "provenance": {
+        "source_name": "Wikidata structured data",
+        "canonical_url": "https://www.wikidata.org/wiki/Q7251",
+        "source_revision": "Q7251-oldid-2533461519",
+        "retrieved_at": "2026-08-21T06:30:00Z"
+      },
+      "rights": {
+        "license_or_status": "CC0 1.0",
+        "license_url": "https://www.wikidata.org/wiki/Wikidata:Licensing",
+        "attribution": "Wikidata entity Q7251",
+        "redistribution_notes": "Only selected structured factual fields are included; no article text or images are copied."
+      },
+      "reliability": {
+        "classification": "date_only_exact_time_unknown",
+        "source_precision": "Birth and death are day-precision Wikidata statements; no exact birth time is asserted.",
+        "notes": "Both preferred and alternate birthplace statements are retained with source ranks."
+      },
+      "ethical_notes": "Deceased historical person. Exact birth time is unknown and must not be replaced with an invented noon.",
+      "chart_readiness": {
+        "status": "research_only",
+        "reason": "Day-precision birth date has no exact source time or chart coordinates."
+      },
+      "data": {
+        "record_kind": "deceased_person",
+        "aliases": ["Alan Mathison Turing", "Alan M. Turing"],
+        "birth": {"value": "1912-06-23", "precision": "day", "time_scale": "civil_date", "exact_time_known": false},
+        "death": {"value": "1954-06-07", "precision": "day", "time_scale": "civil_date", "exact_time_known": false},
+        "birthplaces": [
+          {
+            "place_entity_id": "Q122744",
+            "label": "Maida Vale",
+            "catalog_role": "preferred",
+            "source_rank": "preferred",
+            "statement_id": "q7251$BF793CC4-377D-4FC6-9B3A-BEE1641EE241",
+            "place_source_revision": "Q122744-oldid-2528768057"
+          },
+          {
+            "place_entity_id": "Q20895942",
+            "label": "Warrington Lodge",
+            "catalog_role": "alternate",
+            "source_rank": "normal",
+            "statement_id": "Q7251$d608d2c8-4e9b-4ac9-25f2-749985a80fea",
+            "place_source_revision": "Q20895942-oldid-2509633796"
+          }
+        ]
+      }
+    },
+    {
+      "record_id": "public-record.person.frida-kahlo",
+      "content_id": "sha256:43a47a2c5ac25a689224f004d111fe0dcbed937b07a897666e4ab10ee5e13c22",
+      "title": "Frida Kahlo",
+      "provenance": {
+        "source_name": "Wikidata structured data",
+        "canonical_url": "https://www.wikidata.org/wiki/Q5588",
+        "source_revision": "Q5588-oldid-2531978155",
+        "retrieved_at": "2026-08-21T06:30:00Z"
+      },
+      "rights": {
+        "license_or_status": "CC0 1.0",
+        "license_url": "https://www.wikidata.org/wiki/Wikidata:Licensing",
+        "attribution": "Wikidata entity Q5588",
+        "redistribution_notes": "Only selected structured factual fields are included; no article text or images are copied."
+      },
+      "reliability": {
+        "classification": "date_only_exact_time_unknown",
+        "source_precision": "Preferred birth and death statements are day precision; no exact birth time is asserted.",
+        "notes": "Preferred Coyoacán and alternate Mexico City birthplace statements are both retained."
+      },
+      "ethical_notes": "Deceased historical person. Exact birth time is unknown and must not be replaced with an invented noon.",
+      "chart_readiness": {
+        "status": "research_only",
+        "reason": "Day-precision birth date has no exact source time or chart coordinates."
+      },
+      "data": {
+        "record_kind": "deceased_person",
+        "aliases": ["Frida Rivera-Kahlo", "Magdalena Carmen Frida Kahlo y Calderón"],
+        "birth": {"value": "1907-07-06", "precision": "day", "time_scale": "civil_date", "exact_time_known": false},
+        "death": {"value": "1954-07-13", "precision": "day", "time_scale": "civil_date", "exact_time_known": false},
+        "birthplaces": [
+          {
+            "place_entity_id": "Q2597249",
+            "label": "Coyoacán",
+            "catalog_role": "preferred",
+            "source_rank": "preferred",
+            "statement_id": "Q5588$2160BF2B-D662-4072-A974-8F9A9D140055",
+            "place_source_revision": "Q2597249-oldid-2525572133"
+          },
+          {
+            "place_entity_id": "Q1489",
+            "label": "Mexico City",
+            "catalog_role": "alternate",
+            "source_rank": "normal",
+            "statement_id": "q5588$9EFA1C45-FF2B-4E5D-A85B-A70949013B82",
+            "place_source_revision": "Q1489-oldid-2532329708"
+          }
+        ]
+      }
+    },
+    {
+      "record_id": "public-record.person.nikola-tesla",
+      "content_id": "sha256:82f3c62664ecf18349ba721011d2f5c051a99f39bb5b9fff41a7d8746f3df0f6",
+      "title": "Nikola Tesla",
+      "provenance": {
+        "source_name": "Wikidata structured data",
+        "canonical_url": "https://www.wikidata.org/wiki/Q9036",
+        "source_revision": "Q9036-oldid-2533458843",
+        "retrieved_at": "2026-08-21T06:30:00Z"
+      },
+      "rights": {
+        "license_or_status": "CC0 1.0",
+        "license_url": "https://www.wikidata.org/wiki/Wikidata:Licensing",
+        "attribution": "Wikidata entity Q9036",
+        "redistribution_notes": "Only selected structured factual fields are included; no article text or images are copied."
+      },
+      "reliability": {
+        "classification": "date_only_exact_time_unknown",
+        "source_precision": "Birth and death are day-precision Wikidata statements; no exact birth time is asserted.",
+        "notes": "Suitable for provenance and uncertainty research, not natal calculation."
+      },
+      "ethical_notes": "Deceased historical person. Exact birth time is unknown and must not be replaced with an invented noon.",
+      "chart_readiness": {
+        "status": "research_only",
+        "reason": "Day-precision birth date has no exact source time or chart coordinates."
+      },
+      "data": {
+        "record_kind": "deceased_person",
+        "aliases": ["Nicola Tesla", "Tesla"],
+        "birth": {"value": "1856-07-10", "precision": "day", "time_scale": "civil_date", "exact_time_known": false},
+        "death": {"value": "1943-01-07", "precision": "day", "time_scale": "civil_date", "exact_time_known": false},
+        "birthplaces": [
+          {
+            "place_entity_id": "Q367211",
+            "label": "Smiljan",
+            "catalog_role": "sole",
+            "source_rank": "normal",
+            "statement_id": "q9036$22070307-BC37-4DA6-9D92-ABCA000EC82C",
+            "place_source_revision": "Q367211-oldid-2529685696"
+          }
+        ]
+      }
+    }
+  ]
+}

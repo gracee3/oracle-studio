@@ -239,6 +239,11 @@ pub enum PlatformResponse {
     CatalogInstalled(CatalogMetadata),
     CatalogResults(Vec<CatalogSearchMatch>),
     WorkbenchPreview(WorkbenchPresentation),
+    WorkbenchPreviewCommitted {
+        vaults: Vec<VaultSummary>,
+        workspace: WorkspaceSummary,
+        outcome: PreviewCommitOutcome,
+    },
     WheelTemplates(WheelTemplateSettings),
     AspectSets(AspectSetSettings),
     Updated {
@@ -277,8 +282,15 @@ pub struct WorkbenchPreviewRequest {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PreviewSaveMode {
-    UpdateChart,
+    UpdateChart { confirmed: bool },
     SaveAs { name: String },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PreviewCommitOutcome {
+    Updated { chart_id: String, label: String },
+    SavedAs { chart_id: String, label: String },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -298,10 +310,19 @@ pub struct WorkbenchChartSummary {
 #[serde(deny_unknown_fields)]
 pub struct WorkbenchPresentation {
     pub generation: PreviewGeneration,
+    pub source: Box<WorkbenchPreviewSource>,
     pub inner: WorkbenchChartSummary,
     pub outer: WorkbenchChartSummary,
     pub scene: ChartScene,
     pub adjustment_notice: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkbenchPreviewSource {
+    pub vault_id: Option<String>,
+    pub vault_title: String,
+    pub vault_revision: Option<String>,
 }
 
 pub const WHEEL_TEMPLATE_SETTINGS_VERSION: u32 = 1;
@@ -400,6 +421,7 @@ pub enum PlatformErrorCode {
     NotFound,
     Locked,
     Conflict,
+    StalePreview,
     DuplicateVault,
     ConfirmationRequired,
     Authentication,

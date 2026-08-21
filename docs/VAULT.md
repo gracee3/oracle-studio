@@ -29,6 +29,11 @@ revision, commits one read-write transaction, then replaces memory. Conflicts
 never silently overwrite newer bytes. Duplicate imported IDs are rejected;
 confirmed replacement is whole-vault replacement, not merge or sync.
 
+A transient chart preview also captures the source record revision. Its Files
+update/save-as transaction requires that exact revision in the currently active
+unlocked vault. A revision conflict invalidates the preview and leaves both the
+decrypted in-memory document and encrypted stored bytes unchanged.
+
 Exports contain the exact `.oracle-vault` bytes. Removing an IndexedDB record
 does not claim physical erasure from browser storage, backups, or device media.
 

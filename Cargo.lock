@@ -1502,6 +1502,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "oracle-studio-public-records"
+version = "0.1.0"
+dependencies = [
+ "astraeus-artifacts",
+ "astraeus-core",
+ "astraeus-moshier",
+ "chrono",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.12",
+]
+
+[[package]]
 name = "oracle-studio-ui"
 version = "0.1.0"
 dependencies = [

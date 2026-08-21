@@ -7,9 +7,9 @@ use leptos::prelude::*;
 mod browser {
     use std::{cell::RefCell, collections::BTreeSet, rc::Rc};
 
-    use js_sys::{Array, Uint8Array};
+    use js_sys::{Array, Reflect, Uint8Array};
     use leptos::{
-        ev::{KeyboardEvent, PointerEvent, SubmitEvent},
+        ev::{KeyboardEvent, PointerEvent, SubmitEvent, WheelEvent},
         html::{Input, Select, Textarea},
         prelude::*,
     };
@@ -27,12 +27,13 @@ mod browser {
     use oracle_studio_platform::{
         ActiveWorkspace, AspectKind, AspectOrbValues, AspectSet, AspectSetRule, AspectSetSettings,
         CapabilityStatus, ChartPointId, ChartSummary, LabelDensity, MAX_IMPORT_BYTES,
-        PlatformCommand, PlatformResponse, PreviewGeneration, PreviewSaveMode, StudioPlatform,
-        VaultLockState, VaultSummary, WheelOrientation, WheelPalette, WheelTemplate,
-        WheelTemplateSettings, WorkbenchPresentation, WorkbenchPreviewRequest, WorkspaceSummary,
+        PlatformCommand, PlatformErrorCode, PlatformResponse, PreviewCommitOutcome,
+        PreviewGeneration, PreviewSaveMode, StudioPlatform, VaultLockState, VaultSummary,
+        WheelOrientation, WheelPalette, WheelTemplate, WheelTemplateSettings,
+        WorkbenchPresentation, WorkbenchPreviewRequest, WorkspaceSummary,
     };
     use oracle_studio_worker::BrowserStudioPlatform;
-    use wasm_bindgen::{JsCast, closure::Closure};
+    use wasm_bindgen::{JsCast, JsValue, closure::Closure};
     use wasm_bindgen_futures::{JsFuture, spawn_local};
     use web_sys::{BeforeUnloadEvent, Blob, Element, File, HtmlAnchorElement, Url};
 
@@ -66,6 +67,17 @@ mod browser {
         ("Square", "Square"),
         ("Sextile", "Sextile"),
     ];
+    const LAYOUT_STORAGE_KEY: &str = "oracle-studio.layout.v1";
+    const ZOOM_STEPS: [u16; 24] = [
+        75, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200, 210, 220, 230, 240, 250,
+        260, 270, 280, 290, 300,
+    ];
+
+    #[derive(Clone, Copy, Default)]
+    struct LayoutPreferences {
+        left_collapsed: bool,
+        right_collapsed: bool,
+    }
 
     #[derive(Clone)]
     struct PreviewPayload {
@@ -153,6 +165,7 @@ mod browser {
         aspect_sets: RwSignal<AspectSetSettings>,
         catalog_results: RwSignal<Vec<CatalogSearchMatch>>,
         presentation: RwSignal<Option<WorkbenchPresentation>>,
+        preview_pending: RwSignal<bool>,
         fallback_presentation: RwSignal<Option<WorkbenchPresentation>>,
         desired_outer: RwSignal<Option<LocalDateTimeInput>>,
         outer_ambiguous_choice: RwSignal<Option<AmbiguousTimeChoice>>,
@@ -171,12 +184,18 @@ mod browser {
         busy: RwSignal<bool>,
         left_open: RwSignal<bool>,
         right_open: RwSignal<bool>,
+        left_collapsed: RwSignal<bool>,
+        right_collapsed: RwSignal<bool>,
+        zoom_percent: RwSignal<u16>,
+        zoom_origin_x: RwSignal<u8>,
+        zoom_origin_y: RwSignal<u8>,
         coordinator: StoredValue<Rc<RefCell<PreviewCoordinator<PreviewPayload>>>, LocalStorage>,
         holds: StoredValue<HoldController, LocalStorage>,
     }
 
     impl Model {
         fn new() -> Self {
+            let layout = load_layout_preferences();
             Self {
                 vaults: RwSignal::new(Vec::new()),
                 workspace: RwSignal::new(empty_workspace()),
@@ -185,6 +204,7 @@ mod browser {
                 aspect_sets: RwSignal::new(AspectSetSettings::default()),
                 catalog_results: RwSignal::new(Vec::new()),
                 presentation: RwSignal::new(None),
+                preview_pending: RwSignal::new(false),
                 fallback_presentation: RwSignal::new(None),
                 desired_outer: RwSignal::new(None),
                 outer_ambiguous_choice: RwSignal::new(None),
@@ -207,6 +227,11 @@ mod browser {
                 busy: RwSignal::new(false),
                 left_open: RwSignal::new(false),
                 right_open: RwSignal::new(false),
+                left_collapsed: RwSignal::new(layout.left_collapsed),
+                right_collapsed: RwSignal::new(layout.right_collapsed),
+                zoom_percent: RwSignal::new(100),
+                zoom_origin_x: RwSignal::new(1),
+                zoom_origin_y: RwSignal::new(1),
                 coordinator: StoredValue::new_local(Rc::new(RefCell::new(
                     PreviewCoordinator::default(),
                 ))),
@@ -261,10 +286,16 @@ mod browser {
     #[component]
     fn WorkbenchView(platform: Platform, model: Model) -> impl IntoView {
         view! {
-            <main id="workbench" class="route workbench-route" tabindex="-1">
+            <main id="workbench" class="route workbench-route" class:left-collapsed=move || model.left_collapsed.get() class:right-collapsed=move || model.right_collapsed.get() tabindex="-1">
                 <button class:drawer-open=move || model.left_open.get() class="drawer-scrim left-scrim" aria-label="Close charts drawer" on:click=move |_| model.left_open.set(false)></button>
                 <aside class:drawer-open=move || model.left_open.get() class="workbench-sidebar left-sidebar" aria-label="Charts and wheels">
-                    <div class="sidebar-title"><h1>"Charts"</h1><button class="drawer-close" aria-label="Close charts drawer" on:click=move |_| model.left_open.set(false)>"×"</button></div>
+                    <div class="sidebar-title">
+                        <h1>"Charts"</h1>
+                        <div class="sidebar-title-actions">
+                            <button class="desktop-collapse" type="button" aria-expanded=move || !model.left_collapsed.get() aria-label=move || if model.left_collapsed.get() { "Expand Charts sidebar" } else { "Collapse Charts sidebar" } title=move || if model.left_collapsed.get() { "Expand Charts sidebar" } else { "Collapse Charts sidebar" } on:click=move |_| toggle_sidebar_layout(model, true)>{move || if model.left_collapsed.get() { "›" } else { "‹" }}</button>
+                            <button class="drawer-close" aria-label="Close charts drawer" on:click=move |_| model.left_open.set(false)>"×"</button>
+                        </div>
+                    </div>
                     <ChartsPanel platform model />
                     <WheelsPanel platform model />
                 </aside>
@@ -273,7 +304,13 @@ mod browser {
 
                 <button class:drawer-open=move || model.right_open.get() class="drawer-scrim right-scrim" aria-label="Close controls drawer" on:click=move |_| model.right_open.set(false)></button>
                 <aside class:drawer-open=move || model.right_open.get() class="workbench-sidebar right-sidebar" aria-label="Controls, points, and aspects">
-                    <div class="sidebar-title"><h1>"Controls"</h1><button class="drawer-close" aria-label="Close controls drawer" on:click=move |_| model.right_open.set(false)>"×"</button></div>
+                    <div class="sidebar-title">
+                        <h1>"Controls"</h1>
+                        <div class="sidebar-title-actions">
+                            <button class="desktop-collapse" type="button" aria-expanded=move || !model.right_collapsed.get() aria-label=move || if model.right_collapsed.get() { "Expand Controls sidebar" } else { "Collapse Controls sidebar" } title=move || if model.right_collapsed.get() { "Expand Controls sidebar" } else { "Collapse Controls sidebar" } on:click=move |_| toggle_sidebar_layout(model, false)>{move || if model.right_collapsed.get() { "‹" } else { "›" }}</button>
+                            <button class="drawer-close" aria-label="Close controls drawer" on:click=move |_| model.right_open.set(false)>"×"</button>
+                        </div>
+                    </div>
                     <TimeControls platform model />
                     <FilterPanel model />
                 </aside>
@@ -399,14 +436,30 @@ mod browser {
 
     #[component]
     fn WheelStage(platform: Platform, model: Model) -> impl IntoView {
-        let save_as_name = NodeRef::<Input>::new();
         let wheel_click = move |event: leptos::ev::MouseEvent| {
             if let Some(element) = interaction_element(event.target()) {
                 toggle_interaction(model, &element);
             }
         };
         let wheel_key = move |event: KeyboardEvent| {
-            if event.key() == "Escape" {
+            if !event.ctrl_key() && !event.alt_key() && !event.meta_key() && event.key() == "+" {
+                event.prevent_default();
+                adjust_zoom(model, 1);
+            } else if !event.ctrl_key()
+                && !event.alt_key()
+                && !event.meta_key()
+                && event.key() == "-"
+            {
+                event.prevent_default();
+                adjust_zoom(model, -1);
+            } else if !event.ctrl_key()
+                && !event.alt_key()
+                && !event.meta_key()
+                && event.key() == "0"
+            {
+                event.prevent_default();
+                reset_zoom(model);
+            } else if event.key() == "Escape" {
                 model.selected_points.set(BTreeSet::new());
                 model.selected_aspects.set(BTreeSet::new());
             } else if (event.key() == " " || event.key() == "Enter")
@@ -416,54 +469,112 @@ mod browser {
                 toggle_interaction(model, &element);
             }
         };
+        let modifier_wheel = move |event: WheelEvent| {
+            if !event.alt_key() || event.ctrl_key() || event.delta_y() == 0.0 {
+                return;
+            }
+            event.prevent_default();
+            if let Some(frame) = event
+                .current_target()
+                .and_then(|target| target.dyn_into::<Element>().ok())
+            {
+                let origin_target = frame
+                    .query_selector(".wheel-svg")
+                    .ok()
+                    .flatten()
+                    .unwrap_or(frame);
+                let bounds = origin_target.get_bounding_client_rect();
+                if bounds.width() > 0.0 && bounds.height() > 0.0 {
+                    model.zoom_origin_x.set(origin_bucket(
+                        (f64::from(event.client_x()) - bounds.left()) / bounds.width(),
+                    ));
+                    model.zoom_origin_y.set(origin_bucket(
+                        (f64::from(event.client_y()) - bounds.top()) / bounds.height(),
+                    ));
+                }
+            }
+            adjust_zoom(model, if event.delta_y() < 0.0 { 1 } else { -1 });
+        };
         view! {
-            <section id="wheel-stage" class="wheel-stage" aria-label="Chart workbench">
-                <div class="chart-meta inner-meta">{move || model.presentation.get().map(|p| format!("INNER · {}\n{} {}\n{}", p.inner.label, p.inner.local_input.local_date(), p.inner.local_input.local_time(), p.inner.location_label)).unwrap_or_default()}</div>
-                <div class="chart-meta outer-meta">{move || model.presentation.get().map(|p| format!("OUTER · {}\n{} {}\n{}", p.outer.label, p.outer.local_input.local_date(), p.outer.local_input.local_time(), p.outer.location_label)).unwrap_or_default()}</div>
-                <div class="wheel-frame" class:is-calculating=move || model.calculating.get() on:click=wheel_click on:keydown=wheel_key>
-                    {move || if let Some(presentation) = model.presentation.get() {
-                        let scene = filtered_scene(&presentation.scene, &model.visible_points.get(), &model.visible_aspects.get());
-                        let settings = model.wheel_templates.get();
-                        let template = settings.selected();
-                        let svg = render_biwheel_svg(&scene, &RenderOptions {
-                            orientation: template.orientation,
-                            palette: template.palette,
-                            label_density: template.label_density,
-                            selected_points: model.selected_points.get().into_iter().collect(),
-                            selected_aspects: model.selected_aspects.get().into_iter().collect(),
-                        });
-                        view! { <div class="wheel-svg" inner_html=svg></div> }.into_any()
-                    } else {
-                        let workspace = model.workspace.get();
-                        view! {
-                            <div class="wheel-empty">
-                                <span aria-hidden="true">"☉"</span>
-                                <h2>{if workspace.active.is_none() { "Open a workspace" } else { "Two charts and a location make a wheel" }}</h2>
-                                <p>"Calculated Moshier previews stay transient until you choose Update Chart or Save As."</p>
-                                {if workspace.active.is_none() {
-                                    view! { <button class="primary" on:click=move |_| dispatch(platform, model, PlatformCommand::CreateScratch)>"Open scratch"</button> }.into_any()
-                                } else {
-                                    view! { <a class="button-link" href="#settings">"Add charts and locations"</a> }.into_any()
-                                }}
-                            </div>
-                        }.into_any()
-                    }}
-                    <div class="calculation-indicator" role="status">{move || if model.calculating.get() { "Calculating newest cursor…" } else { "" }}</div>
+            <section id="wheel-stage" class="wheel-stage" aria-label="Chart workbench" aria-describedby="zoom-help" tabindex="0" data-zoom-percent=move || model.zoom_percent.get().to_string() on:keydown=wheel_key>
+                <div class="wheel-frame" class:is-calculating=move || model.calculating.get()>
+                    <div class="chart-meta-strip" aria-label="Chart metadata">
+                        {move || model.presentation.get().map(|presentation| view! {
+                            <article class="chart-meta inner-meta" aria-labelledby="chart-1-heading">
+                                <p class="meta-kicker">"Chart 1"</p>
+                                <h2 id="chart-1-heading">{presentation.inner.label}</h2>
+                                <dl>
+                                    <div><dt>"Layer"</dt><dd>"Inner · fixed"</dd></div>
+                                    <div><dt>"Date and time"</dt><dd>{format!("{} {}", presentation.inner.local_input.local_date(), presentation.inner.local_input.local_time())}</dd></div>
+                                    <div><dt>"Location"</dt><dd>{presentation.inner.location_label}</dd></div>
+                                </dl>
+                            </article>
+                        }).into_any()}
+                        {move || model.presentation.get().map(|presentation| view! {
+                            <article class="chart-meta outer-meta" aria-labelledby="chart-2-heading">
+                                <p class="meta-kicker">"Chart 2"</p>
+                                <h2 id="chart-2-heading">{presentation.outer.label}</h2>
+                                <dl>
+                                    <div><dt>"Layer"</dt><dd>"Outer · moving"</dd></div>
+                                    <div><dt>"Date and time"</dt><dd>{format!("{} {}", presentation.outer.local_input.local_date(), presentation.outer.local_input.local_time())}</dd></div>
+                                    <div><dt>"Location"</dt><dd>{presentation.outer.location_label}</dd></div>
+                                </dl>
+                            </article>
+                        }).into_any()}
+                    </div>
+                    <div class="chart-viewport" on:click=wheel_click on:wheel=modifier_wheel>
+                        {move || if let Some(presentation) = model.presentation.get() {
+                            let scene = filtered_scene(&presentation.scene, &model.visible_points.get(), &model.visible_aspects.get());
+                            let settings = model.wheel_templates.get();
+                            let template = settings.selected();
+                            let svg = render_biwheel_svg(&scene, &RenderOptions {
+                                orientation: template.orientation,
+                                palette: template.palette,
+                                label_density: template.label_density,
+                                selected_points: model.selected_points.get().into_iter().collect(),
+                                selected_aspects: model.selected_aspects.get().into_iter().collect(),
+                            });
+                            let class = format!(
+                                "wheel-svg {} {} {}",
+                                zoom_class(model.zoom_percent.get()),
+                                origin_x_class(model.zoom_origin_x.get()),
+                                origin_y_class(model.zoom_origin_y.get()),
+                            );
+                            view! { <div class=class inner_html=svg></div> }.into_any()
+                        } else {
+                            let workspace = model.workspace.get();
+                            view! {
+                                <div class="wheel-empty">
+                                    <span aria-hidden="true">"☉"</span>
+                                    <h2>{if workspace.active.is_none() { "Open a workspace" } else { "Two charts and a location make a wheel" }}</h2>
+                                    <p>"Calculated Moshier previews stay transient until you review them in Files."</p>
+                                    {if workspace.active.is_none() {
+                                        view! { <button class="primary" on:click=move |_| dispatch(platform, model, PlatformCommand::CreateScratch)>"Open scratch"</button> }.into_any()
+                                    } else {
+                                        view! { <a class="button-link" href="#settings">"Add charts and locations"</a> }.into_any()
+                                    }}
+                                </div>
+                            }.into_any()
+                        }}
+                        <div class="zoom-controls" role="group" aria-label="Chart zoom controls">
+                            <button type="button" aria-label="Zoom out" title="Zoom out (-)" on:click=move |_| adjust_zoom(model, -1)>"−"</button>
+                            <button class="zoom-reset" type="button" aria-label="Reset chart zoom" title="Reset chart zoom (0)" on:click=move |_| reset_zoom(model)><span class="zoom-readout" aria-live="polite">{move || format!("{}%", model.zoom_percent.get())}</span><small>"Reset"</small></button>
+                            <button type="button" aria-label="Zoom in" title="Zoom in (+)" on:click=move |_| adjust_zoom(model, 1)>"+"</button>
+                        </div>
+                        <p id="zoom-help" class="zoom-help">"Focus chart: + / − / 0 · Alt/Option-wheel zooms toward the pointer. Ctrl-wheel remains browser page zoom."</p>
+                        <div class="calculation-indicator" role="status">{move || if model.calculating.get() { "Calculating newest cursor…" } else { "" }}</div>
+                    </div>
                 </div>
                 <div class="wheel-actions">
-                    <button class="primary" type="button" disabled=move || model.presentation.get().is_none() || model.calculating.get() on:click=move |_| commit_preview(platform, model, PreviewSaveMode::UpdateChart)>"Update Chart"</button>
-                    <form on:submit=move |event: SubmitEvent| {
-                        event.prevent_default();
-                        if let Some(name) = value(save_as_name) {
-                            commit_preview(platform, model, PreviewSaveMode::SaveAs { name });
-                        } else {
-                            model.problem.set(Some("Save As requires a new name.".into()));
-                        }
-                    }>
-                        <input node_ref=save_as_name aria-label="New chart name" placeholder="New chart name" required />
-                        <button type="submit" disabled=move || model.presentation.get().is_none() || model.calculating.get()>"Save As"</button>
-                    </form>
-                    <span>{move || model.presentation.get().and_then(|p| p.adjustment_notice).unwrap_or_default()}</span>
+                    {move || if model.preview_pending.get() {
+                        view! {
+                            <strong class="unsaved-preview">"Unsaved preview"</strong>
+                            <a class="button-link" href="#files">"Review in Files"</a>
+                        }.into_any()
+                    } else {
+                        view! { <span class="preview-saved">"No unsaved chart preview"</span> }.into_any()
+                    }}
+                    <span class="adjustment-notice">{move || model.presentation.get().and_then(|p| p.adjustment_notice).unwrap_or_default()}</span>
                 </div>
             </section>
         }
@@ -985,7 +1096,7 @@ mod browser {
             <section class="settings-panel"><div><p class="eyebrow">"Encrypted snapshots"</p><h2>"Locations / GeoNames"</h2><EntityList items=Signal::derive(move || model.workspace.get().locations) /></div>
                 <div class="settings-stack">
                     <form class="settings-form location-editor" on:submit=submit><label><span>"Location name"</span><input node_ref=label required /></label><div class="field-row"><label><span>"Country"</span><input node_ref=country maxlength="2" required value="US" /></label><label><span>"IANA time zone"</span><input node_ref=zone required value="America/New_York" /></label></div><div class="field-row"><label><span>"Latitude"</span><input node_ref=latitude required inputmode="decimal" /></label><label><span>"Longitude"</span><input node_ref=longitude required inputmode="decimal" /></label></div><button class="primary">"Save location"</button></form>
-                    <div class="settings-form catalog-controls"><h3>"Local GeoNames catalog"</h3><p>{move || model.capabilities.get().and_then(|status| status.catalog).map(|catalog| format!("{} local places · {}", catalog.place_count, catalog.content_id)).unwrap_or_else(|| "No catalog installed; manual locations remain available.".into())}</p><button on:click=move |_| dispatch(platform, model, PlatformCommand::InstallPinnedCatalog)>"Install pinned catalog"</button><form class="catalog-upload" on:submit=install_local><label><span>"cities500.zip"</span><input node_ref=cities type="file" required accept=".zip" /></label><label><span>"admin1CodesASCII.txt"</span><input node_ref=admin1 type="file" required accept=".txt,text/plain" /></label><label><span>"admin2Codes.txt"</span><input node_ref=admin2 type="file" required accept=".txt,text/plain" /></label><button>"Install local catalog"</button></form><form class="inline-search" on:submit=move |event: SubmitEvent| { event.prevent_default(); if let Some(query) = value(query) { dispatch(platform, model, PlatformCommand::SearchCatalog { query, limit: 20 }); } }><input node_ref=query aria-label="Search GeoNames" required /><button>"Search locally"</button></form><ul class="search-results">{move || model.catalog_results.get().into_iter().map(|result| view! { <li><strong>{result.place().name().to_owned()}</strong><small>{format!("{} · {}", result.place().country_code(), result.place().time_zone())}</small></li> }).collect_view()}</ul></div>
+                    <div class="settings-form catalog-controls"><h3>"Local GeoNames catalog"</h3><p>{move || model.capabilities.get().and_then(|status| status.catalog).map(|catalog| format!("{} local places · {}", catalog.place_count, catalog.content_id)).unwrap_or_else(|| "No catalog installed; manual locations remain available.".into())}</p><p class="catalog-attribution">"Contains "<a href="https://www.geonames.org/" target="_blank" rel="noreferrer">"GeoNames"</a>" geographical data, available under "<a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noreferrer">"CC BY 4.0"</a>"."</p><button on:click=move |_| dispatch(platform, model, PlatformCommand::InstallPinnedCatalog)>"Install pinned catalog"</button><form class="catalog-upload" on:submit=install_local><label><span>"cities500.zip"</span><input node_ref=cities type="file" required accept=".zip" /></label><label><span>"admin1CodesASCII.txt"</span><input node_ref=admin1 type="file" required accept=".txt,text/plain" /></label><label><span>"admin2Codes.txt"</span><input node_ref=admin2 type="file" required accept=".txt,text/plain" /></label><button>"Install local catalog"</button></form><form class="inline-search" on:submit=move |event: SubmitEvent| { event.prevent_default(); if let Some(query) = value(query) { dispatch(platform, model, PlatformCommand::SearchCatalog { query, limit: 20 }); } }><input node_ref=query aria-label="Search GeoNames" required /><button>"Search locally"</button></form><ul class="search-results">{move || model.catalog_results.get().into_iter().map(|result| view! { <li><strong>{result.place().name().to_owned()}</strong><small>{format!("{} · {}", result.place().country_code(), result.place().time_zone())}</small></li> }).collect_view()}</ul></div>
                 </div>
             </section>
         }
@@ -1119,6 +1230,7 @@ mod browser {
             <main id="files" class="route scroll-route" tabindex="-1">
                 <div class="route-heading"><div><p class="eyebrow">"Portable, browser-local storage"</p><h1>"Files"</h1></div><a href="#workbench">"Back to workbench"</a></div>
                 <section class="file-warning"><strong>"Exports are your backups."</strong><span>{move || model.capabilities.get().map(|status| status.backup_warning).unwrap_or_else(|| "Browser storage can be evicted.".into())}</span></section>
+                <PendingChartActions platform model />
                 <section class="file-toolbar">
                     <button class="primary" on:click=move |_| dispatch(platform, model, PlatformCommand::CreateScratch)>"New scratch"</button>
                     <label class="file-action">"Import .oracle-vault"<input node_ref=import type="file" accept=".oracle-vault,application/octet-stream" on:change=move |_| {
@@ -1136,6 +1248,83 @@ mod browser {
                     {move || if model.vaults.get().is_empty() { view! { <div class="empty-card"><span>"◇"</span><p>"No encrypted vaults in this browser."</p></div> }.into_any() } else { ().into_any() }}
                 </section>
             </main>
+        }
+    }
+
+    #[component]
+    fn PendingChartActions(platform: Platform, model: Model) -> impl IntoView {
+        let save_as_name = NodeRef::<Input>::new();
+        view! {
+            <section class="pending-chart-actions" aria-labelledby="pending-chart-heading">
+                <div class="pending-chart-copy">
+                    <p class="eyebrow">"Chart persistence"</p>
+                    <h2 id="pending-chart-heading">"Charts in active workspace"</h2>
+                    {move || if model.preview_pending.get() {
+                        model.presentation.get().map(|preview| {
+                            let destination = if preview.source.vault_id.is_some() {
+                                format!("{} · active revision {}", preview.source.vault_title, preview.source.vault_revision.as_deref().unwrap_or("unavailable"))
+                            } else {
+                                "Scratch workspace · save it as an encrypted vault first".into()
+                            };
+                            view! {
+                                <div class="pending-chart-summary">
+                                    <span class="pending-badge">"Unsaved preview"</span>
+                                    <strong>{preview.outer.label}</strong>
+                                    <span>{format!("{} {} · {}", preview.outer.local_input.local_date(), preview.outer.local_input.local_time(), preview.outer.location_label)}</span>
+                                    <small>{destination}</small>
+                                </div>
+                            }
+                        }).into_any()
+                    } else {
+                        view! {
+                            <div class="pending-chart-empty">
+                                <p>"There is no unsaved chart preview. Adjust a chart in Workbench, then return here to update or save it as a new chart."</p>
+                                <a class="button-link" href="#workbench">"Open Workbench"</a>
+                            </div>
+                        }.into_any()
+                    }}
+                </div>
+                {move || if model.preview_pending.get() && model.presentation.get().is_some() {
+                    let target = model.presentation.get().map(|preview| preview.outer.label).unwrap_or_default();
+                    view! {
+                        <div class="pending-chart-forms">
+                            <div class="chart-persist-option">
+                                <h3>"Update existing chart"</h3>
+                                <p>{format!("Preserve the identity of “{target}” and replace its current definition with this preview.")}</p>
+                                <button class="primary" type="button"
+                                    disabled=move || model.busy.get() || !pending_destination_ready(model)
+                                    on:click=move |_| {
+                                        if confirm(&format!("Update the existing chart “{target}” in the active vault?")) {
+                                            commit_preview(platform, model, PreviewSaveMode::UpdateChart { confirmed: true });
+                                        }
+                                    }>
+                                    "Update existing chart"
+                                </button>
+                            </div>
+                            <form class="chart-persist-option save-as-chart" on:submit=move |event: SubmitEvent| {
+                                event.prevent_default();
+                                if let Some(name) = value(save_as_name) {
+                                    commit_preview(platform, model, PreviewSaveMode::SaveAs { name });
+                                } else {
+                                    model.problem.set(Some("Save As requires a new name.".into()));
+                                }
+                            }>
+                                <h3>"Save as a new chart"</h3>
+                                <p>"Create a distinct chart. Names are unique without regard to letter case, and an existing chart is never overwritten."</p>
+                                <label><span>"New chart name"</span><input node_ref=save_as_name required maxlength="256" /></label>
+                                <button type="submit" disabled=move || model.busy.get() || !pending_destination_ready(model)>"Save as new chart"</button>
+                            </form>
+                            {move || if pending_destination_ready(model) {
+                                view! { <p class="destination-status ready" role="status">"Ready to save into the currently active unlocked vault."</p> }.into_any()
+                            } else {
+                                view! { <p class="destination-status blocked" role="alert">"This preview has no valid destination. Save scratch first, or return to Workbench after unlocking and activating the intended vault."</p> }.into_any()
+                            }}
+                        </div>
+                    }.into_any()
+                } else {
+                    ().into_any()
+                }}
+            </section>
         }
     }
 
@@ -1172,7 +1361,14 @@ mod browser {
                         queue_selected_preview(platform, model, None);
                     }
                 }
-                Err(error) => model.problem.set(Some(error.message)),
+                Err(error) => {
+                    if error.code == PlatformErrorCode::StalePreview {
+                        model.presentation.set(None);
+                        model.fallback_presentation.set(None);
+                        model.preview_pending.set(false);
+                    }
+                    model.problem.set(Some(error.message));
+                }
             }
             model.busy.set(false);
         });
@@ -1187,6 +1383,8 @@ mod browser {
                 wheel_templates,
                 aspect_sets,
             } => {
+                model.presentation.set(None);
+                model.preview_pending.set(false);
                 model.vaults.set(vaults);
                 model.workspace.set(workspace);
                 model.capabilities.set(Some(capabilities));
@@ -1200,13 +1398,29 @@ mod browser {
                 false
             }
             PlatformResponse::Workspace(workspace) => {
+                if model.preview_pending.get_untracked() {
+                    model.notice.set(Some(
+                        "The active workspace changed; its unsaved preview was invalidated.".into(),
+                    ));
+                }
+                model.presentation.set(None);
+                model.preview_pending.set(false);
                 model.workspace.set(workspace);
                 true
             }
             PlatformResponse::Updated { vaults, workspace } => {
+                let invalidated = model.preview_pending.get_untracked();
+                model.presentation.set(None);
+                model.fallback_presentation.set(None);
+                model.preview_pending.set(false);
                 model.vaults.set(vaults);
                 model.workspace.set(workspace);
-                model.notice.set(Some("Local workspace updated.".into()));
+                model.notice.set(Some(if invalidated {
+                    "The workspace or vault revision changed; its prior unsaved preview was invalidated."
+                        .into()
+                } else {
+                    "Local workspace updated.".into()
+                }));
                 true
             }
             PlatformResponse::WheelTemplates(settings) => {
@@ -1222,6 +1436,26 @@ mod browser {
             }
             PlatformResponse::WorkbenchPreview(presentation) => {
                 model.presentation.set(Some(presentation));
+                model.preview_pending.set(true);
+                false
+            }
+            PlatformResponse::WorkbenchPreviewCommitted {
+                vaults,
+                workspace,
+                outcome,
+            } => {
+                model.vaults.set(vaults);
+                model.workspace.set(workspace);
+                model.preview_pending.set(false);
+                let message = match outcome {
+                    PreviewCommitOutcome::Updated { label, .. } => {
+                        format!("Updated existing chart “{label}”.")
+                    }
+                    PreviewCommitOutcome::SavedAs { label, .. } => {
+                        format!("Saved new chart “{label}”.")
+                    }
+                };
+                model.notice.set(Some(message));
                 false
             }
             PlatformResponse::Export { filename, bytes } => {
@@ -1264,6 +1498,7 @@ mod browser {
             || workspace.locations.is_empty()
         {
             model.presentation.set(None);
+            model.preview_pending.set(false);
             return false;
         }
         if !workspace
@@ -1409,6 +1644,7 @@ mod browser {
                         .set(Some(presentation.outer.local_input.clone()));
                     model.notice.set(presentation.adjustment_notice.clone());
                     model.presentation.set(Some(presentation));
+                    model.preview_pending.set(true);
                     model.fallback_presentation.set(None);
                 }
                 Ok(PlatformResponse::WorkbenchPreview(presentation)) => {
@@ -1427,6 +1663,7 @@ mod browser {
                             .desired_outer
                             .set(Some(fallback.outer.local_input.clone()));
                         model.presentation.set(Some(fallback));
+                        model.preview_pending.set(true);
                         model.fallback_presentation.set(None);
                     } else if let Some(last) = model.presentation.get_untracked() {
                         model.desired_outer.set(Some(last.outer.local_input));
@@ -1484,6 +1721,7 @@ mod browser {
     }
 
     fn select_template(platform: Platform, model: Model, id: &str) {
+        reset_zoom(model);
         model
             .wheel_templates
             .update(|settings| settings.last_selected_template_id = id.into());
@@ -1494,6 +1732,144 @@ mod browser {
                 template_id: id.into(),
             },
         );
+    }
+
+    fn adjust_zoom(model: Model, direction: i8) {
+        let current = model.zoom_percent.get_untracked();
+        let next = if direction > 0 {
+            ZOOM_STEPS
+                .iter()
+                .copied()
+                .find(|step| *step > current)
+                .unwrap_or(300)
+        } else {
+            ZOOM_STEPS
+                .iter()
+                .copied()
+                .rev()
+                .find(|step| *step < current)
+                .unwrap_or(75)
+        };
+        model.zoom_percent.set(next);
+    }
+
+    fn reset_zoom(model: Model) {
+        model.zoom_percent.set(100);
+        model.zoom_origin_x.set(1);
+        model.zoom_origin_y.set(1);
+    }
+
+    fn origin_bucket(position: f64) -> u8 {
+        if position < 1.0 / 3.0 {
+            0
+        } else if position > 2.0 / 3.0 {
+            2
+        } else {
+            1
+        }
+    }
+
+    fn zoom_class(percent: u16) -> &'static str {
+        match percent {
+            75 => "zoom-075",
+            80 => "zoom-080",
+            90 => "zoom-090",
+            100 => "zoom-100",
+            110 => "zoom-110",
+            120 => "zoom-120",
+            130 => "zoom-130",
+            140 => "zoom-140",
+            150 => "zoom-150",
+            160 => "zoom-160",
+            170 => "zoom-170",
+            180 => "zoom-180",
+            190 => "zoom-190",
+            200 => "zoom-200",
+            210 => "zoom-210",
+            220 => "zoom-220",
+            230 => "zoom-230",
+            240 => "zoom-240",
+            250 => "zoom-250",
+            260 => "zoom-260",
+            270 => "zoom-270",
+            280 => "zoom-280",
+            290 => "zoom-290",
+            300 => "zoom-300",
+            _ => "zoom-100",
+        }
+    }
+
+    fn origin_x_class(origin: u8) -> &'static str {
+        match origin {
+            0 => "origin-x-left",
+            2 => "origin-x-right",
+            _ => "origin-x-center",
+        }
+    }
+
+    fn origin_y_class(origin: u8) -> &'static str {
+        match origin {
+            0 => "origin-y-top",
+            2 => "origin-y-bottom",
+            _ => "origin-y-center",
+        }
+    }
+
+    fn toggle_sidebar_layout(model: Model, left: bool) {
+        if left {
+            model
+                .left_collapsed
+                .update(|collapsed| *collapsed = !*collapsed);
+        } else {
+            model
+                .right_collapsed
+                .update(|collapsed| *collapsed = !*collapsed);
+        }
+        store_layout_preferences(LayoutPreferences {
+            left_collapsed: model.left_collapsed.get_untracked(),
+            right_collapsed: model.right_collapsed.get_untracked(),
+        });
+    }
+
+    fn load_layout_preferences() -> LayoutPreferences {
+        let Some(value) = web_sys::window()
+            .and_then(|window| window.local_storage().ok().flatten())
+            .and_then(|storage| storage.get_item(LAYOUT_STORAGE_KEY).ok().flatten())
+        else {
+            return LayoutPreferences::default();
+        };
+        let Ok(parsed) = js_sys::JSON::parse(&value) else {
+            return LayoutPreferences::default();
+        };
+        if Reflect::get(&parsed, &JsValue::from_str("schema_version"))
+            .ok()
+            .and_then(|value| value.as_f64())
+            != Some(1.0)
+        {
+            return LayoutPreferences::default();
+        }
+        LayoutPreferences {
+            left_collapsed: Reflect::get(&parsed, &JsValue::from_str("left_collapsed"))
+                .ok()
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false),
+            right_collapsed: Reflect::get(&parsed, &JsValue::from_str("right_collapsed"))
+                .ok()
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false),
+        }
+    }
+
+    fn store_layout_preferences(layout: LayoutPreferences) {
+        if let Some(storage) =
+            web_sys::window().and_then(|window| window.local_storage().ok().flatten())
+        {
+            let value = format!(
+                "{{\"schema_version\":1,\"left_collapsed\":{},\"right_collapsed\":{}}}",
+                layout.left_collapsed, layout.right_collapsed
+            );
+            let _ = storage.set_item(LAYOUT_STORAGE_KEY, &value);
+        }
     }
 
     fn begin_hold(model: Model, event: PointerEvent, action: Rc<dyn Fn()>) {
@@ -1561,6 +1937,28 @@ mod browser {
         workspace.charts.iter().find(|chart| chart.id == id)
     }
 
+    fn pending_destination_ready(model: Model) -> bool {
+        let Some(preview) = model.presentation.get_untracked() else {
+            return false;
+        };
+        let (Some(source_id), Some(source_revision)) = (
+            preview.source.vault_id.as_deref(),
+            preview.source.vault_revision.as_deref(),
+        ) else {
+            return false;
+        };
+        if model.workspace.get_untracked().active
+            != Some(ActiveWorkspace::Vault(source_id.to_owned()))
+        {
+            return false;
+        }
+        model.vaults.get_untracked().iter().any(|vault| {
+            vault.id == source_id
+                && vault.revision == source_revision
+                && vault.lock_state == VaultLockState::Active
+        })
+    }
+
     fn chart_input(
         chart: &ChartSummary,
     ) -> Result<LocalDateTimeInput, oracle_studio_core::ModelError> {
@@ -1594,9 +1992,13 @@ mod browser {
     fn install_lifecycle_guards(model: Model) {
         let before_unload =
             Closure::<dyn FnMut(BeforeUnloadEvent)>::new(move |event: BeforeUnloadEvent| {
-                if model.workspace.get_untracked().scratch_dirty {
+                if model.workspace.get_untracked().scratch_dirty
+                    || model.preview_pending.get_untracked()
+                {
                     event.prevent_default();
-                    event.set_return_value("Unsaved scratch work will be lost.");
+                    event.set_return_value(
+                        "Unsaved scratch work or a transient chart preview will be lost.",
+                    );
                 }
             });
         let blur_model = model;
