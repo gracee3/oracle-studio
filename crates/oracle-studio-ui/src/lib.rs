@@ -7,9 +7,9 @@ use leptos::prelude::*;
 mod browser {
     use std::{cell::RefCell, collections::BTreeSet, rc::Rc};
 
-    use js_sys::{Array, Uint8Array};
+    use js_sys::{Array, Reflect, Uint8Array};
     use leptos::{
-        ev::{KeyboardEvent, PointerEvent, SubmitEvent},
+        ev::{KeyboardEvent, PointerEvent, SubmitEvent, WheelEvent},
         html::{Input, Select, Textarea},
         prelude::*,
     };
@@ -27,14 +27,16 @@ mod browser {
         CatalogInstallInput, CatalogRetrieval, CatalogSearchMatch,
     };
     use oracle_studio_platform::{
-        ActiveWorkspace, CapabilityStatus, ChartSummary, LabelDensity, PlatformCommand,
-        PlatformErrorCode, PlatformResponse, PreviewCommitOutcome, PreviewGeneration,
-        PreviewSaveMode, StudioPlatform, VaultLockState, VaultSummary, WheelLayout, WheelMode,
-        WheelOrientation, WheelPalette, WheelPaletteSelection, WheelTemplate,
-        WheelTemplateSettings, WorkbenchPresentation, WorkbenchPreviewRequest, WorkspaceSummary,
+        ActiveWorkspace, AspectKind, AspectOrbValues, AspectSet, AspectSetRule, AspectSetSettings,
+        CapabilityStatus, ChartPointId, ChartSummary, LabelDensity, MAX_IMPORT_BYTES,
+        PlatformCommand, PlatformErrorCode, PlatformResponse, PreviewCommitOutcome,
+        PreviewGeneration, PreviewSaveMode, StudioPlatform, VaultLockState, VaultSummary,
+        WheelLayout, WheelMode, WheelOrientation, WheelPalette, WheelPaletteSelection,
+        WheelTemplate, WheelTemplateSettings, WorkbenchPresentation, WorkbenchPreviewRequest,
+        WorkspaceSummary,
     };
     use oracle_studio_worker::BrowserStudioPlatform;
-    use wasm_bindgen::{JsCast, closure::Closure};
+    use wasm_bindgen::{JsCast, JsValue, closure::Closure};
     use wasm_bindgen_futures::{JsFuture, spawn_local};
     use web_sys::{BeforeUnloadEvent, Blob, Element, File, HtmlAnchorElement, Url};
 
@@ -69,6 +71,11 @@ mod browser {
         ("Sextile", "Sextile"),
     ];
     const THEME_STORAGE_KEY: &str = "oracle-studio.theme.v1";
+    const LAYOUT_STORAGE_KEY: &str = "oracle-studio.layout.v1";
+    const ZOOM_STEPS: [u16; 24] = [
+        75, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200, 210, 220, 230, 240, 250,
+        260, 270, 280, 290, 300,
+    ];
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     enum ThemePreference {
@@ -90,6 +97,12 @@ mod browser {
                 Self::Dark => "dark",
             }
         }
+    }
+
+    #[derive(Clone, Copy, Default)]
+    struct LayoutPreferences {
+        left_collapsed: bool,
+        right_collapsed: bool,
     }
 
     #[derive(Clone)]
@@ -177,6 +190,7 @@ mod browser {
         wheel_templates: RwSignal<WheelTemplateSettings>,
         theme_preference: RwSignal<ThemePreference>,
         effective_theme: RwSignal<EffectiveTheme>,
+        aspect_sets: RwSignal<AspectSetSettings>,
         catalog_results: RwSignal<Vec<CatalogSearchMatch>>,
         presentation: RwSignal<Option<WorkbenchPresentation>>,
         preview_pending: RwSignal<bool>,
@@ -198,6 +212,11 @@ mod browser {
         busy: RwSignal<bool>,
         left_open: RwSignal<bool>,
         right_open: RwSignal<bool>,
+        left_collapsed: RwSignal<bool>,
+        right_collapsed: RwSignal<bool>,
+        zoom_percent: RwSignal<u16>,
+        zoom_origin_x: RwSignal<u8>,
+        zoom_origin_y: RwSignal<u8>,
         coordinator: StoredValue<Rc<RefCell<PreviewCoordinator<PreviewPayload>>>, LocalStorage>,
         holds: StoredValue<HoldController, LocalStorage>,
     }
@@ -207,6 +226,7 @@ mod browser {
             let theme_preference = stored_theme_preference();
             let effective_theme =
                 document_theme().unwrap_or_else(|| resolve_theme(theme_preference));
+            let layout = load_layout_preferences();
             Self {
                 vaults: RwSignal::new(Vec::new()),
                 workspace: RwSignal::new(empty_workspace()),
@@ -214,6 +234,7 @@ mod browser {
                 wheel_templates: RwSignal::new(WheelTemplateSettings::default()),
                 theme_preference: RwSignal::new(theme_preference),
                 effective_theme: RwSignal::new(effective_theme),
+                aspect_sets: RwSignal::new(AspectSetSettings::default()),
                 catalog_results: RwSignal::new(Vec::new()),
                 presentation: RwSignal::new(None),
                 preview_pending: RwSignal::new(false),
@@ -239,6 +260,11 @@ mod browser {
                 busy: RwSignal::new(false),
                 left_open: RwSignal::new(false),
                 right_open: RwSignal::new(false),
+                left_collapsed: RwSignal::new(layout.left_collapsed),
+                right_collapsed: RwSignal::new(layout.right_collapsed),
+                zoom_percent: RwSignal::new(100),
+                zoom_origin_x: RwSignal::new(1),
+                zoom_origin_y: RwSignal::new(1),
                 coordinator: StoredValue::new_local(Rc::new(RefCell::new(
                     PreviewCoordinator::default(),
                 ))),
@@ -390,10 +416,16 @@ mod browser {
     #[component]
     fn WorkbenchView(platform: Platform, model: Model) -> impl IntoView {
         view! {
-            <main id="workbench" class="route workbench-route" tabindex="-1">
+            <main id="workbench" class="route workbench-route" class:left-collapsed=move || model.left_collapsed.get() class:right-collapsed=move || model.right_collapsed.get() tabindex="-1">
                 <button class:drawer-open=move || model.left_open.get() class="drawer-scrim left-scrim" aria-label="Close charts drawer" on:click=move |_| model.left_open.set(false)></button>
                 <aside class:drawer-open=move || model.left_open.get() class="workbench-sidebar left-sidebar" aria-label="Charts and wheels">
-                    <div class="sidebar-title"><h1>"Charts"</h1><button class="drawer-close" aria-label="Close charts drawer" on:click=move |_| model.left_open.set(false)>"×"</button></div>
+                    <div class="sidebar-title">
+                        <h1>"Charts"</h1>
+                        <div class="sidebar-title-actions">
+                            <button class="desktop-collapse" type="button" aria-expanded=move || !model.left_collapsed.get() aria-label=move || if model.left_collapsed.get() { "Expand Charts sidebar" } else { "Collapse Charts sidebar" } title=move || if model.left_collapsed.get() { "Expand Charts sidebar" } else { "Collapse Charts sidebar" } on:click=move |_| toggle_sidebar_layout(model, true)>{move || if model.left_collapsed.get() { "›" } else { "‹" }}</button>
+                            <button class="drawer-close" aria-label="Close charts drawer" on:click=move |_| model.left_open.set(false)>"×"</button>
+                        </div>
+                    </div>
                     <ChartsPanel platform model />
                     <WheelsPanel platform model />
                 </aside>
@@ -402,7 +434,13 @@ mod browser {
 
                 <button class:drawer-open=move || model.right_open.get() class="drawer-scrim right-scrim" aria-label="Close controls drawer" on:click=move |_| model.right_open.set(false)></button>
                 <aside class:drawer-open=move || model.right_open.get() class="workbench-sidebar right-sidebar" aria-label="Controls, points, and aspects">
-                    <div class="sidebar-title"><h1>"Controls"</h1><button class="drawer-close" aria-label="Close controls drawer" on:click=move |_| model.right_open.set(false)>"×"</button></div>
+                    <div class="sidebar-title">
+                        <h1>"Controls"</h1>
+                        <div class="sidebar-title-actions">
+                            <button class="desktop-collapse" type="button" aria-expanded=move || !model.right_collapsed.get() aria-label=move || if model.right_collapsed.get() { "Expand Controls sidebar" } else { "Collapse Controls sidebar" } title=move || if model.right_collapsed.get() { "Expand Controls sidebar" } else { "Collapse Controls sidebar" } on:click=move |_| toggle_sidebar_layout(model, false)>{move || if model.right_collapsed.get() { "‹" } else { "›" }}</button>
+                            <button class="drawer-close" aria-label="Close controls drawer" on:click=move |_| model.right_open.set(false)>"×"</button>
+                        </div>
+                    </div>
                     <TimeControls platform model />
                     <FilterPanel model />
                 </aside>
@@ -534,7 +572,24 @@ mod browser {
             }
         };
         let wheel_key = move |event: KeyboardEvent| {
-            if event.key() == "Escape" {
+            if !event.ctrl_key() && !event.alt_key() && !event.meta_key() && event.key() == "+" {
+                event.prevent_default();
+                adjust_zoom(model, 1);
+            } else if !event.ctrl_key()
+                && !event.alt_key()
+                && !event.meta_key()
+                && event.key() == "-"
+            {
+                event.prevent_default();
+                adjust_zoom(model, -1);
+            } else if !event.ctrl_key()
+                && !event.alt_key()
+                && !event.meta_key()
+                && event.key() == "0"
+            {
+                event.prevent_default();
+                reset_zoom(model);
+            } else if event.key() == "Escape" {
                 model.selected_points.set(BTreeSet::new());
                 model.selected_aspects.set(BTreeSet::new());
             } else if (event.key() == " " || event.key() == "Enter")
@@ -544,43 +599,105 @@ mod browser {
                 toggle_interaction(model, &element);
             }
         };
+        let modifier_wheel = move |event: WheelEvent| {
+            if !event.alt_key() || event.ctrl_key() || event.delta_y() == 0.0 {
+                return;
+            }
+            event.prevent_default();
+            if let Some(frame) = event
+                .current_target()
+                .and_then(|target| target.dyn_into::<Element>().ok())
+            {
+                let origin_target = frame
+                    .query_selector(".wheel-svg")
+                    .ok()
+                    .flatten()
+                    .unwrap_or(frame);
+                let bounds = origin_target.get_bounding_client_rect();
+                if bounds.width() > 0.0 && bounds.height() > 0.0 {
+                    model.zoom_origin_x.set(origin_bucket(
+                        (f64::from(event.client_x()) - bounds.left()) / bounds.width(),
+                    ));
+                    model.zoom_origin_y.set(origin_bucket(
+                        (f64::from(event.client_y()) - bounds.top()) / bounds.height(),
+                    ));
+                }
+            }
+            adjust_zoom(model, if event.delta_y() < 0.0 { 1 } else { -1 });
+        };
         view! {
-            <section id="wheel-stage" class="wheel-stage" aria-label="Chart workbench">
-                <div class="chart-meta inner-meta">{move || model.presentation.get().map(|p| format!("INNER · {}\n{} {}\n{}", p.inner.label, p.inner.local_input.local_date(), p.inner.local_input.local_time(), p.inner.location_label)).unwrap_or_default()}</div>
-                <div class="chart-meta outer-meta">{move || model.presentation.get().map(|p| format!("OUTER · {}\n{} {}\n{}", p.outer.label, p.outer.local_input.local_date(), p.outer.local_input.local_time(), p.outer.location_label)).unwrap_or_default()}</div>
-                <div class="wheel-frame" class:is-calculating=move || model.calculating.get() on:click=wheel_click on:keydown=wheel_key>
-                    {move || if let Some(presentation) = model.presentation.get() {
-                        let scene = filtered_scene(&presentation.scene, &model.visible_points.get(), &model.visible_aspects.get());
-                        let settings = model.wheel_templates.get();
-                        let template = settings.selected();
-                        let svg = render_chart_svg(&scene, &ChartRenderOptions {
-                            mode: template.mode,
-                            layout: template.layout,
-                            wheel: RenderOptions {
-                                orientation: template.orientation,
-                                palette: template.palette.resolve(model.effective_theme.get() == EffectiveTheme::Dark),
-                                label_density: template.label_density,
-                                selected_points: model.selected_points.get().into_iter().collect(),
-                                selected_aspects: model.selected_aspects.get().into_iter().collect(),
-                            },
-                        });
-                        view! { <div class="wheel-svg" inner_html=svg></div> }.into_any()
-                    } else {
-                        let workspace = model.workspace.get();
-                        view! {
-                            <div class="wheel-empty">
-                                <span aria-hidden="true">"☉"</span>
-                                <h2>{if workspace.active.is_none() { "Open a workspace" } else { "Two charts and a location make a wheel" }}</h2>
-                                <p>"Calculated Moshier previews stay transient until you review them in Files."</p>
-                                {if workspace.active.is_none() {
-                                    view! { <button class="primary" on:click=move |_| dispatch(platform, model, PlatformCommand::CreateScratch)>"Open scratch"</button> }.into_any()
-                                } else {
-                                    view! { <a class="button-link" href="#settings">"Add charts and locations"</a> }.into_any()
-                                }}
-                            </div>
-                        }.into_any()
-                    }}
-                    <div class="calculation-indicator" role="status">{move || if model.calculating.get() { "Calculating newest cursor…" } else { "" }}</div>
+            <section id="wheel-stage" class="wheel-stage" aria-label="Chart workbench" aria-describedby="zoom-help" tabindex="0" data-zoom-percent=move || model.zoom_percent.get().to_string() on:keydown=wheel_key>
+                <div class="wheel-frame" class:is-calculating=move || model.calculating.get()>
+                    <div class="chart-meta-strip" aria-label="Chart metadata">
+                        {move || model.presentation.get().map(|presentation| view! {
+                            <article class="chart-meta inner-meta" aria-labelledby="chart-1-heading">
+                                <p class="meta-kicker">"Chart 1"</p>
+                                <h2 id="chart-1-heading">{presentation.inner.label}</h2>
+                                <dl>
+                                    <div><dt>"Layer"</dt><dd>"Inner · fixed"</dd></div>
+                                    <div><dt>"Date and time"</dt><dd>{format!("{} {}", presentation.inner.local_input.local_date(), presentation.inner.local_input.local_time())}</dd></div>
+                                    <div><dt>"Location"</dt><dd>{presentation.inner.location_label}</dd></div>
+                                </dl>
+                            </article>
+                        }).into_any()}
+                        {move || model.presentation.get().map(|presentation| view! {
+                            <article class="chart-meta outer-meta" aria-labelledby="chart-2-heading">
+                                <p class="meta-kicker">"Chart 2"</p>
+                                <h2 id="chart-2-heading">{presentation.outer.label}</h2>
+                                <dl>
+                                    <div><dt>"Layer"</dt><dd>"Outer · moving"</dd></div>
+                                    <div><dt>"Date and time"</dt><dd>{format!("{} {}", presentation.outer.local_input.local_date(), presentation.outer.local_input.local_time())}</dd></div>
+                                    <div><dt>"Location"</dt><dd>{presentation.outer.location_label}</dd></div>
+                                </dl>
+                            </article>
+                        }).into_any()}
+                    </div>
+                    <div class="chart-viewport" on:click=wheel_click on:wheel=modifier_wheel>
+                        {move || if let Some(presentation) = model.presentation.get() {
+                            let scene = filtered_scene(&presentation.scene, &model.visible_points.get(), &model.visible_aspects.get());
+                            let settings = model.wheel_templates.get();
+                            let template = settings.selected();
+                            let svg = render_chart_svg(&scene, &ChartRenderOptions {
+                                mode: template.mode,
+                                layout: template.layout,
+                                wheel: RenderOptions {
+                                    orientation: template.orientation,
+                                    palette: template.palette.resolve(model.effective_theme.get() == EffectiveTheme::Dark),
+                                    label_density: template.label_density,
+                                    selected_points: model.selected_points.get().into_iter().collect(),
+                                    selected_aspects: model.selected_aspects.get().into_iter().collect(),
+                                },
+                            });
+                            let class = format!(
+                                "wheel-svg {} {} {}",
+                                zoom_class(model.zoom_percent.get()),
+                                origin_x_class(model.zoom_origin_x.get()),
+                                origin_y_class(model.zoom_origin_y.get()),
+                            );
+                            view! { <div class=class inner_html=svg></div> }.into_any()
+                        } else {
+                            let workspace = model.workspace.get();
+                            view! {
+                                <div class="wheel-empty">
+                                    <span aria-hidden="true">"☉"</span>
+                                    <h2>{if workspace.active.is_none() { "Open a workspace" } else { "Two charts and a location make a wheel" }}</h2>
+                                    <p>"Calculated Moshier previews stay transient until you review them in Files."</p>
+                                    {if workspace.active.is_none() {
+                                        view! { <button class="primary" on:click=move |_| dispatch(platform, model, PlatformCommand::CreateScratch)>"Open scratch"</button> }.into_any()
+                                    } else {
+                                        view! { <a class="button-link" href="#settings">"Add charts and locations"</a> }.into_any()
+                                    }}
+                                </div>
+                            }.into_any()
+                        }}
+                        <div class="zoom-controls" role="group" aria-label="Chart zoom controls">
+                            <button type="button" aria-label="Zoom out" title="Zoom out (-)" on:click=move |_| adjust_zoom(model, -1)>"−"</button>
+                            <button class="zoom-reset" type="button" aria-label="Reset chart zoom" title="Reset chart zoom (0)" on:click=move |_| reset_zoom(model)><span class="zoom-readout" aria-live="polite">{move || format!("{}%", model.zoom_percent.get())}</span><small>"Reset"</small></button>
+                            <button type="button" aria-label="Zoom in" title="Zoom in (+)" on:click=move |_| adjust_zoom(model, 1)>"+"</button>
+                        </div>
+                        <p id="zoom-help" class="zoom-help">"Focus chart: + / − / 0 · Alt/Option-wheel zooms toward the pointer. Ctrl-wheel remains browser page zoom."</p>
+                        <div class="calculation-indicator" role="status">{move || if model.calculating.get() { "Calculating newest cursor…" } else { "" }}</div>
+                    </div>
                 </div>
                 <div class="wheel-actions">
                     {move || if model.preview_pending.get() {
@@ -676,6 +793,7 @@ mod browser {
                 <div class="route-heading"><div><p class="eyebrow">"Studio preferences"</p><h1>"Settings"</h1></div><a href="#workbench">"Back to workbench"</a></div>
                 <ThemeSettings model />
                 <TemplateSettings platform model />
+                <AspectSetSettingsView platform model />
                 <PeopleSettings platform model />
                 <LocationSettings platform model />
                 <ChartSettings platform model />
@@ -795,6 +913,239 @@ mod browser {
                     <div class="button-row"><button class="primary" type="submit" disabled=move || model.wheel_templates.get().selected().is_protected()>"Save selected"</button><button type="button" on:click=move |_| save(true)>"Duplicate as new"</button><button class="danger" type="button" disabled=move || model.wheel_templates.get().selected().is_protected() on:click=move |_| dispatch(platform, model, PlatformCommand::RemoveWheelTemplate { template_id: model.wheel_templates.get_untracked().last_selected_template_id })>"Remove"</button></div>
                 </form>
             </section>
+        }
+    }
+
+    #[component]
+    fn AspectSetSettingsView(platform: Platform, model: Model) -> impl IntoView {
+        let copy_name = NodeRef::<Input>::new();
+        let rename_name = NodeRef::<Input>::new();
+        let description = NodeRef::<Textarea>::new();
+        let import = NodeRef::<Input>::new();
+        let duplicate = move |event: SubmitEvent| {
+            event.prevent_default();
+            let result = (|| {
+                let name = value(copy_name).ok_or("copy name is required")?;
+                let existing = model
+                    .aspect_sets
+                    .get_untracked()
+                    .sets()
+                    .iter()
+                    .filter_map(|set| set.id().strip_prefix("user."))
+                    .map(str::to_owned)
+                    .collect();
+                let generated = generate_unique_id("aspect-set", &name, &existing)
+                    .map_err(|error| error.to_string())?;
+                Ok::<_, String>((
+                    format!("user.{}", generated.as_str()),
+                    name,
+                    model
+                        .aspect_sets
+                        .get_untracked()
+                        .selected_aspect_set_id()
+                        .to_owned(),
+                ))
+            })();
+            match result {
+                Ok((id, name, source_id)) => dispatch(
+                    platform,
+                    model,
+                    PlatformCommand::DuplicateAspectSet {
+                        source_id,
+                        id,
+                        name,
+                    },
+                ),
+                Err(message) => model.problem.set(Some(message)),
+            }
+        };
+        let rename = move |event: SubmitEvent| {
+            event.prevent_default();
+            let Some(name) = value(rename_name) else {
+                model.problem.set(Some("name is required".into()));
+                return;
+            };
+            let id = model
+                .aspect_sets
+                .get_untracked()
+                .selected_aspect_set_id()
+                .to_owned();
+            dispatch(
+                platform,
+                model,
+                PlatformCommand::RenameAspectSet { id, name },
+            );
+        };
+        let save_description = move |event: SubmitEvent| {
+            event.prevent_default();
+            let result = (|| {
+                let selected = model.aspect_sets.get_untracked().selected().clone();
+                let description = text_value(description).ok_or("description is required")?;
+                selected
+                    .revised(
+                        selected.name(),
+                        description,
+                        selected.rules().to_vec(),
+                        selected.points().to_vec(),
+                    )
+                    .map_err(|error| error.to_string())
+            })();
+            save_revised_aspect_set(platform, model, result);
+        };
+        view! {
+            <section class="settings-panel aspect-set-settings">
+                <div>
+                    <p class="eyebrow">"Global, unencrypted"</p>
+                    <h2>"Aspect sets"</h2>
+                    <p>"Choose reusable rules for new previews. Saved calculations retain an immutable snapshot of the exact set, rules, and participating points."</p>
+                    <p>"Luminary means either endpoint is the Sun or Moon. Exact aspects pass when enabled; stationary or unknown phase uses the wider applying/separating orb."</p>
+                </div>
+                <div class="settings-stack aspect-set-stack">
+                    <div class="settings-form">
+                        <label><span>"Selected set"</span><select on:change=move |event| dispatch(platform, model, PlatformCommand::SelectAspectSet { id: event_target_value(&event) })>
+                            {move || {
+                                let settings = model.aspect_sets.get();
+                                let selected_id = settings.selected_aspect_set_id().to_owned();
+                                settings.sets().iter().cloned().map(|set| {
+                                    let id = set.id().to_owned();
+                                    let label = if set.built_in() { format!("{} · built-in", set.name()) } else { set.name().to_owned() };
+                                    view! { <option value=id.clone() selected=id == selected_id>{label}</option> }
+                                }).collect_view()
+                            }}
+                        </select></label>
+                        <div class="aspect-set-identity">
+                            <strong>{move || model.aspect_sets.get().selected().name().to_owned()}</strong>
+                            <small>{move || {
+                                let settings = model.aspect_sets.get();
+                                let selected = settings.selected();
+                                format!("{} · revision {} · {}", selected.id(), selected.revision(), selected.content_id())
+                            }}</small>
+                            <p>{move || model.aspect_sets.get().selected().description().to_owned()}</p>
+                        </div>
+                        <form class="inline-search" on:submit=duplicate>
+                            <input node_ref=copy_name aria-label="New aspect-set name" placeholder="Name for new editable copy" required />
+                            <button>"Create / duplicate"</button>
+                        </form>
+                        <form class="inline-search" on:submit=rename>
+                            <input node_ref=rename_name aria-label="Rename selected aspect set" required prop:value=move || model.aspect_sets.get().selected().name().to_owned() />
+                            <button disabled=move || model.aspect_sets.get().selected().built_in()>"Rename"</button>
+                        </form>
+                        <form class="settings-form nested-form" on:submit=save_description>
+                            <label><span>"Description"</span><textarea node_ref=description required prop:value=move || model.aspect_sets.get().selected().description().to_owned() /></label>
+                            <button disabled=move || model.aspect_sets.get().selected().built_in()>"Save description"</button>
+                        </form>
+                        <div class="button-row">
+                            <button on:click=move |_| dispatch(platform, model, PlatformCommand::ExportAspectSet { id: model.aspect_sets.get_untracked().selected_aspect_set_id().to_owned() })>"Export JSON"</button>
+                            <label class="file-action">"Import JSON"<input node_ref=import type="file" accept=".json,application/json" on:change=move |_| {
+                                let Some(file) = import.get().and_then(|input| input.files()).and_then(|files| files.item(0)) else { return; };
+                                if file.size() > MAX_IMPORT_BYTES as f64 {
+                                    model.problem.set(Some(format!("Aspect-set import exceeds {} bytes.", MAX_IMPORT_BYTES)));
+                                    return;
+                                }
+                                spawn_local(async move { match read_file(file).await { Ok(bytes) => dispatch(platform, model, PlatformCommand::ImportAspectSet { bytes }), Err(message) => model.problem.set(Some(message)) } });
+                            } /></label>
+                            <button class="danger" disabled=move || model.aspect_sets.get().selected().built_in() on:click=move |_| {
+                                let id = model.aspect_sets.get_untracked().selected_aspect_set_id().to_owned();
+                                if confirm("Delete this user aspect set? Saved calculation snapshots are unaffected.") {
+                                    dispatch(platform, model, PlatformCommand::DeleteAspectSet { id });
+                                }
+                            }>"Delete"</button>
+                            <button on:click=move |_| if confirm("Restore all four Oracle built-ins? User sets are retained.") { dispatch(platform, model, PlatformCommand::ResetAspectSets) }>"Reset built-ins"</button>
+                        </div>
+                    </div>
+
+                    <div class="aspect-rule-list">
+                        {[AspectKind::Conjunction, AspectKind::Opposition, AspectKind::Square, AspectKind::Trine, AspectKind::Sextile].into_iter().map(|kind| view! { <AspectRuleEditor platform model kind /> }).collect_view()}
+                    </div>
+
+                    <div class="settings-form">
+                        <h3>"Participating points"</h3>
+                        <p>"Synastry presets include all 19 browser-supported points; Chiron is deliberately unsupported."</p>
+                        <div class="aspect-point-grid">
+                            {POINT_FILTERS.into_iter().map(|(id, label)| {
+                                let point = chart_point_from_ui_id(id).expect("UI point IDs are supported");
+                                view! {
+                                    <label class="check-label"><input type="checkbox"
+                                        disabled=move || model.aspect_sets.get().selected().built_in()
+                                        checked=move || model.aspect_sets.get().selected().points().contains(&point)
+                                        on:change=move |event| revise_aspect_point(platform, model, point, event_target_checked(&event))
+                                    /><span>{label}</span></label>
+                                }
+                            }).collect_view()}
+                        </div>
+                    </div>
+                </div>
+            </section>
+        }
+    }
+
+    #[component]
+    fn AspectRuleEditor(platform: Platform, model: Model, kind: AspectKind) -> impl IntoView {
+        let enabled = NodeRef::<Input>::new();
+        let luminary_applying = NodeRef::<Input>::new();
+        let luminary_separating = NodeRef::<Input>::new();
+        let other_applying = NodeRef::<Input>::new();
+        let other_separating = NodeRef::<Input>::new();
+        let submit = move |event: SubmitEvent| {
+            event.prevent_default();
+            let result = (|| {
+                let selected = model.aspect_sets.get_untracked().selected().clone();
+                let old_rule = selected
+                    .rules()
+                    .iter()
+                    .find(|rule| rule.kind() == kind)
+                    .copied()
+                    .ok_or("selected set is missing a rule")?;
+                let orbs = AspectOrbValues::new(
+                    number_value(luminary_applying)?,
+                    number_value(luminary_separating)?,
+                    number_value(other_applying)?,
+                    number_value(other_separating)?,
+                )
+                .map_err(|error| error.to_string())?;
+                let replacement = AspectSetRule::new(
+                    kind,
+                    enabled.get().is_some_and(|input| input.checked()),
+                    orbs,
+                    old_rule.display_order(),
+                )
+                .map_err(|error| error.to_string())?;
+                let rules = selected
+                    .rules()
+                    .iter()
+                    .map(|rule| {
+                        if rule.kind() == kind {
+                            replacement
+                        } else {
+                            *rule
+                        }
+                    })
+                    .collect();
+                selected
+                    .revised(
+                        selected.name(),
+                        selected.description(),
+                        rules,
+                        selected.points().to_vec(),
+                    )
+                    .map_err(|error| error.to_string())
+            })();
+            save_revised_aspect_set(platform, model, result);
+        };
+        view! {
+            <form class="settings-form aspect-rule" on:submit=submit>
+                <div class="aspect-rule-heading">
+                    <h3>{aspect_kind_label(kind)}</h3>
+                    <label class="check-label"><input node_ref=enabled type="checkbox" disabled=move || model.aspect_sets.get().selected().built_in() checked=move || selected_rule(model, kind).is_some_and(AspectSetRule::enabled) /><span>"Enabled"</span></label>
+                </div>
+                <div class="aspect-orb-grid">
+                    <label><span>"Luminary applying"</span><input node_ref=luminary_applying type="number" min="0" max="30" step="0.1" required disabled=move || model.aspect_sets.get().selected().built_in() prop:value=move || rule_orb_value(model, kind, |orbs| orbs.luminary_applying_degrees()) /></label>
+                    <label><span>"Luminary separating"</span><input node_ref=luminary_separating type="number" min="0" max="30" step="0.1" required disabled=move || model.aspect_sets.get().selected().built_in() prop:value=move || rule_orb_value(model, kind, |orbs| orbs.luminary_separating_degrees()) /></label>
+                    <label><span>"Other applying"</span><input node_ref=other_applying type="number" min="0" max="30" step="0.1" required disabled=move || model.aspect_sets.get().selected().built_in() prop:value=move || rule_orb_value(model, kind, |orbs| orbs.other_applying_degrees()) /></label>
+                    <label><span>"Other separating"</span><input node_ref=other_separating type="number" min="0" max="30" step="0.1" required disabled=move || model.aspect_sets.get().selected().built_in() prop:value=move || rule_orb_value(model, kind, |orbs| orbs.other_separating_degrees()) /></label>
+                </div>
+                <button disabled=move || model.aspect_sets.get().selected().built_in()>"Save rule"</button>
+            </form>
         }
     }
 
@@ -923,7 +1274,7 @@ mod browser {
             <section class="settings-panel"><div><p class="eyebrow">"Encrypted snapshots"</p><h2>"Locations / GeoNames"</h2><EntityList items=Signal::derive(move || model.workspace.get().locations) /></div>
                 <div class="settings-stack">
                     <form class="settings-form location-editor" on:submit=submit><label><span>"Location name"</span><input node_ref=label required /></label><div class="field-row"><label><span>"Country"</span><input node_ref=country maxlength="2" required value="US" /></label><label><span>"IANA time zone"</span><input node_ref=zone required value="America/New_York" /></label></div><div class="field-row"><label><span>"Latitude"</span><input node_ref=latitude required inputmode="decimal" /></label><label><span>"Longitude"</span><input node_ref=longitude required inputmode="decimal" /></label></div><button class="primary">"Save location"</button></form>
-                    <div class="settings-form catalog-controls"><h3>"Local GeoNames catalog"</h3><p>{move || model.capabilities.get().and_then(|status| status.catalog).map(|catalog| format!("{} local places · {}", catalog.place_count, catalog.content_id)).unwrap_or_else(|| "No catalog installed; manual locations remain available.".into())}</p><button on:click=move |_| dispatch(platform, model, PlatformCommand::InstallPinnedCatalog)>"Install pinned catalog"</button><form class="catalog-upload" on:submit=install_local><label><span>"cities500.zip"</span><input node_ref=cities type="file" required accept=".zip" /></label><label><span>"admin1CodesASCII.txt"</span><input node_ref=admin1 type="file" required accept=".txt,text/plain" /></label><label><span>"admin2Codes.txt"</span><input node_ref=admin2 type="file" required accept=".txt,text/plain" /></label><button>"Install local catalog"</button></form><form class="inline-search" on:submit=move |event: SubmitEvent| { event.prevent_default(); if let Some(query) = value(query) { dispatch(platform, model, PlatformCommand::SearchCatalog { query, limit: 20 }); } }><input node_ref=query aria-label="Search GeoNames" required /><button>"Search locally"</button></form><ul class="search-results">{move || model.catalog_results.get().into_iter().map(|result| view! { <li><strong>{result.place().name().to_owned()}</strong><small>{format!("{} · {}", result.place().country_code(), result.place().time_zone())}</small></li> }).collect_view()}</ul></div>
+                    <div class="settings-form catalog-controls"><h3>"Local GeoNames catalog"</h3><p>{move || model.capabilities.get().and_then(|status| status.catalog).map(|catalog| format!("{} local places · {}", catalog.place_count, catalog.content_id)).unwrap_or_else(|| "No catalog installed; manual locations remain available.".into())}</p><p class="catalog-attribution">"Contains "<a href="https://www.geonames.org/" target="_blank" rel="noreferrer">"GeoNames"</a>" geographical data, available under "<a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noreferrer">"CC BY 4.0"</a>"."</p><button on:click=move |_| dispatch(platform, model, PlatformCommand::InstallPinnedCatalog)>"Install pinned catalog"</button><form class="catalog-upload" on:submit=install_local><label><span>"cities500.zip"</span><input node_ref=cities type="file" required accept=".zip" /></label><label><span>"admin1CodesASCII.txt"</span><input node_ref=admin1 type="file" required accept=".txt,text/plain" /></label><label><span>"admin2Codes.txt"</span><input node_ref=admin2 type="file" required accept=".txt,text/plain" /></label><button>"Install local catalog"</button></form><form class="inline-search" on:submit=move |event: SubmitEvent| { event.prevent_default(); if let Some(query) = value(query) { dispatch(platform, model, PlatformCommand::SearchCatalog { query, limit: 20 }); } }><input node_ref=query aria-label="Search GeoNames" required /><button>"Search locally"</button></form><ul class="search-results">{move || model.catalog_results.get().into_iter().map(|result| view! { <li><strong>{result.place().name().to_owned()}</strong><small>{format!("{} · {}", result.place().country_code(), result.place().time_zone())}</small></li> }).collect_view()}</ul></div>
                 </div>
             </section>
         }
@@ -1208,6 +1559,7 @@ mod browser {
                 workspace,
                 capabilities,
                 wheel_templates,
+                aspect_sets,
             } => {
                 model.presentation.set(None);
                 model.preview_pending.set(false);
@@ -1215,6 +1567,7 @@ mod browser {
                 model.workspace.set(workspace);
                 model.capabilities.set(Some(capabilities));
                 model.wheel_templates.set(wheel_templates);
+                model.aspect_sets.set(aspect_sets);
                 model.notice.set(Some("Browser-local studio ready.".into()));
                 true
             }
@@ -1251,6 +1604,13 @@ mod browser {
             PlatformResponse::WheelTemplates(settings) => {
                 model.wheel_templates.set(settings);
                 false
+            }
+            PlatformResponse::AspectSets(settings) => {
+                model.aspect_sets.set(settings);
+                model
+                    .notice
+                    .set(Some("Aspect-set preferences updated.".into()));
+                true
             }
             PlatformResponse::WorkbenchPreview(presentation) => {
                 model.presentation.set(Some(presentation));
@@ -1539,6 +1899,7 @@ mod browser {
     }
 
     fn select_template(platform: Platform, model: Model, id: &str) {
+        reset_zoom(model);
         model
             .wheel_templates
             .update(|settings| settings.last_selected_template_id = id.into());
@@ -1549,6 +1910,144 @@ mod browser {
                 template_id: id.into(),
             },
         );
+    }
+
+    fn adjust_zoom(model: Model, direction: i8) {
+        let current = model.zoom_percent.get_untracked();
+        let next = if direction > 0 {
+            ZOOM_STEPS
+                .iter()
+                .copied()
+                .find(|step| *step > current)
+                .unwrap_or(300)
+        } else {
+            ZOOM_STEPS
+                .iter()
+                .copied()
+                .rev()
+                .find(|step| *step < current)
+                .unwrap_or(75)
+        };
+        model.zoom_percent.set(next);
+    }
+
+    fn reset_zoom(model: Model) {
+        model.zoom_percent.set(100);
+        model.zoom_origin_x.set(1);
+        model.zoom_origin_y.set(1);
+    }
+
+    fn origin_bucket(position: f64) -> u8 {
+        if position < 1.0 / 3.0 {
+            0
+        } else if position > 2.0 / 3.0 {
+            2
+        } else {
+            1
+        }
+    }
+
+    fn zoom_class(percent: u16) -> &'static str {
+        match percent {
+            75 => "zoom-075",
+            80 => "zoom-080",
+            90 => "zoom-090",
+            100 => "zoom-100",
+            110 => "zoom-110",
+            120 => "zoom-120",
+            130 => "zoom-130",
+            140 => "zoom-140",
+            150 => "zoom-150",
+            160 => "zoom-160",
+            170 => "zoom-170",
+            180 => "zoom-180",
+            190 => "zoom-190",
+            200 => "zoom-200",
+            210 => "zoom-210",
+            220 => "zoom-220",
+            230 => "zoom-230",
+            240 => "zoom-240",
+            250 => "zoom-250",
+            260 => "zoom-260",
+            270 => "zoom-270",
+            280 => "zoom-280",
+            290 => "zoom-290",
+            300 => "zoom-300",
+            _ => "zoom-100",
+        }
+    }
+
+    fn origin_x_class(origin: u8) -> &'static str {
+        match origin {
+            0 => "origin-x-left",
+            2 => "origin-x-right",
+            _ => "origin-x-center",
+        }
+    }
+
+    fn origin_y_class(origin: u8) -> &'static str {
+        match origin {
+            0 => "origin-y-top",
+            2 => "origin-y-bottom",
+            _ => "origin-y-center",
+        }
+    }
+
+    fn toggle_sidebar_layout(model: Model, left: bool) {
+        if left {
+            model
+                .left_collapsed
+                .update(|collapsed| *collapsed = !*collapsed);
+        } else {
+            model
+                .right_collapsed
+                .update(|collapsed| *collapsed = !*collapsed);
+        }
+        store_layout_preferences(LayoutPreferences {
+            left_collapsed: model.left_collapsed.get_untracked(),
+            right_collapsed: model.right_collapsed.get_untracked(),
+        });
+    }
+
+    fn load_layout_preferences() -> LayoutPreferences {
+        let Some(value) = web_sys::window()
+            .and_then(|window| window.local_storage().ok().flatten())
+            .and_then(|storage| storage.get_item(LAYOUT_STORAGE_KEY).ok().flatten())
+        else {
+            return LayoutPreferences::default();
+        };
+        let Ok(parsed) = js_sys::JSON::parse(&value) else {
+            return LayoutPreferences::default();
+        };
+        if Reflect::get(&parsed, &JsValue::from_str("schema_version"))
+            .ok()
+            .and_then(|value| value.as_f64())
+            != Some(1.0)
+        {
+            return LayoutPreferences::default();
+        }
+        LayoutPreferences {
+            left_collapsed: Reflect::get(&parsed, &JsValue::from_str("left_collapsed"))
+                .ok()
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false),
+            right_collapsed: Reflect::get(&parsed, &JsValue::from_str("right_collapsed"))
+                .ok()
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false),
+        }
+    }
+
+    fn store_layout_preferences(layout: LayoutPreferences) {
+        if let Some(storage) =
+            web_sys::window().and_then(|window| window.local_storage().ok().flatten())
+        {
+            let value = format!(
+                "{{\"schema_version\":1,\"left_collapsed\":{},\"right_collapsed\":{}}}",
+                layout.left_collapsed, layout.right_collapsed
+            );
+            let _ = storage.set_item(LAYOUT_STORAGE_KEY, &value);
+        }
     }
 
     fn begin_hold(model: Model, event: PointerEvent, action: Rc<dyn Fn()>) {
@@ -1785,6 +2284,100 @@ mod browser {
     }
     fn select_value(node: NodeRef<Select>) -> Option<String> {
         node.get().map(|input| input.value())
+    }
+
+    fn number_value(node: NodeRef<Input>) -> Result<f64, String> {
+        let raw = value(node).ok_or("orb is required")?;
+        raw.parse::<f64>()
+            .map_err(|_| format!("invalid orb {raw:?}"))
+    }
+
+    fn selected_rule(model: Model, kind: AspectKind) -> Option<AspectSetRule> {
+        model
+            .aspect_sets
+            .get()
+            .selected()
+            .rules()
+            .iter()
+            .find(|rule| rule.kind() == kind)
+            .copied()
+    }
+
+    fn rule_orb_value(
+        model: Model,
+        kind: AspectKind,
+        select: fn(AspectOrbValues) -> f64,
+    ) -> String {
+        selected_rule(model, kind)
+            .map(|rule| select(rule.orbs()).to_string())
+            .unwrap_or_default()
+    }
+
+    const fn aspect_kind_label(kind: AspectKind) -> &'static str {
+        match kind {
+            AspectKind::Conjunction => "Conjunction",
+            AspectKind::Opposition => "Opposition",
+            AspectKind::Square => "Square",
+            AspectKind::Trine => "Trine",
+            AspectKind::Sextile => "Sextile",
+        }
+    }
+
+    const fn chart_point_from_ui_id(id: &str) -> Option<ChartPointId> {
+        match id.as_bytes() {
+            b"Sun" => Some(ChartPointId::Sun),
+            b"Moon" => Some(ChartPointId::Moon),
+            b"Mercury" => Some(ChartPointId::Mercury),
+            b"Venus" => Some(ChartPointId::Venus),
+            b"Mars" => Some(ChartPointId::Mars),
+            b"Jupiter" => Some(ChartPointId::Jupiter),
+            b"Saturn" => Some(ChartPointId::Saturn),
+            b"Uranus" => Some(ChartPointId::Uranus),
+            b"Neptune" => Some(ChartPointId::Neptune),
+            b"Pluto" => Some(ChartPointId::Pluto),
+            b"MeanNode" => Some(ChartPointId::MeanNode),
+            b"MeanSouthNode" => Some(ChartPointId::MeanSouthNode),
+            b"TrueNode" => Some(ChartPointId::TrueNode),
+            b"TrueSouthNode" => Some(ChartPointId::TrueSouthNode),
+            b"Ascendant" => Some(ChartPointId::Ascendant),
+            b"Midheaven" => Some(ChartPointId::Midheaven),
+            b"Descendant" => Some(ChartPointId::Descendant),
+            b"ImumCoeli" => Some(ChartPointId::ImumCoeli),
+            b"Vertex" => Some(ChartPointId::Vertex),
+            _ => None,
+        }
+    }
+
+    fn save_revised_aspect_set(
+        platform: Platform,
+        model: Model,
+        result: Result<AspectSet, String>,
+    ) {
+        match result {
+            Ok(set) => dispatch(platform, model, PlatformCommand::SaveAspectSet { set }),
+            Err(message) => model.problem.set(Some(message)),
+        }
+    }
+
+    fn revise_aspect_point(platform: Platform, model: Model, point: ChartPointId, enabled: bool) {
+        let result = (|| {
+            let selected = model.aspect_sets.get_untracked().selected().clone();
+            let mut points = selected.points().to_vec();
+            if enabled && !points.contains(&point) {
+                points.push(point);
+            } else if !enabled {
+                points.retain(|candidate| *candidate != point);
+            }
+            selected
+                .revised(
+                    selected.name(),
+                    selected.description(),
+                    selected.rules().to_vec(),
+                    points,
+                )
+                .map_err(|error| error.to_string())
+        })();
+        save_revised_aspect_set(platform, model, result);
     }
 
     fn format_local_time(resolution: &LocalTimeResolution) -> String {

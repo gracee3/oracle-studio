@@ -2,7 +2,9 @@ use std::collections::BTreeMap;
 
 use astraeus_core::{
     ASPECT_EXACT_TOLERANCE_DEGREES, AngularPosition, Aspect, AspectDefinition, AspectDefinitions,
-    AspectKind, AspectPhase, ChartPointId, ValidationError, calculate_aspects, measure_aspect,
+    AspectKind, AspectOrbValues, AspectPhase, ChartPointId, PhaseAwareAspectDefinition,
+    PhaseAwareAspectDefinitions, ValidationError, calculate_aspects, calculate_aspects_phase_aware,
+    measure_aspect,
 };
 
 fn position(longitude: f64) -> AngularPosition {
@@ -264,5 +266,67 @@ fn json_cannot_bypass_definition_validation() {
     assert!(
         serde_json::from_str::<Aspect>(&json.replacen("\"applying\"", "\"separating\"", 1))
             .is_err()
+    );
+}
+
+#[test]
+fn phase_aware_rules_select_category_after_measuring_phase() {
+    let rules = PhaseAwareAspectDefinitions::new(vec![PhaseAwareAspectDefinition::new(
+        AspectKind::Square,
+        AspectOrbValues::new(4.0, 3.0, 2.0, 1.0).unwrap(),
+    )])
+    .unwrap();
+    for (first, second, longitude, speed, expected) in [
+        (ChartPointId::Sun, ChartPointId::Mars, 86.0, 1.0, true),
+        (ChartPointId::Mars, ChartPointId::Moon, 93.0, 1.0, true),
+        (ChartPointId::Mars, ChartPointId::Jupiter, 88.0, 1.0, true),
+        (ChartPointId::Mars, ChartPointId::Jupiter, 91.5, 1.0, false),
+    ] {
+        let positions = BTreeMap::from([
+            (first, position(0.0)),
+            (second, position_with_speed(longitude, speed)),
+        ]);
+        assert_eq!(
+            !calculate_aspects_phase_aware(&positions, &rules).is_empty(),
+            expected
+        );
+    }
+}
+
+#[test]
+fn exact_stationary_and_uniform_legacy_semantics_are_stable() {
+    let orbs = AspectOrbValues::new(0.0, 0.0, 1.0, 3.0).unwrap();
+    let rules = PhaseAwareAspectDefinitions::new(vec![PhaseAwareAspectDefinition::new(
+        AspectKind::Square,
+        orbs,
+    )])
+    .unwrap();
+    let exact = BTreeMap::from([
+        (ChartPointId::Mars, position_with_speed(0.0, 1.0)),
+        (ChartPointId::Jupiter, position_with_speed(90.0, 1.0)),
+    ]);
+    assert_eq!(
+        calculate_aspects_phase_aware(&exact, &rules)[0].phase(),
+        AspectPhase::Exact
+    );
+    let stationary = BTreeMap::from([
+        (ChartPointId::Mars, position_with_speed(0.0, 1.0)),
+        (ChartPointId::Jupiter, position_with_speed(92.5, 1.0)),
+    ]);
+    assert_eq!(
+        calculate_aspects_phase_aware(&stationary, &rules)[0].phase(),
+        AspectPhase::Stationary
+    );
+
+    let legacy = AspectDefinitions::new(vec![
+        AspectDefinition::new(AspectKind::Square, 3.0).unwrap(),
+    ])
+    .unwrap();
+    assert_eq!(
+        calculate_aspects(&stationary, &legacy),
+        calculate_aspects_phase_aware(
+            &stationary,
+            &PhaseAwareAspectDefinitions::uniform(&legacy).unwrap()
+        )
     );
 }

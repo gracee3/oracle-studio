@@ -17,6 +17,12 @@ and SVG/animated-HTML presentations use typed worker operations. The production
 worker calculates with the Moshier adapter. Workbench stepping is preview-only;
 Update Chart or Save As is required to append an immutable calculation.
 
+Settings manages global, unencrypted aspect sets. Built-ins can be selected,
+reset, exported, or duplicated; user copies can also be edited, renamed, and
+deleted. Import is strict, bounded, and collision-safe. Selection affects new
+previews only. Vault-v5 saved comparisons retain the complete selected snapshot
+and re-render independently of later global changes.
+
 The inner chart stays fixed. Single arrows move the outer cursor once; held
 double arrows repeat after a delay. Minute/hour columns use elapsed time while
 day/year columns preserve local civil time, including explicit DST-gap notices,

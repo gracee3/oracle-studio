@@ -5,6 +5,10 @@
 
 use std::{future::Future, pin::Pin};
 
+pub use oracle_studio_aspect_sets::{
+    AspectKind, AspectOrbValues, AspectSet, AspectSetRule, AspectSetSettings, AspectSetSnapshot,
+    ChartPointId, MAX_IMPORT_BYTES,
+};
 use oracle_studio_chart_view::ChartScene;
 pub use oracle_studio_chart_view::{
     LabelDensity, WheelLayout, WheelMode, WheelOrientation, WheelPalette,
@@ -112,6 +116,31 @@ pub enum PlatformCommand {
     RemoveWheelTemplate {
         template_id: String,
     },
+    SaveAspectSet {
+        set: AspectSet,
+    },
+    DuplicateAspectSet {
+        source_id: String,
+        id: String,
+        name: String,
+    },
+    RenameAspectSet {
+        id: String,
+        name: String,
+    },
+    DeleteAspectSet {
+        id: String,
+    },
+    SelectAspectSet {
+        id: String,
+    },
+    ResetAspectSets,
+    ImportAspectSet {
+        bytes: Vec<u8>,
+    },
+    ExportAspectSet {
+        id: String,
+    },
     SetWorkspace {
         workspace: WorkspaceState,
     },
@@ -200,6 +229,7 @@ pub enum PlatformResponse {
         workspace: WorkspaceSummary,
         capabilities: CapabilityStatus,
         wheel_templates: WheelTemplateSettings,
+        aspect_sets: AspectSetSettings,
     },
     Vaults(Vec<VaultSummary>),
     Workspace(WorkspaceSummary),
@@ -217,6 +247,7 @@ pub enum PlatformResponse {
         outcome: PreviewCommitOutcome,
     },
     WheelTemplates(WheelTemplateSettings),
+    AspectSets(AspectSetSettings),
     Updated {
         vaults: Vec<VaultSummary>,
         workspace: WorkspaceSummary,

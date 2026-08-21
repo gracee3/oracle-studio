@@ -20,7 +20,7 @@ and the full-history import is recorded in [the migration record](docs/astraeus/
   and password.
 - Import, unlock, switch, lock, export, unload, replace, and remove multiple
   independent vaults.
-- Maintain chart-only schema-v4 people, saved locations, chart definitions,
+- Maintain chart-only schema-v5 people, saved locations, chart definitions,
   immutable calculations, comparison presets/calculations, and workspace state.
 - Resolve IANA local times explicitly, including ambiguous and nonexistent
   civil times.
@@ -31,12 +31,20 @@ and the full-history import is recorded in [the migration record](docs/astraeus/
 - Use a full-viewport, hash-addressable Workbench, Settings, and Files shell;
   sidebars and route content scroll independently while the chart wheel remains
   the dominant surface.
+- Collapse the desktop Charts and Controls sidebars independently into narrow
+  rails with global `oracle-studio.layout.v1` preferences; tablet and mobile
+  layouts retain their existing drawers.
+- Zoom the chart from 75% to 300% with visible controls, focused-stage keyboard
+  shortcuts, or pointer-relative Alt/Option-wheel input. Ctrl-wheel remains
+  available to the browser for page zoom.
 - Preview the fixed inner chart against a moving outer chart with exact civil-
   time and elapsed-time controls, then use Files to confirm an identity-
   preserving update or save the preview under a unique new chart name.
 - Select five protected single/bi-wheel templates, duplicate them into custom
   schema-v2 visual settings, and resolve automatic chart palettes from a
   prepaint warm-light or subdued-dark theme preference.
+- Select and edit global aspect sets while saved comparisons retain immutable
+  rule/point snapshots.
 
 The production worker compiles Astraeus's pure-Rust Moshier adapter using
 `swisseph-rs` with file and default features disabled. Results explicitly carry
@@ -60,8 +68,20 @@ trunk build --release --locked=true
 ```
 
 Ordinary Trunk builds contain no GeoNames bytes and offer local upload/manual
-entry. The Docker build fetches the three official GeoNames inputs, verifies the
-hashes in `catalog/geonames.lock`, and publishes them on the same static origin.
+entry. For an explicit catalog-enabled local build, use the shared lock-backed
+workflow:
+
+```bash
+just geonames-download
+just geonames-check
+just geonames-build
+just geonames-serve
+```
+
+The default Docker target uses the same download, verification, attribution,
+and staging implementation. `acceptance-runtime` remains catalog-free. Upstream
+drift fails closed; `just geonames-candidate-lock` writes only ignored review
+artifacts and never edits `catalog/geonames.lock`.
 
 ```bash
 docker build -t oracle-studio:browser-local .
@@ -77,11 +97,13 @@ Portable exports are the backup boundary. Browser eviction or profile deletion
 can remove IndexedDB even after persistent storage is granted.
 
 See [architecture](docs/STUDIO_ARCHITECTURE.md),
-[schema v4](docs/COMPOSITION_MODEL.md), [envelope v2](docs/VAULT.md), and the
+[schema v5](docs/COMPOSITION_MODEL.md), [envelope v2](docs/VAULT.md),
+[aspect-set contract](docs/ASPECT_SETS.md), and the
 [GeoNames contract](docs/LOCATION_CATALOG.md). The presentation-only theme and
 template contract is documented in [chart rendering](docs/CHART_RENDERING.md).
-Development validation and the
-current repository safeguards are documented in
+The [public-record catalog](docs/PUBLIC_RECORD_CATALOG.md) documents the
+reviewed, non-personal fixture inventory. Development validation and the current
+repository safeguards are documented in
 [development policy](docs/DEVELOPMENT.md).
 
 ## License

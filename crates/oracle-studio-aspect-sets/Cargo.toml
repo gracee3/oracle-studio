@@ -1,0 +1,15 @@
+[package]
+name = "oracle-studio-aspect-sets"
+version = "0.1.0"
+description = "Global validated aspect-set settings for Oracle Studio"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+astraeus-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true

@@ -3,10 +3,40 @@ set shell := ["bash", "-uc"]
 astraeus_swiss_revision := "cae9ecd4b201544d85e411aced17660932514d43"
 astraeus_swiss_base_url := "https://raw.githubusercontent.com/aloistr/swisseph/" + astraeus_swiss_revision + "/ephe"
 astraeus_swiss_ephemeris_path := env_var_or_default("ASTRAEUS_SWISS_EPHEMERIS_PATH", env_var_or_default("XDG_DATA_HOME", env_var("HOME") + "/.local/share") + "/astraeus/swisseph")
+geonames_source_dir := env_var_or_default("ORACLE_GEONAMES_SOURCE_DIR", "var/geonames/source")
+geonames_candidate_dir := "var/geonames/candidate/source"
+geonames_candidate_lock := "var/geonames/geonames.candidate.lock"
 
 # List available recipes.
 default:
     @just --list
+
+# Validate the reviewed public-record catalog and fixed Moshier vectors offline.
+public-records-check:
+    cargo test -p oracle-studio-public-records --locked
+
+# Download the exact tracked GeoNames inputs into the ignored local cache.
+geonames-download source_dir=geonames_source_dir:
+    python3 scripts/geonames.py download --source-dir "{{ source_dir }}"
+
+# Verify cached GeoNames inputs without network access.
+geonames-check source_dir=geonames_source_dir:
+    python3 scripts/geonames.py check --source-dir "{{ source_dir }}"
+
+# Build the release WebAssembly product and stage the verified GeoNames catalog.
+geonames-build source_dir=geonames_source_dir:
+    just geonames-check "{{ source_dir }}"
+    (cd crates/oracle-studio-ui && NO_COLOR=false trunk build --release --locked=true)
+    python3 scripts/geonames.py stage --source-dir "{{ source_dir }}"
+
+# Serve a catalog-enabled release build on loopback.
+geonames-serve source_dir=geonames_source_dir port="8080":
+    just geonames-build "{{ source_dir }}"
+    python3 -m http.server "{{ port }}" --bind 127.0.0.1 --directory crates/oracle-studio-ui/dist
+
+# Fetch current upstream bytes into ignored candidate paths for deliberate lock review.
+geonames-candidate-lock candidate_dir=geonames_candidate_dir candidate_lock=geonames_candidate_lock:
+    python3 scripts/geonames.py candidate-lock --source-dir "{{ candidate_dir }}" --output "{{ candidate_lock }}"
 
 # Download and verify the pinned Swiss Ephemeris data files.
 astraeus-swiss-download data_dir=astraeus_swiss_ephemeris_path:

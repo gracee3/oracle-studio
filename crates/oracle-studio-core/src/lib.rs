@@ -12,7 +12,7 @@ mod workbench;
 pub use studio::*;
 pub use workbench::*;
 
-pub const VAULT_DOCUMENT_SCHEMA_VERSION: u32 = 4;
+pub const VAULT_DOCUMENT_SCHEMA_VERSION: u32 = 5;
 pub const ASTRAEUS_IMPORT_REVISION: &str = "44af176ef8a85db2bbd7b57228710855a8fe6f3b";
 
 #[deprecated(note = "use ASTRAEUS_IMPORT_REVISION for the consolidated source revision")]
@@ -436,11 +436,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn empty_schema_v4_round_trip_is_canonical_and_chart_only() {
+    fn empty_schema_v5_round_trip_is_canonical_and_chart_only() {
         let document = VaultDocument::empty();
         let json = document.to_json().unwrap();
         assert_eq!(VaultDocument::from_json(&json).unwrap(), document);
-        assert!(json.starts_with("{\"schema_version\":4,\"people\":"));
+        assert!(json.starts_with("{\"schema_version\":5,\"people\":"));
         for removed in [
             "sessions",
             "artifacts",

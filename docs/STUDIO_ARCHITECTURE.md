@@ -43,12 +43,23 @@ Chiron return explicit provider errors. Test-only deterministic adapters cannot
 be selected by production UI input.
 
 The UI receives only `WorkspaceSummary`, `WorkbenchPresentation`, global wheel
-template settings, and render-ready `ChartScene` values. Theme preference and
-schema-v2 wheel templates are global, unencrypted presentation settings; they
-contain no chart input or result data. Preview calculations
-do not mutate a document. The worker retains one pending generation together
-with its source vault ID and encrypted-record revision. Hash-route navigation
-does not disturb that transient record.
+template/aspect-set settings, and render-ready `ChartScene` values. Theme
+preference and schema-v2 wheel templates are global, unencrypted presentation
+settings; they contain no chart input or result data. Preview calculations do
+not mutate a document. The worker retains one pending generation
+together with its source vault ID and encrypted-record revision. Hash-route
+navigation does not disturb that transient record. Any aspect-set selection or
+mutation invalidates that pending generation before recalculation.
+
+Aspect-set settings are global and intentionally unencrypted. Vault documents
+contain only immutable snapshots attached to saved comparison calculations, not
+the mutable global collection or selection.
+
+Chart zoom is session-only presentation state and never enters a worker message,
+calculation artifact, or vault. Desktop sidebar collapse preferences are global,
+unencrypted browser settings stored as `oracle-studio.layout.v1`; they affect only
+the responsive shell. Both states leave the active chart, filters, selections,
+preview generation, and encrypted workspace untouched.
 
 Chart persistence lives on Files, not beside the wheel. An update requires
 confirmation and preserves the outer chart's stable identity. Save-as creates a

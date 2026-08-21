@@ -24,3 +24,9 @@ Studio concerns.
 Motion policies that require a speed fail when a selected technique does not
 define one; they never substitute natal body velocity for a static synthetic
 chart.
+
+`calculate_phase_aware_inter_chart_aspects` is an additive result API over the
+same validated layers, point selections, and motion policy. It does not alter
+the schema-v1 `ComparisonArtifact`: legacy construction still uses uniform
+orbs and retains canonical bytes and content IDs. Oracle vault v5 stores a
+validated phase-aware result separately with the rules that produced it.

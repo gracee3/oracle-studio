@@ -17,5 +17,9 @@ astraeus-core.workspace = true
 astraeus-derived.workspace = true
 astraeus-specifications.workspace = true
 oracle-studio-core = { version = "0.1.0", path = "../oracle-studio-core" }
+oracle-studio-aspect-sets = { version = "0.1.0", path = "../oracle-studio-aspect-sets" }
 oracle-studio-chart-view = { version = "0.1.0", path = "../oracle-studio-chart-view" }
 thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

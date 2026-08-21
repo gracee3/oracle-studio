@@ -8,7 +8,7 @@ version is rejected without migration.
    salt using 64 MiB, three iterations, and one lane.
 2. A random 256-bit vault data key is wrapped with XChaCha20-Poly1305 and a
    random 192-bit nonce.
-3. Canonical schema-v4 JSON is encrypted with that data key using
+3. Canonical schema-v5 JSON is encrypted with that data key using
    XChaCha20-Poly1305 and a fresh 192-bit nonce on every save.
 4. Explicit algorithm identifiers and fixed/bounded lengths fail closed.
 
@@ -16,6 +16,10 @@ The worker discards the password and zeroizing Argon2 result immediately after
 unwrapping. A mounted vault retains only its zeroizing data key, public wrapping
 material, and decrypted validated document. Resealing does not need the
 password or rewrap the data key.
+
+Envelope v2 did not change for document schema v5. An authenticated v4
+document is rejected clearly after decryption and its original encrypted bytes
+remain untouched; there is deliberately no v4-to-v5 migration.
 
 ## Persistence
 
