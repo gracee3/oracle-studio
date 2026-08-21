@@ -1,112 +1,71 @@
 # Oracle Studio
 
-Oracle Studio is the local-first composition application for Astraeus astrology
-artifacts and Sibylla tarot artifacts. It owns people and professional-client
-profiles, cross-domain sessions, journaling, and encrypted private storage.
+Oracle Studio is an open, browser-local astrology workspace built with Leptos
+and Rust/WebAssembly. It has no application server, account, bearer token, CLI,
+native filesystem storage, or runtime network dependency. A static container
+serves the application; encrypted vaults, catalog objects, and settings live in
+the browser's IndexedDB.
 
-The application is independent of Magnolia and remains useful offline. Astraeus
-owns astrology calculations while Oracle Studio validates and persists the
-exact requests and immutable results; Studio does not reinterpret tarot domain
-records.
+## Current boundary
 
-## Status
+- Start immediately in a volatile scratch workspace.
+- Save scratch as a portable envelope-v2 `.oracle-vault` using a public title
+  and password.
+- Import, unlock, switch, lock, export, unload, replace, and remove multiple
+  independent vaults.
+- Maintain chart-only schema-v4 people, saved locations, chart definitions,
+  immutable calculations, comparison presets/calculations, and workspace state.
+- Resolve IANA local times explicitly, including ambiguous and nonexistent
+  civil times.
+- Parse and search an image-pinned or user-selected GeoNames distribution in a
+  Web Worker; manual location entry is always available.
+- Render validated Astraeus chart presentations with the retained Rust SVG and
+  animated-HTML renderer.
+- Use a full-viewport, hash-addressable Workbench, Settings, and Files shell;
+  sidebars and route content scroll independently while the chart wheel remains
+  the dominant surface.
+- Preview the fixed inner chart against a moving outer chart with exact civil-
+  time and elapsed-time controls, then explicitly update or clone the outer
+  definition.
+- Save versioned, global wheel templates containing visual options only.
 
-**Lifecycle:** Active pre-1.0 application. The CLI, storage contracts, chart
-renderer, Rust/WASM graphical foundation, and schema-v3 chart services are
-implemented. The optional content-addressed GeoNames catalog and manual location
-entry are available. The chart-first UI now covers people, person detail,
-editable chart definitions, explicit local-time resolution, immutable
-calculation history, comparison presets, and the active natal/transit biwheel.
+The production worker compiles Astraeus's pure-Rust Moshier adapter using
+`swisseph-rs` with file and default features disabled. Results explicitly carry
+Moshier provenance. Unsupported dates and Chiron fail visibly; Oracle Studio
+never substitutes a provider or fabricates a chart result. Decrypted documents,
+calculation work, and immutable commits remain worker-owned.
 
-Phase 5C/5D integration checkpoint: validated composition records, encrypted
-atomic persistence, reusable tarot/chart/journal services, validated local
-Sibylla deck-pack indexes, in-memory search, a guided command-line interface,
-and a stateless SVG/HTML transit-biwheel renderer. A Leptos CSR shell now runs
-through an authenticated, loopback-only Rust host with vault create/unlock and
-routes for people, locations, charts, and the comparison workspace. There is no
-synchronization, account system, AI layer, or camera recognition.
+## Build
 
-Schema v3 adds encrypted saved-location snapshots, editable chart definitions,
-immutable calculation history, comparison presets with exact source IDs, and
-active workspace state. The native API resolves IANA local times explicitly,
-rejects nonexistent wall times, requires a choice for ambiguous wall times, and
-persists accepted mutations with optimistic atomic storage.
-
-Location searches are local-only. The Locations screen can explicitly download
-the public GeoNames cities500 distribution into the standard application data
-directory, or save manual coordinates and an IANA time zone without a catalog.
-Selected places become encrypted snapshots; catalog bytes and metadata remain
-outside the vault and Git. See the [offline location catalog contract](docs/LOCATION_CATALOG.md).
-
-## CLI
-
-The CLI remains available for offline vault, tarot, journal, and backup work.
-Build and run it from this repository:
+Install the pinned Rust target and Trunk release, then build the static product:
 
 ```bash
-cargo build --locked --bin oracle-studio
-./target/debug/oracle-studio --help
+rustup target add wasm32-unknown-unknown
+cargo install trunk --locked --version 0.21.14
+cd crates/oracle-studio-ui
+trunk build --release --locked=true
 ```
 
-Every command needs an explicit `--vault` path. Passwords are hidden terminal
-prompts by default. For non-interactive local testing, `--password-file` reads
-an owner-only file; on Unix, files readable by group or others are rejected.
-Passwords are never accepted as arguments or environment variables.
-
-The core workflow is:
-
-1. `init` an encrypted vault.
-2. Add a person or professional client and an optional session.
-3. Import a Sibylla deck manifest (raw manifest or deck artifact envelope).
-4. Optionally verify a local deck-pack sidecar with `deck-pack-verify`.
-5. Run `reading-new` with `--method manual` for physical cards or `--method software` for an OS-random shuffle.
-6. Add annotations or outcomes, search the unlocked vault, and export an encrypted backup.
-
-`reading-new` guides one-card, three-card, and freeform spreads. Manual mode
-records confirmed deck-card IDs and upright, reversed, or unspecified
-orientation. Software mode always uses Sibylla's operating-system-random
-production shuffle; it has no deterministic production switch.
-
-For a copy/paste walkthrough, minimal deck manifest, prompts, backup recovery,
-and command reference, see [CLI testing guide](docs/CLI_TESTING.md).
-
-Deck-pack indexes and image files remain application-owned. See the
-[deck-pack contract](docs/DECK_PACKS.md) for the sidecar format; workspace-local
-asset packs are documented separately from this public repository.
-
-See the [Phase 5 plan](docs/PHASE_5_PLAN.md),
-[composition model](docs/COMPOSITION_MODEL.md), and
-[vault threat model](docs/VAULT.md).
-
-## Transit chart export
-
-`oracle-studio-chart` renders validated physical Astraeus transit-to-natal
-comparison artifacts without opening a vault or recalculating astrology. It can
-produce a deterministic SVG or a self-contained Rust/WASM HTML player.
-The player displays artifact-grounded natal/transit dates, zodiac, and house
-system, plus optional caller-supplied chart names, local offsets, and location
-labels. See the [renderer boundary, CLI, animation semantics, and privacy
-notes](docs/CHART_RENDERING.md).
-
-## Rust/WASM Studio
-
-The graphical foundation uses only Rust components compiled to WebAssembly and
-a native Rust host. Build and launch it with:
+Ordinary Trunk builds contain no GeoNames bytes and offer local upload/manual
+entry. The Docker build fetches the three official GeoNames inputs, verifies the
+hashes in `catalog/geonames.lock`, and publishes them on the same static origin.
 
 ```bash
-(cd crates/oracle-studio-ui && trunk build --release)
-cargo run --locked -p oracle-studio-server --bin oracle-studio-host -- \
-  --dist crates/oracle-studio-ui/dist
+docker build -t oracle-studio:browser-local .
+docker run --rm --read-only --tmpfs /tmp --publish 127.0.0.1:8080:8080 \
+  oracle-studio:browser-local
 ```
 
-Open the complete loopback URL printed by the host. It includes a per-launch
-token in the URL fragment; the UI consumes and removes the fragment before
-making authenticated API calls. In the unlocked UI, create a person, save an
-offline or manual location, calculate natal and transit/event charts, and build
-an active comparison in the workspace. Studio shows both chart-information
-headers above the Rust-rendered biwheel and can export the same deterministic,
-self-contained static SVG. See [Studio application architecture](docs/STUDIO_ARCHITECTURE.md)
-for the protocol, platform-service boundary, CSP, and inactivity-lock contract.
+Open `http://127.0.0.1:8080`. A ThinkPad can use the stable forward
+`ssh -N -L 127.0.0.1:8080:127.0.0.1:8080 HOST`; there is no launch token.
+Non-loopback deployments require HTTPS outside the container.
+
+Portable exports are the backup boundary. Browser eviction or profile deletion
+can remove IndexedDB even after persistent storage is granted.
+
+See [architecture](docs/STUDIO_ARCHITECTURE.md),
+[schema v4](docs/COMPOSITION_MODEL.md), [envelope v2](docs/VAULT.md), and the
+[GeoNames contract](docs/LOCATION_CATALOG.md).
 
 ## License
 

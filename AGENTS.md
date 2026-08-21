@@ -1,43 +1,42 @@
 # Contributor and agent guidance
 
-Oracle Studio is the local-first composition application for Astraeus astrology
-artifacts and Sibylla tarot artifacts. It owns people and professional-client
-profiles, cross-domain sessions, journaling, deck-pack indexes, encrypted local
-storage, backups, search, and deletion workflows. It does not recalculate
-astrology, reinterpret tarot domain records, or require Magnolia.
-
-Before changing implementation, read `README.md`, `docs/COMPOSITION_MODEL.md`,
-`docs/VAULT.md`, and `docs/PHASE_5_PLAN.md`. Read `docs/CLI_TESTING.md` for CLI
-work and `docs/DECK_PACKS.md` for local asset-pack behavior.
+Oracle Studio is a browser-first Leptos/WASM astrology workspace. Read
+`README.md`, `docs/STUDIO_ARCHITECTURE.md`, `docs/COMPOSITION_MODEL.md`,
+`docs/VAULT.md`, and `docs/LOCATION_CATALOG.md` before implementation work.
 
 ## Validation boundary
 
-No narrow ordinary implementation check has yet been reviewed for this
-repository. For instruction-only changes, run:
+Ordinary checks are CPU-only and use fictional data. They may access the network
+only to resolve locked Rust dependencies:
 
 ```bash
+cargo fmt --all -- --check
+cargo test --workspace --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
+RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps --locked
+cargo check --locked --target wasm32-unknown-unknown \
+  -p oracle-studio-worker -p oracle-studio-ui -p oracle-studio-chart-player
+(cd crates/oracle-studio-ui && trunk build --release --locked=true)
+cargo deny check
 git diff --check
 ```
 
-Before changing code, select and record the smallest relevant locked test
-command. Do not infer permission to access personal data, deck images, sibling
-worktrees, local vaults, or exceptional resources.
+Docker, Chrome, catalog downloads, and networked acceptance are exceptional;
+run them only when explicitly authorized. Never run models, GPU work, or use
+personal charts/vaults for validation.
 
-## Privacy, storage, and delivery
+## Privacy and delivery
 
-- Never commit secrets, passwords, vaults, backups, personal/client records,
-  readings, charts, deck scans, copyrighted text or art, local asset indexes,
-  model weights, or local paths.
-- Consume pinned public Astraeus and Sibylla revisions through their published
-  contracts; do not copy their domain types or use sibling path dependencies.
-- Encryption APIs authenticate before deserializing plaintext. Keep atomic
-  no-overwrite publication, key handling, permissions, backup recovery, and
-  permanent-deletion behavior failure-tested with fictional data.
-- Preserve AGPL-3.0-or-later obligations and record provenance and rights for
-  every imported schema, fixture, or asset description.
-- Use a focused feature branch. Commit and push the validated change and open a
-  pull request; storage, encryption, schema, or dependency changes stay
-  reviewable and must not auto-merge.
-- After publication, send the exact commit, PR, validation, outcome, risks, and
-  next action to the repository's external coordination record. Do not claim
-  completion until that remote handoff is verified.
+- Never commit credentials, vaults, browser profiles, screenshots, personal
+  charts, GeoNames source bytes, generated WASM, or acceptance artifacts.
+- Keep decrypted documents, passwords, and keys inside the worker. UI messages
+  may contain summaries and render presentations, never canonical vault JSON.
+- Passwords and Argon2 results are discarded after data-key unwrapping. Mounted
+  data keys must remain zeroizing values.
+- Persist encrypted mutations transactionally with revision compare-and-swap;
+  replace in-memory state only after the IndexedDB transaction commits.
+- Production has no deterministic ephemeris fallback and no dynamic Swiss ABI.
+- Use a focused branch. Encryption, schema, dependency, storage, and container
+  changes stay reviewable and must not auto-merge.
+- Publish the exact commit and draft PR, then record validation, risks, and next
+  action in the external portfolio handoff before claiming completion.

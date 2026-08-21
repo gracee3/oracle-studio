@@ -297,6 +297,7 @@ mod browser {
             &scene,
             &RenderOptions {
                 orientation: state.orientation,
+                ..RenderOptions::default()
             },
         );
         required(document, "chart-stage")?.set_inner_html(&svg);

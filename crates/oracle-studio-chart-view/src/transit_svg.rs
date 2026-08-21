@@ -68,15 +68,59 @@ impl std::fmt::Display for WheelOrientation {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum WheelPalette {
+    #[default]
+    StudioDark,
+    PaperLight,
+    HighContrast,
+}
+
+impl WheelPalette {
+    const fn data_value(self) -> &'static str {
+        match self {
+            Self::StudioDark => "studio-dark",
+            Self::PaperLight => "paper-light",
+            Self::HighContrast => "high-contrast",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum LabelDensity {
+    #[default]
+    Full,
+    Compact,
+}
+
+impl LabelDensity {
+    const fn data_value(self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::Compact => "compact",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RenderOptions {
     pub orientation: WheelOrientation,
+    pub palette: WheelPalette,
+    pub label_density: LabelDensity,
+    pub selected_points: Vec<String>,
+    pub selected_aspects: Vec<String>,
 }
 
 impl Default for RenderOptions {
     fn default() -> Self {
         Self {
             orientation: WheelOrientation::AscendantLeft,
+            palette: WheelPalette::StudioDark,
+            label_density: LabelDensity::Full,
+            selected_points: Vec::new(),
+            selected_aspects: Vec::new(),
         }
     }
 }
@@ -121,8 +165,17 @@ pub fn render_biwheel_svg(scene: &ChartScene, options: &RenderOptions) -> String
     let mut svg = String::with_capacity(48_000);
     let _ = write!(
         svg,
-        "<svg id=\"oracle-transit-biwheel\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {SIZE:.0} {SIZE:.0}\" role=\"img\" aria-labelledby=\"chart-title chart-description\" data-orientation=\"{}\" data-ascendant=\"{:.12}\" data-center=\"{CENTER:.3}\" data-outer-radius=\"{OUTER_RADIUS:.3}\" data-aspect-radius=\"{ASPECT_RADIUS:.3}\" data-natal-inner-radius=\"{NATAL_INNER_RADIUS:.3}\" data-natal-position-radius=\"{NATAL_POSITION_RADIUS:.3}\" data-natal-glyph-radius=\"{NATAL_GLYPH_RADIUS:.3}\" data-transit-inner-radius=\"{TRANSIT_INNER_RADIUS:.3}\" data-transit-position-radius=\"{TRANSIT_POSITION_RADIUS:.3}\" data-transit-glyph-radius=\"{TRANSIT_GLYPH_RADIUS:.3}\" data-cusp-inner-radius=\"{CUSP_INNER_RADIUS:.3}\" data-cusp-label-radius=\"{CUSP_LABEL_RADIUS:.3}\" data-label-padding=\"{LABEL_PADDING:.3}\">",
-        options.orientation, scene.natal.ascendant_degrees,
+        "<svg id=\"oracle-transit-biwheel\" class=\"wheel-palette--{}{}\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {SIZE:.0} {SIZE:.0}\" role=\"img\" aria-labelledby=\"chart-title chart-description\" data-orientation=\"{}\" data-palette=\"{}\" data-label-density=\"{}\" data-ascendant=\"{:.12}\" data-center=\"{CENTER:.3}\" data-outer-radius=\"{OUTER_RADIUS:.3}\" data-aspect-radius=\"{ASPECT_RADIUS:.3}\" data-natal-inner-radius=\"{NATAL_INNER_RADIUS:.3}\" data-natal-position-radius=\"{NATAL_POSITION_RADIUS:.3}\" data-natal-glyph-radius=\"{NATAL_GLYPH_RADIUS:.3}\" data-transit-inner-radius=\"{TRANSIT_INNER_RADIUS:.3}\" data-transit-position-radius=\"{TRANSIT_POSITION_RADIUS:.3}\" data-transit-glyph-radius=\"{TRANSIT_GLYPH_RADIUS:.3}\" data-cusp-inner-radius=\"{CUSP_INNER_RADIUS:.3}\" data-cusp-label-radius=\"{CUSP_LABEL_RADIUS:.3}\" data-label-padding=\"{LABEL_PADDING:.3}\">",
+        options.palette.data_value(),
+        if options.selected_points.is_empty() && options.selected_aspects.is_empty() {
+            ""
+        } else {
+            " has-selection"
+        },
+        options.orientation,
+        options.palette.data_value(),
+        options.label_density.data_value(),
+        scene.natal.ascendant_degrees,
     );
     svg.push_str("<title id=\"chart-title\">Transit biwheel</title><desc id=\"chart-description\">Selected natal and transit points, natal cusps, and engine-authored inter-chart aspects.</desc>");
     render_font_and_style(&mut svg);
@@ -132,7 +185,7 @@ pub fn render_biwheel_svg(scene: &ChartScene, options: &RenderOptions) -> String
     );
     render_lane_backgrounds(&mut svg);
     render_houses(&mut svg, scene, options.orientation);
-    render_aspects(&mut svg, scene, options.orientation);
+    render_aspects(&mut svg, scene, options);
     render_point_layer(
         &mut svg,
         "natal",
@@ -144,6 +197,8 @@ pub fn render_biwheel_svg(scene: &ChartScene, options: &RenderOptions) -> String
         },
         scene.natal.ascendant_degrees,
         options.orientation,
+        scene,
+        options,
     );
     render_point_layer(
         &mut svg,
@@ -156,6 +211,8 @@ pub fn render_biwheel_svg(scene: &ChartScene, options: &RenderOptions) -> String
         },
         scene.natal.ascendant_degrees,
         options.orientation,
+        scene,
+        options,
     );
     svg.push_str("</svg>");
     svg
@@ -222,7 +279,7 @@ fn render_houses(svg: &mut String, scene: &ChartScene, orientation: WheelOrienta
     svg.push_str("</g>");
 }
 
-fn render_aspects(svg: &mut String, scene: &ChartScene, orientation: WheelOrientation) {
+fn render_aspects(svg: &mut String, scene: &ChartScene, options: &RenderOptions) {
     let natal: BTreeMap<&str, f64> = scene
         .natal
         .points
@@ -244,12 +301,15 @@ fn render_aspects(svg: &mut String, scene: &ChartScene, orientation: WheelOrient
         ) else {
             continue;
         };
-        let natal_visual =
-            visual_longitude(*natal_longitude, scene.natal.ascendant_degrees, orientation);
+        let natal_visual = visual_longitude(
+            *natal_longitude,
+            scene.natal.ascendant_degrees,
+            options.orientation,
+        );
         let transit_visual = visual_longitude(
             *transit_longitude,
             scene.natal.ascendant_degrees,
-            orientation,
+            options.orientation,
         );
         let (x1, y1) = polar(natal_visual, ASPECT_RADIUS);
         let (x2, y2) = polar(transit_visual, ASPECT_RADIUS);
@@ -267,10 +327,21 @@ fn render_aspects(svg: &mut String, scene: &ChartScene, orientation: WheelOrient
         let id = escape_xml(&aspect.id);
         let natal_id = escape_xml(&aspect.natal_point_id);
         let transit_id = escape_xml(&aspect.transit_point_id);
+        let natal_slug = stable_slug(&aspect.natal_point_id);
+        let transit_slug = stable_slug(&aspect.transit_point_id);
+        let selected = options.selected_aspects.contains(&aspect.id);
+        let connected = selected
+            || options.selected_points.contains(&aspect.natal_point_id)
+            || options.selected_points.contains(&aspect.transit_point_id);
+        let state_classes = match (selected, connected) {
+            (true, _) => " is-selected is-connected",
+            (false, true) => " is-connected",
+            (false, false) => "",
+        };
         let glyph = aspect_glyph(&aspect.kind);
         let _ = write!(
             svg,
-            "<g id=\"{id}\" class=\"aspect aspect--{kind}\" data-natal-id=\"{natal_id}\" data-transit-id=\"{transit_id}\" data-kind=\"{kind}\"><title>{title}</title><line id=\"{id}--line\" data-role=\"aspect-line\" x1=\"{x1:.3}\" y1=\"{y1:.3}\" x2=\"{x2:.3}\" y2=\"{y2:.3}\"/><text id=\"{id}--glyph\" data-role=\"aspect-glyph\" class=\"aspect-glyph\" x=\"{midpoint_x:.3}\" y=\"{midpoint_y:.3}\">{glyph}</text></g>"
+            "<g id=\"{id}\" class=\"aspect aspect--{kind} connected--{natal_slug} connected--{transit_slug}{state_classes}\" role=\"button\" tabindex=\"0\" aria-label=\"{title}\" data-interaction=\"aspect\" data-aspect-id=\"{id}\" data-natal-id=\"{natal_id}\" data-transit-id=\"{transit_id}\" data-kind=\"{kind}\"><title>{title}</title><line id=\"{id}--line\" data-role=\"aspect-line\" x1=\"{x1:.3}\" y1=\"{y1:.3}\" x2=\"{x2:.3}\" y2=\"{y2:.3}\"/><text id=\"{id}--glyph\" data-role=\"aspect-glyph\" class=\"aspect-glyph\" x=\"{midpoint_x:.3}\" y=\"{midpoint_y:.3}\">{glyph}</text></g>"
         );
     }
     svg.push_str("</g>");
@@ -295,6 +366,8 @@ fn render_point_layer(
     geometry: PointGeometry,
     ascendant: f64,
     orientation: WheelOrientation,
+    scene: &ChartScene,
+    options: &RenderOptions,
 ) {
     let visible: Vec<_> = points
         .iter()
@@ -312,7 +385,17 @@ fn render_point_layer(
         );
     }
     for (point, layout) in visible.into_iter().zip(layouts) {
-        render_point(svg, layer, point, layout, geometry, ascendant, orientation);
+        render_point(
+            svg,
+            layer,
+            point,
+            layout,
+            geometry,
+            ascendant,
+            orientation,
+            scene,
+            options,
+        );
     }
     svg.push_str("</g>");
 }
@@ -326,6 +409,8 @@ fn render_point(
     geometry: PointGeometry,
     ascendant: f64,
     orientation: WheelOrientation,
+    scene: &ChartScene,
+    options: &RenderOptions,
 ) {
     let slug = stable_slug(&point.id);
     let actual_visual = visual_longitude(point.longitude_degrees, ascendant, orientation);
@@ -350,9 +435,15 @@ fn render_point(
         point.longitude_speed_degrees_per_day,
         if point.retrograde { ", retrograde" } else { "" }
     ));
+    let selected = options.selected_points.contains(&point.id)
+        || scene.aspects.iter().any(|aspect| {
+            options.selected_aspects.contains(&aspect.id)
+                && (aspect.natal_point_id == point.id || aspect.transit_point_id == point.id)
+        });
+    let selected_class = if selected { " is-selected" } else { "" };
     let _ = write!(
         svg,
-        "<g id=\"{layer}-point-{slug}\" class=\"chart-point chart-point--{layer} point--{slug}\" data-point-id=\"{}\" data-longitude=\"{:.12}\" data-display-longitude=\"{:.12}\" data-precision=\"{}\"><title>{label}</title>",
+        "<g id=\"{layer}-point-{slug}\" class=\"chart-point chart-point--{layer} point--{slug}{selected_class}\" role=\"button\" tabindex=\"0\" aria-label=\"{label}\" data-interaction=\"point\" data-layer=\"{layer}\" data-point-id=\"{}\" data-longitude=\"{:.12}\" data-display-longitude=\"{:.12}\" data-precision=\"{}\"><title>{label}</title>",
         escape_xml(&point.id),
         point.longitude_degrees,
         layout.display_longitude,
@@ -725,17 +816,7 @@ fn escape_xml(value: &str) -> String {
         .replace('\'', "&apos;")
 }
 
-const CHART_STYLE: &str = r##"
-:root{--wheel-bg:#10131c;--lane-natal:#202b3d;--lane-transit:#251f35;--ink:#f3f5f7;--muted:#8791a4;--natal:#a9c7f5;--transit:#e4b6ff;--aspect:#b6a6d9;--ring:#536075}
-.wheel-background{fill:var(--wheel-bg);stroke:var(--ink);stroke-width:1.5}.lane-background{fill:none}.lane-background--natal{stroke:var(--lane-natal)}.lane-background--transit{stroke:var(--lane-transit)}
-.ring{fill:none;stroke:var(--ring);stroke-width:1}.ring--aspect-boundary{stroke-dasharray:2 4}.ring--transit-boundary{stroke:var(--transit)}
-.house-cusp,.position-tick-line,.point-leader{stroke:var(--muted);fill:none}.house-cusp{stroke-width:.8}.house-cusp--axis{stroke:var(--ink);stroke-width:1.8}.position-tick-line{stroke-width:.8}.position-tick{stroke:currentColor;stroke-width:1.4}.position-tick--natal{fill:currentColor}.position-tick--transit{fill:var(--wheel-bg)}
-.point-leader{stroke-width:.8;opacity:.88}.chart-point--transit .point-leader{stroke-dasharray:3 3}.chart-point--natal .point-leader{stroke-dasharray:none}
-.astronomicon{font-family:Astronomicon}.cusp-label,.point-position,.point-sign,.point-glyph,.motion-marker,.aspect-glyph{text-anchor:middle;dominant-baseline:middle}.cusp-label{color:var(--natal)}.cusp-position{font:8px system-ui,sans-serif;fill:currentColor}.cusp-sign{font-size:12px;fill:currentColor}.point-position{font:9px system-ui,sans-serif;fill:currentColor}.point-sign{font-size:10px;fill:currentColor}.point-glyph{font-size:22px;fill:currentColor}.motion-marker{font-size:10px;fill:currentColor}
-.chart-point{color:var(--ink)}.point--moon{color:#d9e5ff}.point--sun{color:#ffd166}.point--mercury{color:#72ddf7}.point--venus{color:#ffafcc}.point--mars{color:#ff7b72}.point--jupiter{color:#c7a6ff}.point--saturn{color:#d6c7b0}.point--uranus{color:#80ed99}.point--neptune{color:#70b7e6}.point--pluto{color:#ff9f68}.point--meannode,.point--truenode,.point--meansouthnode,.point--truesouthnode{color:#b8c0ff}.point--chiron{color:#e6ccb2}.point--ascendant,.point--midheaven,.point--descendant,.point--imumcoeli,.point--vertex{color:#f1f3f5}
-.aspect{color:var(--aspect);opacity:.82}.aspect line{stroke:currentColor;stroke-width:1}.aspect-glyph{font-family:Astronomicon;fill:currentColor;stroke:none;font-size:15px;paint-order:stroke;stroke:var(--wheel-bg);stroke-width:3px}.aspect--conjunction{color:#b6a6d9}.aspect--opposition{color:#ff7b72}.aspect--square{color:#ffad66}.aspect--trine{color:#80ed99}.aspect--sextile{color:#72ddf7}
-.is-hidden{display:none}
-"##;
+const CHART_STYLE: &str = include_str!("../../../assets/oracle-wheel.css");
 
 #[cfg(test)]
 mod tests {

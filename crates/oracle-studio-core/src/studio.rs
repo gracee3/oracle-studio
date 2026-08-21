@@ -1,12 +1,12 @@
 use std::collections::BTreeSet;
 
+use astraeus_artifacts::CalculationArtifact;
+use astraeus_comparison::ComparisonArtifact;
 use chrono::{LocalResult, NaiveDate, NaiveTime, Offset, SecondsFormat, TimeZone, Utc};
 use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
 
-use super::{
-    ArtifactKind, ModelError, StableId, normalize_timestamp, validate_content_id, validate_text,
-};
+use super::{ModelError, StableId, normalize_timestamp, validate_content_id, validate_text};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -230,7 +230,8 @@ impl ResolvedLocalTime {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum LocalTimeResolution {
     Unique(ResolvedLocalTime),
     Ambiguous {
@@ -597,7 +598,7 @@ pub struct ChartCalculation {
     local_input_snapshot: LocalDateTimeInput,
     resolved_time: ResolvedLocalTime,
     location_snapshot: SavedLocation,
-    calculation_artifact_id: StableId,
+    snapshot: CalculationArtifact,
     calculated_at: String,
 }
 
@@ -609,7 +610,7 @@ impl ChartCalculation {
         local_input_snapshot: LocalDateTimeInput,
         resolved_time: ResolvedLocalTime,
         location_snapshot: SavedLocation,
-        calculation_artifact_id: StableId,
+        snapshot: CalculationArtifact,
         calculated_at: impl Into<String>,
     ) -> Result<Self, ModelError> {
         let calculation = Self {
@@ -618,7 +619,7 @@ impl ChartCalculation {
             local_input_snapshot,
             resolved_time,
             location_snapshot,
-            calculation_artifact_id,
+            snapshot,
             calculated_at: normalize_timestamp(
                 "chart_calculation.calculated_at",
                 calculated_at.into(),
@@ -669,8 +670,8 @@ impl ChartCalculation {
     pub fn location_snapshot(&self) -> &SavedLocation {
         &self.location_snapshot
     }
-    pub fn calculation_artifact_id(&self) -> &StableId {
-        &self.calculation_artifact_id
+    pub const fn snapshot(&self) -> &CalculationArtifact {
+        &self.snapshot
     }
     pub fn calculated_at(&self) -> &str {
         &self.calculated_at
@@ -737,9 +738,7 @@ pub struct ComparisonPreset {
     outer_points: Vec<ChartPointId>,
     aspects: Vec<AspectDefinition>,
     orientation: WheelOrientation,
-    current_inner_calculation_id: Option<StableId>,
-    current_outer_calculation_id: Option<StableId>,
-    current_comparison_artifact_id: Option<StableId>,
+    current_calculation_id: Option<StableId>,
 }
 
 impl ComparisonPreset {
@@ -763,9 +762,7 @@ impl ComparisonPreset {
             outer_points,
             aspects,
             orientation,
-            current_inner_calculation_id: None,
-            current_outer_calculation_id: None,
-            current_comparison_artifact_id: None,
+            current_calculation_id: None,
         };
         preset.validate()?;
         Ok(preset)
@@ -792,29 +789,11 @@ impl ComparisonPreset {
         for aspect in &self.aspects {
             AspectDefinition::new(aspect.kind, aspect.orb_degrees)?;
         }
-        let current_count = [
-            self.current_inner_calculation_id.is_some(),
-            self.current_outer_calculation_id.is_some(),
-            self.current_comparison_artifact_id.is_some(),
-        ]
-        .into_iter()
-        .filter(|present| *present)
-        .count();
-        if !matches!(current_count, 0 | 3) {
-            return Err(ModelError::InvalidComparisonSources);
-        }
         Ok(())
     }
 
-    pub fn set_current_comparison(
-        &mut self,
-        inner_calculation_id: StableId,
-        outer_calculation_id: StableId,
-        artifact_id: StableId,
-    ) {
-        self.current_inner_calculation_id = Some(inner_calculation_id);
-        self.current_outer_calculation_id = Some(outer_calculation_id);
-        self.current_comparison_artifact_id = Some(artifact_id);
+    pub fn set_current_calculation(&mut self, calculation_id: StableId) {
+        self.current_calculation_id = Some(calculation_id);
     }
 
     pub fn id(&self) -> &StableId {
@@ -841,14 +820,79 @@ impl ComparisonPreset {
     pub const fn orientation(&self) -> WheelOrientation {
         self.orientation
     }
-    pub fn current_inner_calculation_id(&self) -> Option<&StableId> {
-        self.current_inner_calculation_id.as_ref()
+    pub fn current_calculation_id(&self) -> Option<&StableId> {
+        self.current_calculation_id.as_ref()
     }
-    pub fn current_outer_calculation_id(&self) -> Option<&StableId> {
-        self.current_outer_calculation_id.as_ref()
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ComparisonCalculation {
+    id: StableId,
+    comparison_preset_id: StableId,
+    inner_calculation_id: StableId,
+    outer_calculation_id: StableId,
+    snapshot: ComparisonArtifact,
+    calculated_at: String,
+}
+
+impl ComparisonCalculation {
+    pub fn new(
+        id: StableId,
+        comparison_preset_id: StableId,
+        inner_calculation_id: StableId,
+        outer_calculation_id: StableId,
+        snapshot: ComparisonArtifact,
+        calculated_at: impl Into<String>,
+    ) -> Result<Self, ModelError> {
+        let calculation = Self {
+            id,
+            comparison_preset_id,
+            inner_calculation_id,
+            outer_calculation_id,
+            snapshot,
+            calculated_at: normalize_timestamp(
+                "comparison_calculation.calculated_at",
+                calculated_at.into(),
+            )?,
+        };
+        calculation.validate()?;
+        Ok(calculation)
     }
-    pub fn current_comparison_artifact_id(&self) -> Option<&StableId> {
-        self.current_comparison_artifact_id.as_ref()
+
+    pub(crate) fn validate(&self) -> Result<(), ModelError> {
+        if self.inner_calculation_id == self.outer_calculation_id {
+            return Err(ModelError::InvalidComparisonSources);
+        }
+        let normalized = normalize_timestamp(
+            "comparison_calculation.calculated_at",
+            self.calculated_at.clone(),
+        )?;
+        if normalized != self.calculated_at {
+            return Err(ModelError::InvalidTimestamp(
+                "comparison_calculation.calculated_at",
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn id(&self) -> &StableId {
+        &self.id
+    }
+    pub fn comparison_preset_id(&self) -> &StableId {
+        &self.comparison_preset_id
+    }
+    pub fn inner_calculation_id(&self) -> &StableId {
+        &self.inner_calculation_id
+    }
+    pub fn outer_calculation_id(&self) -> &StableId {
+        &self.outer_calculation_id
+    }
+    pub const fn snapshot(&self) -> &ComparisonArtifact {
+        &self.snapshot
+    }
+    pub fn calculated_at(&self) -> &str {
+        &self.calculated_at
     }
 }
 
@@ -879,11 +923,11 @@ impl WorkspaceState {
 
 pub(crate) fn validate_studio_records(
     people: &BTreeSet<&StableId>,
-    artifacts: &[super::ArtifactRecord],
     locations: &[SavedLocation],
     charts: &[ChartDefinition],
     calculations: &[ChartCalculation],
     comparisons: &[ComparisonPreset],
+    comparison_calculations: &[ComparisonCalculation],
     workspace: &WorkspaceState,
 ) -> Result<(), ModelError> {
     validate_unique_ids(locations.iter().map(SavedLocation::id), "saved location")?;
@@ -896,6 +940,12 @@ pub(crate) fn validate_studio_records(
         comparisons.iter().map(ComparisonPreset::id),
         "comparison preset",
     )?;
+    validate_unique_ids(
+        comparison_calculations
+            .iter()
+            .map(ComparisonCalculation::id),
+        "comparison calculation",
+    )?;
     for location in locations {
         location.validate()?;
     }
@@ -903,18 +953,14 @@ pub(crate) fn validate_studio_records(
         .iter()
         .map(ChartDefinition::id)
         .collect::<BTreeSet<_>>();
-    let calculation_ids = calculations
-        .iter()
-        .map(ChartCalculation::id)
-        .collect::<BTreeSet<_>>();
     let comparison_ids = comparisons
         .iter()
         .map(ComparisonPreset::id)
         .collect::<BTreeSet<_>>();
-    let artifact_by_id = artifacts
+    let comparison_calculation_ids = comparison_calculations
         .iter()
-        .map(|artifact| (artifact.id(), artifact))
-        .collect::<std::collections::BTreeMap<_, _>>();
+        .map(ComparisonCalculation::id)
+        .collect::<BTreeSet<_>>();
     let mut default_people = BTreeSet::new();
     for chart in charts {
         chart.validate()?;
@@ -945,14 +991,6 @@ pub(crate) fn validate_studio_records(
                 "chart_calculation.chart_definition_id",
             ));
         }
-        let artifact = artifact_by_id
-            .get(calculation.calculation_artifact_id())
-            .ok_or(ModelError::DanglingReference(
-                "chart_calculation.calculation_artifact_id",
-            ))?;
-        if artifact.kind() != ArtifactKind::AstraeusCalculation {
-            return Err(ModelError::CalculationArtifactMismatch);
-        }
     }
     for comparison in comparisons {
         comparison.validate()?;
@@ -981,35 +1019,39 @@ pub(crate) fn validate_studio_records(
                 "comparison_preset.point_selection",
             ));
         }
-        if let (Some(inner), Some(outer), Some(artifact_id)) = (
-            comparison.current_inner_calculation_id(),
-            comparison.current_outer_calculation_id(),
-            comparison.current_comparison_artifact_id(),
-        ) {
-            if !calculation_ids.contains(inner) || !calculation_ids.contains(outer) {
-                return Err(ModelError::DanglingReference(
-                    "comparison_preset.calculation_id",
-                ));
-            }
-            let inner_calculation = calculations
-                .iter()
-                .find(|calculation| calculation.id() == inner)
-                .expect("calculation set was checked");
-            let outer_calculation = calculations
-                .iter()
-                .find(|calculation| calculation.id() == outer)
-                .expect("calculation set was checked");
-            if inner_calculation.chart_definition_id() != comparison.inner_chart_definition_id()
-                || outer_calculation.chart_definition_id() != comparison.outer_chart_definition_id()
-            {
-                return Err(ModelError::InvalidComparisonSources);
-            }
-            if artifact_by_id
-                .get(artifact_id)
-                .is_none_or(|artifact| artifact.kind() != ArtifactKind::AstraeusComparison)
-            {
-                return Err(ModelError::ComparisonArtifactMismatch);
-            }
+        if comparison
+            .current_calculation_id()
+            .is_some_and(|id| !comparison_calculation_ids.contains(id))
+        {
+            return Err(ModelError::DanglingReference(
+                "comparison_preset.current_calculation_id",
+            ));
+        }
+    }
+    for comparison_calculation in comparison_calculations {
+        comparison_calculation.validate()?;
+        let preset = comparisons
+            .iter()
+            .find(|preset| preset.id() == comparison_calculation.comparison_preset_id())
+            .ok_or(ModelError::DanglingReference(
+                "comparison_calculation.comparison_preset_id",
+            ))?;
+        let inner = calculations
+            .iter()
+            .find(|calculation| calculation.id() == comparison_calculation.inner_calculation_id())
+            .ok_or(ModelError::DanglingReference(
+                "comparison_calculation.inner_calculation_id",
+            ))?;
+        let outer = calculations
+            .iter()
+            .find(|calculation| calculation.id() == comparison_calculation.outer_calculation_id())
+            .ok_or(ModelError::DanglingReference(
+                "comparison_calculation.outer_calculation_id",
+            ))?;
+        if inner.chart_definition_id() != preset.inner_chart_definition_id()
+            || outer.chart_definition_id() != preset.outer_chart_definition_id()
+        {
+            return Err(ModelError::InvalidComparisonSources);
         }
     }
     if workspace

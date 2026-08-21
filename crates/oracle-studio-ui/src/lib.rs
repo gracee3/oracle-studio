@@ -1,844 +1,1490 @@
-//! Browser-side Oracle Studio shell and replaceable platform-service boundary.
+//! Browser-local Oracle Studio workbench presentation.
 
-use std::{future::Future, pin::Pin, sync::Arc};
+#[cfg(not(target_arch = "wasm32"))]
+use leptos::prelude::*;
 
-use gloo_net::http::Request;
-use leptos::{ev::SubmitEvent, html::Input, prelude::*};
-use leptos_router::{
-    components::{A, Route, Router, Routes},
-    path,
-};
-use oracle_studio_protocol::{
-    ApiError, ApiResponse, CalculateChartRequest, CalculateComparisonRequest, CatalogPlaceSummary,
-    CatalogStatus, ChartSummary, ComparisonSummary, CreateVaultRequest, InstallCatalogRequest,
-    LocalTimeResolutionSummary, LocationProvenanceInput, LocationSummary, MutationResult,
-    PROTOCOL_VERSION, PersonSummary, ProtocolRequest, ResolveChartTimeRequest, SaveChartRequest,
-    SaveComparisonRequest, SaveLocationRequest, SavePersonRequest, SearchCatalogRequest,
-    SessionStatus, SetWorkspaceRequest, UnlockVaultRequest, VaultState, WorkspacePresentation,
-    WorkspaceSummary,
-};
-use serde::{Serialize, de::DeserializeOwned};
-use wasm_bindgen::JsValue;
+#[cfg(target_arch = "wasm32")]
+mod browser {
+    use std::{cell::RefCell, collections::BTreeSet, rc::Rc};
 
-pub type PlatformFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, PlatformError>> + 'a>>;
+    use js_sys::{Array, Uint8Array};
+    use leptos::{
+        ev::{KeyboardEvent, PointerEvent, SubmitEvent},
+        html::{Input, Select, Textarea},
+        prelude::*,
+    };
+    use oracle_studio_chart_view::{RenderOptions, filtered_scene, render_biwheel_svg};
+    use oracle_studio_core::{
+        AmbiguousTimeChoice, AyanamsaId, ChartCalculationOptions, ChartDefinition, ChartRole,
+        ComparisonPreset, HouseSystemId, LocalDateTimeInput, LocalTimeResolution,
+        LocationProvenance, PersonKind, PreviewCoordinator, PreviewEnqueue, SavedLocation,
+        StableId, StepDirection, TimeInterval, WheelOrientation as ComparisonWheelOrientation,
+        ZodiacId, default_aspects, default_chart_points, generate_unique_id, step_local_time,
+    };
+    use oracle_studio_location_catalog::{
+        CatalogInstallInput, CatalogRetrieval, CatalogSearchMatch,
+    };
+    use oracle_studio_platform::{
+        ActiveWorkspace, CapabilityStatus, ChartSummary, LabelDensity, PlatformCommand,
+        PlatformResponse, PreviewGeneration, PreviewSaveMode, StudioPlatform, VaultLockState,
+        VaultSummary, WheelOrientation, WheelPalette, WheelTemplate, WheelTemplateSettings,
+        WorkbenchPresentation, WorkbenchPreviewRequest, WorkspaceSummary,
+    };
+    use oracle_studio_worker::BrowserStudioPlatform;
+    use wasm_bindgen::{JsCast, closure::Closure};
+    use wasm_bindgen_futures::{JsFuture, spawn_local};
+    use web_sys::{BeforeUnloadEvent, Blob, Element, File, HtmlAnchorElement, Url};
 
-mod charts;
-mod people;
-mod workspace;
+    type Platform = StoredValue<Rc<BrowserStudioPlatform>, LocalStorage>;
 
-/// Native capabilities consumed by components. HTTP is one implementation, not
-/// part of the component contract, so a future Tauri or browser-local adapter
-/// can replace it without changing routes or presenters.
-pub trait StudioPlatform: Send + Sync {
-    fn session_status(&self) -> PlatformFuture<'_, SessionStatus>;
-    fn create_vault(&self, request: CreateVaultRequest) -> PlatformFuture<'_, SessionStatus>;
-    fn unlock_vault(&self, request: UnlockVaultRequest) -> PlatformFuture<'_, SessionStatus>;
-    fn lock_vault(&self) -> PlatformFuture<'_, SessionStatus>;
-    fn people(&self) -> PlatformFuture<'_, Vec<PersonSummary>>;
-    fn save_person(&self, request: SavePersonRequest) -> PlatformFuture<'_, MutationResult>;
-    fn locations(&self) -> PlatformFuture<'_, Vec<LocationSummary>>;
-    fn save_location(&self, request: SaveLocationRequest) -> PlatformFuture<'_, MutationResult>;
-    fn catalog_status(&self) -> PlatformFuture<'_, CatalogStatus>;
-    fn install_catalog(&self) -> PlatformFuture<'_, CatalogStatus>;
-    fn search_catalog(
-        &self,
-        request: SearchCatalogRequest,
-    ) -> PlatformFuture<'_, Vec<CatalogPlaceSummary>>;
-    fn charts(&self) -> PlatformFuture<'_, Vec<ChartSummary>>;
-    fn save_chart(&self, request: SaveChartRequest) -> PlatformFuture<'_, MutationResult>;
-    fn resolve_chart_time(
-        &self,
-        request: ResolveChartTimeRequest,
-    ) -> PlatformFuture<'_, LocalTimeResolutionSummary>;
-    fn calculate_chart(&self, request: CalculateChartRequest)
-    -> PlatformFuture<'_, MutationResult>;
-    fn comparisons(&self) -> PlatformFuture<'_, Vec<ComparisonSummary>>;
-    fn save_comparison(&self, request: SaveComparisonRequest)
-    -> PlatformFuture<'_, MutationResult>;
-    fn calculate_comparison(
-        &self,
-        request: CalculateComparisonRequest,
-    ) -> PlatformFuture<'_, MutationResult>;
-    fn workspace(&self) -> PlatformFuture<'_, WorkspaceSummary>;
-    fn workspace_presentation(&self) -> PlatformFuture<'_, Option<WorkspacePresentation>>;
-    fn set_workspace(&self, request: SetWorkspaceRequest) -> PlatformFuture<'_, MutationResult>;
-}
+    const POINT_FILTERS: [(&str, &str); 19] = [
+        ("Sun", "Sun"),
+        ("Moon", "Moon"),
+        ("Mercury", "Mercury"),
+        ("Venus", "Venus"),
+        ("Mars", "Mars"),
+        ("Jupiter", "Jupiter"),
+        ("Saturn", "Saturn"),
+        ("Uranus", "Uranus"),
+        ("Neptune", "Neptune"),
+        ("Pluto", "Pluto"),
+        ("MeanNode", "Mean north node"),
+        ("MeanSouthNode", "Mean south node"),
+        ("TrueNode", "True north node"),
+        ("TrueSouthNode", "True south node"),
+        ("Ascendant", "Ascendant"),
+        ("Midheaven", "Midheaven"),
+        ("Descendant", "Descendant"),
+        ("ImumCoeli", "IC"),
+        ("Vertex", "Vertex"),
+    ];
+    const ASPECT_FILTERS: [(&str, &str); 5] = [
+        ("Conjunction", "Conjunction"),
+        ("Opposition", "Opposition"),
+        ("Trine", "Trine"),
+        ("Square", "Square"),
+        ("Sextile", "Sextile"),
+    ];
 
-#[derive(Clone)]
-pub struct HttpStudioPlatform {
-    bearer_token: String,
-}
-
-impl HttpStudioPlatform {
-    pub fn from_launch_fragment() -> Result<Self, PlatformError> {
-        let window = web_sys::window().ok_or_else(|| PlatformError::new("window unavailable"))?;
-        let location = window.location();
-        let hash = location
-            .hash()
-            .map_err(|_| PlatformError::new("launch fragment unavailable"))?;
-        let token = hash
-            .trim_start_matches('#')
-            .split('&')
-            .find_map(|part| part.strip_prefix("token="))
-            .filter(|value| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
-            .ok_or_else(|| {
-                PlatformError::new("Open Studio with the one-time URL printed by the native host.")
-            })?
-            .to_owned();
-
-        let replacement = format!(
-            "{}{}",
-            location
-                .pathname()
-                .map_err(|_| PlatformError::new("page path unavailable"))?,
-            location
-                .search()
-                .map_err(|_| PlatformError::new("page query unavailable"))?
-        );
-        window
-            .history()
-            .map_err(|_| PlatformError::new("browser history unavailable"))?
-            .replace_state_with_url(&JsValue::NULL, "", Some(&replacement))
-            .map_err(|_| PlatformError::new("could not consume the launch token"))?;
-        Ok(Self {
-            bearer_token: token,
-        })
+    #[derive(Clone)]
+    struct PreviewPayload {
+        inner_chart_definition_id: StableId,
+        outer_chart_definition_id: StableId,
+        inner_saved_location_id: StableId,
+        outer_saved_location_id: StableId,
+        outer_local_input: LocalDateTimeInput,
+        outer_ambiguous_time_choice: Option<AmbiguousTimeChoice>,
+        adjustment_notice: Option<String>,
     }
 
-    async fn post<RequestBody, ResponseBody>(
-        &self,
-        path: &str,
-        body: RequestBody,
-    ) -> Result<ResponseBody, PlatformError>
-    where
-        RequestBody: Serialize,
-        ResponseBody: DeserializeOwned,
-    {
-        let body = serde_json::to_string(&body)
-            .map_err(|_| PlatformError::new("could not encode the local request"))?;
-        let response = Request::post(path)
-            .header("Authorization", &format!("Bearer {}", self.bearer_token))
-            .header("Content-Type", "application/json")
-            .body(body)
-            .map_err(|_| PlatformError::new("could not prepare the local request"))?
-            .send()
-            .await
-            .map_err(|_| PlatformError::new("the local Studio host is unavailable"))?;
-        if response.ok() {
-            let response: ApiResponse<ResponseBody> = response
-                .json()
-                .await
-                .map_err(|_| PlatformError::new("the local host returned an invalid response"))?;
-            Ok(response.data)
-        } else {
-            let fallback = format!(
-                "the local host rejected the request ({})",
-                response.status()
-            );
-            let message = response
-                .json::<ApiError>()
-                .await
-                .map(|error| error.message)
-                .unwrap_or(fallback);
-            Err(PlatformError::new(message))
+    #[derive(Clone, Default)]
+    struct HoldController(Rc<RefCell<HoldTimers>>);
+
+    #[derive(Default)]
+    struct HoldTimers {
+        timeout_id: Option<i32>,
+        interval_id: Option<i32>,
+        timeout_callback: Option<Closure<dyn FnMut()>>,
+        interval_callback: Option<Closure<dyn FnMut()>>,
+    }
+
+    impl HoldController {
+        fn start(&self, action: Rc<dyn Fn()>) {
+            self.cancel();
+            action();
+            let controller = self.clone();
+            let callback = Closure::<dyn FnMut()>::new(move || {
+                let repeated_action = action.clone();
+                let repeated = Closure::<dyn FnMut()>::new(move || repeated_action());
+                if let Some(window) = web_sys::window()
+                    && let Ok(interval_id) = window
+                        .set_interval_with_callback_and_timeout_and_arguments_0(
+                            repeated.as_ref().unchecked_ref(),
+                            120,
+                        )
+                {
+                    let mut timers = controller.0.borrow_mut();
+                    timers.interval_id = Some(interval_id);
+                    timers.interval_callback = Some(repeated);
+                }
+            });
+            if let Some(window) = web_sys::window()
+                && let Ok(timeout_id) = window
+                    .set_timeout_with_callback_and_timeout_and_arguments_0(
+                        callback.as_ref().unchecked_ref(),
+                        350,
+                    )
+            {
+                let mut timers = self.0.borrow_mut();
+                timers.timeout_id = Some(timeout_id);
+                timers.timeout_callback = Some(callback);
+            }
         }
-    }
-}
 
-impl StudioPlatform for HttpStudioPlatform {
-    fn session_status(&self) -> PlatformFuture<'_, SessionStatus> {
-        Box::pin(self.post("/api/v1/session/status", ProtocolRequest::current()))
-    }
-
-    fn create_vault(&self, request: CreateVaultRequest) -> PlatformFuture<'_, SessionStatus> {
-        Box::pin(self.post("/api/v1/vault/create", request))
-    }
-
-    fn unlock_vault(&self, request: UnlockVaultRequest) -> PlatformFuture<'_, SessionStatus> {
-        Box::pin(self.post("/api/v1/vault/unlock", request))
-    }
-
-    fn lock_vault(&self) -> PlatformFuture<'_, SessionStatus> {
-        Box::pin(self.post("/api/v1/vault/lock", ProtocolRequest::current()))
-    }
-
-    fn people(&self) -> PlatformFuture<'_, Vec<PersonSummary>> {
-        Box::pin(self.post("/api/v1/people/list", ProtocolRequest::current()))
-    }
-
-    fn save_person(&self, request: SavePersonRequest) -> PlatformFuture<'_, MutationResult> {
-        Box::pin(self.post("/api/v1/people/save", request))
-    }
-
-    fn locations(&self) -> PlatformFuture<'_, Vec<LocationSummary>> {
-        Box::pin(self.post("/api/v1/locations/list", ProtocolRequest::current()))
-    }
-
-    fn save_location(&self, request: SaveLocationRequest) -> PlatformFuture<'_, MutationResult> {
-        Box::pin(self.post("/api/v1/locations/save", request))
-    }
-
-    fn catalog_status(&self) -> PlatformFuture<'_, CatalogStatus> {
-        Box::pin(self.post("/api/v1/catalog/status", ProtocolRequest::current()))
-    }
-
-    fn install_catalog(&self) -> PlatformFuture<'_, CatalogStatus> {
-        Box::pin(self.post("/api/v1/catalog/install", InstallCatalogRequest::current()))
-    }
-
-    fn search_catalog(
-        &self,
-        request: SearchCatalogRequest,
-    ) -> PlatformFuture<'_, Vec<CatalogPlaceSummary>> {
-        Box::pin(self.post("/api/v1/catalog/search", request))
-    }
-
-    fn charts(&self) -> PlatformFuture<'_, Vec<ChartSummary>> {
-        Box::pin(self.post("/api/v1/charts/list", ProtocolRequest::current()))
-    }
-
-    fn save_chart(&self, request: SaveChartRequest) -> PlatformFuture<'_, MutationResult> {
-        Box::pin(self.post("/api/v1/charts/save", request))
-    }
-
-    fn resolve_chart_time(
-        &self,
-        request: ResolveChartTimeRequest,
-    ) -> PlatformFuture<'_, LocalTimeResolutionSummary> {
-        Box::pin(self.post("/api/v1/charts/time-resolution", request))
-    }
-
-    fn calculate_chart(
-        &self,
-        request: CalculateChartRequest,
-    ) -> PlatformFuture<'_, MutationResult> {
-        Box::pin(self.post("/api/v1/charts/calculate", request))
-    }
-
-    fn comparisons(&self) -> PlatformFuture<'_, Vec<ComparisonSummary>> {
-        Box::pin(self.post("/api/v1/comparisons/list", ProtocolRequest::current()))
-    }
-
-    fn save_comparison(
-        &self,
-        request: SaveComparisonRequest,
-    ) -> PlatformFuture<'_, MutationResult> {
-        Box::pin(self.post("/api/v1/comparisons/save", request))
-    }
-
-    fn calculate_comparison(
-        &self,
-        request: CalculateComparisonRequest,
-    ) -> PlatformFuture<'_, MutationResult> {
-        Box::pin(self.post("/api/v1/comparisons/calculate", request))
-    }
-
-    fn workspace(&self) -> PlatformFuture<'_, WorkspaceSummary> {
-        Box::pin(self.post("/api/v1/workspace/get", ProtocolRequest::current()))
-    }
-
-    fn workspace_presentation(&self) -> PlatformFuture<'_, Option<WorkspacePresentation>> {
-        Box::pin(self.post("/api/v1/workspace/view", ProtocolRequest::current()))
-    }
-
-    fn set_workspace(&self, request: SetWorkspaceRequest) -> PlatformFuture<'_, MutationResult> {
-        Box::pin(self.post("/api/v1/workspace/set", request))
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PlatformError {
-    message: String,
-}
-
-impl PlatformError {
-    pub fn new(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
+        fn cancel(&self) {
+            let (timeout_id, interval_id, timeout_callback, interval_callback) = {
+                let mut timers = self.0.borrow_mut();
+                (
+                    timers.timeout_id.take(),
+                    timers.interval_id.take(),
+                    timers.timeout_callback.take(),
+                    timers.interval_callback.take(),
+                )
+            };
+            if let Some(window) = web_sys::window() {
+                if let Some(id) = timeout_id {
+                    window.clear_timeout_with_handle(id);
+                }
+                if let Some(id) = interval_id {
+                    window.clear_interval_with_handle(id);
+                }
+            }
+            drop((timeout_callback, interval_callback));
         }
     }
 
-    pub fn message(&self) -> &str {
-        &self.message
+    #[derive(Clone, Copy)]
+    struct Model {
+        vaults: RwSignal<Vec<VaultSummary>>,
+        workspace: RwSignal<WorkspaceSummary>,
+        capabilities: RwSignal<Option<CapabilityStatus>>,
+        wheel_templates: RwSignal<WheelTemplateSettings>,
+        catalog_results: RwSignal<Vec<CatalogSearchMatch>>,
+        presentation: RwSignal<Option<WorkbenchPresentation>>,
+        fallback_presentation: RwSignal<Option<WorkbenchPresentation>>,
+        desired_outer: RwSignal<Option<LocalDateTimeInput>>,
+        outer_ambiguous_choice: RwSignal<Option<AmbiguousTimeChoice>>,
+        inner_chart_id: RwSignal<String>,
+        outer_chart_id: RwSignal<String>,
+        inner_location_id: RwSignal<String>,
+        outer_location_id: RwSignal<String>,
+        visible_points: RwSignal<BTreeSet<String>>,
+        visible_aspects: RwSignal<BTreeSet<String>>,
+        selected_points: RwSignal<BTreeSet<String>>,
+        selected_aspects: RwSignal<BTreeSet<String>>,
+        latest_generation: RwSignal<u64>,
+        calculating: RwSignal<bool>,
+        notice: RwSignal<Option<String>>,
+        problem: RwSignal<Option<String>>,
+        busy: RwSignal<bool>,
+        left_open: RwSignal<bool>,
+        right_open: RwSignal<bool>,
+        coordinator: StoredValue<Rc<RefCell<PreviewCoordinator<PreviewPayload>>>, LocalStorage>,
+        holds: StoredValue<HoldController, LocalStorage>,
     }
-}
 
-pub(crate) fn new_id(prefix: &str) -> Result<String, PlatformError> {
-    let window = web_sys::window().ok_or_else(|| PlatformError::new("window unavailable"))?;
-    let crypto = window
-        .crypto()
-        .map_err(|_| PlatformError::new("secure browser randomness unavailable"))?;
-    Ok(format!("{prefix}_{}", crypto.random_uuid()))
-}
+    impl Model {
+        fn new() -> Self {
+            Self {
+                vaults: RwSignal::new(Vec::new()),
+                workspace: RwSignal::new(empty_workspace()),
+                capabilities: RwSignal::new(None),
+                wheel_templates: RwSignal::new(WheelTemplateSettings::default()),
+                catalog_results: RwSignal::new(Vec::new()),
+                presentation: RwSignal::new(None),
+                fallback_presentation: RwSignal::new(None),
+                desired_outer: RwSignal::new(None),
+                outer_ambiguous_choice: RwSignal::new(None),
+                inner_chart_id: RwSignal::new(String::new()),
+                outer_chart_id: RwSignal::new(String::new()),
+                inner_location_id: RwSignal::new(String::new()),
+                outer_location_id: RwSignal::new(String::new()),
+                visible_points: RwSignal::new(
+                    POINT_FILTERS.iter().map(|(id, _)| (*id).into()).collect(),
+                ),
+                visible_aspects: RwSignal::new(
+                    ASPECT_FILTERS.iter().map(|(id, _)| (*id).into()).collect(),
+                ),
+                selected_points: RwSignal::new(BTreeSet::new()),
+                selected_aspects: RwSignal::new(BTreeSet::new()),
+                latest_generation: RwSignal::new(0),
+                calculating: RwSignal::new(false),
+                notice: RwSignal::new(None),
+                problem: RwSignal::new(None),
+                busy: RwSignal::new(false),
+                left_open: RwSignal::new(false),
+                right_open: RwSignal::new(false),
+                coordinator: StoredValue::new_local(Rc::new(RefCell::new(
+                    PreviewCoordinator::default(),
+                ))),
+                holds: StoredValue::new_local(HoldController::default()),
+            }
+        }
 
-#[derive(Clone)]
-pub(crate) struct StudioContext {
-    pub(crate) platform: Arc<dyn StudioPlatform>,
-    pub(crate) status: RwSignal<Option<Result<SessionStatus, PlatformError>>>,
-}
+        fn stop_hold(self) {
+            self.holds.with_value(HoldController::cancel);
+        }
+    }
 
-#[component]
-pub fn App(platform: Arc<dyn StudioPlatform>) -> impl IntoView {
-    let status = RwSignal::new(None);
-    provide_context(StudioContext {
-        platform: Arc::clone(&platform),
-        status,
-    });
-    refresh_status(platform, status);
+    #[component]
+    pub fn App() -> impl IntoView {
+        let model = Model::new();
+        let platform = StoredValue::new_local(Rc::new(BrowserStudioPlatform::spawn()));
+        install_lifecycle_guards(model);
+        Effect::new(move |_| dispatch(platform, model, PlatformCommand::Initialize));
 
-    view! {
-        <Router>
+        view! {
+            <a class="skip-link" href="#wheel-stage">"Skip to chart wheel"</a>
             <div class="studio-shell">
                 <header class="app-header">
-                    <div>
-                        <p class="eyebrow">"Local astrology workspace"</p>
-                        <A attr:class="wordmark" href="/">"Oracle Studio"</A>
+                    <a class="brand" href="#workbench" aria-label="Oracle Studio workbench">
+                        <span class="brand-mark" aria-hidden="true">"☉"</span>
+                        <span><strong>"Oracle Studio"</strong><small>"Moshier workbench"</small></span>
+                    </a>
+                    <nav aria-label="Application views">
+                        <a href="#workbench">"Workbench"</a>
+                        <a href="#settings">"Settings"</a>
+                        <a href="#files">"Files"</a>
+                    </nav>
+                    <div class="header-actions">
+                        <button class="sidebar-toggle charts-toggle" type="button" aria-label="Toggle charts and wheels" aria-expanded=move || model.left_open.get() on:click=move |_| { model.right_open.set(false); model.left_open.update(|open| *open = !*open); }>"Charts"</button>
+                        <button class="sidebar-toggle controls-toggle" type="button" aria-label="Toggle chart controls" aria-expanded=move || model.right_open.get() on:click=move |_| { model.left_open.set(false); model.right_open.update(|open| *open = !*open); }>"Controls"</button>
+                        <span class="session-state">{move || active_label(&model.workspace.get())}</span>
                     </div>
-                    <VaultIndicator />
                 </header>
-                <nav class="primary-nav" aria-label="Studio sections">
-                    <A href="/people">"People"</A>
-                    <A href="/locations">"Locations"</A>
-                    <A href="/charts/new">"New chart"</A>
-                    <A href="/workspace">"Workspace"</A>
-                </nav>
-                <main id="main-content" tabindex="-1">
-                    <Routes fallback=|| view! { <NotFound /> }>
-                        <Route path=path!("") view=HomePage />
-                        <Route path=path!("vault") view=VaultPage />
-                        <Route path=path!("people") view=people::PeoplePage />
-                        <Route path=path!("people/:id") view=people::PersonPage />
-                        <Route path=path!("charts/:id") view=charts::ChartEditorPage />
-                        <Route path=path!("locations") view=LocationsPage />
-                        <Route path=path!("workspace") view=workspace::WorkspacePage />
-                    </Routes>
-                </main>
+
+                <div class="announcements" aria-live="polite">
+                    <span class="notice">{move || model.notice.get().unwrap_or_default()}</span>
+                    <span class="problem" role="alert">{move || model.problem.get().unwrap_or_default()}</span>
+                </div>
+
+                <WorkbenchView platform model />
+                <SettingsView platform model />
+                <FilesView platform model />
             </div>
-        </Router>
-    }
-}
-
-fn refresh_status(
-    platform: Arc<dyn StudioPlatform>,
-    status: RwSignal<Option<Result<SessionStatus, PlatformError>>>,
-) {
-    wasm_bindgen_futures::spawn_local(async move {
-        status.set(Some(platform.session_status().await));
-    });
-}
-
-#[component]
-fn VaultIndicator() -> impl IntoView {
-    let context = expect_context::<StudioContext>();
-    let platform = Arc::clone(&context.platform);
-    let status = context.status;
-    view! {
-        <div class="vault-indicator" aria-live="polite">
-            {move || match status.get() {
-                None => view! { <span>"Checking vault…"</span> }.into_any(),
-                Some(Err(error)) => view! { <span class="error-text">{error.message().to_owned()}</span> }.into_any(),
-                Some(Ok(session)) if session.state == VaultState::Unlocked => view! {
-                    <span class="status-dot unlocked" aria-hidden="true"></span>
-                    <span>{session.vault_name.unwrap_or_else(|| "Vault".to_owned())}</span>
-                    <button class="quiet-button" type="button" on:click={
-                        let platform = Arc::clone(&platform);
-                        move |_| {
-                            let platform = Arc::clone(&platform);
-                            wasm_bindgen_futures::spawn_local(async move {
-                                status.set(Some(platform.lock_vault().await));
-                            });
-                        }
-                    }>"Lock"</button>
-                }.into_any(),
-                Some(Ok(_)) => view! {
-                    <span class="status-dot" aria-hidden="true"></span>
-                    <A href="/vault">"Unlock vault"</A>
-                }.into_any(),
-            }}
-        </div>
-    }
-}
-
-#[component]
-fn HomePage() -> impl IntoView {
-    view! {
-        <section class="hero panel">
-            <p class="eyebrow">"Charts first"</p>
-            <h1>"A private studio for natal and transit work."</h1>
-            <p>
-                "Your vault stays encrypted on this computer. Start with a person, a saved location, and a chart; then compare natal and transit positions in the workspace."
-            </p>
-            <div class="button-row">
-                <A attr:class="primary-button" href="/vault">"Open a vault"</A>
-                <A attr:class="secondary-button" href="/workspace">"View workspace"</A>
-            </div>
-        </section>
-        <section class="feature-grid" aria-label="Studio capabilities">
-            <article class="panel"><span class="feature-number">"01"</span><h2>"People"</h2><p>"Keep chart subjects and professional clients organized inside the encrypted vault."</p></article>
-            <article class="panel"><span class="feature-number">"02"</span><h2>"Places"</h2><p>"Use saved, offline location snapshots with explicit coordinates and time zones."</p></article>
-            <article class="panel"><span class="feature-number">"03"</span><h2>"Biwheel"</h2><p>"Read a deterministic natal/transit comparison with precise chart metadata."</p></article>
-        </section>
-    }
-}
-
-#[component]
-fn VaultPage() -> impl IntoView {
-    view! {
-        <PageHeader eyebrow="Encrypted local storage" title="Open your studio" description="The password is sent only to the loopback host and is never retained by the browser application." />
-        <div class="two-column">
-            <VaultForm create=false />
-            <VaultForm create=true />
-        </div>
-    }
-}
-
-#[component]
-fn VaultForm(create: bool) -> impl IntoView {
-    let context = expect_context::<StudioContext>();
-    let path_ref = NodeRef::<Input>::new();
-    let password_ref = NodeRef::<Input>::new();
-    let feedback = RwSignal::new(None::<Result<String, String>>);
-    let submit = move |event: SubmitEvent| {
-        event.prevent_default();
-        let Some(path_input) = path_ref.get() else {
-            return;
-        };
-        let Some(password_input) = password_ref.get() else {
-            return;
-        };
-        let path = path_input.value();
-        let password = password_input.value();
-        password_input.set_value("");
-        if path.trim().is_empty() || password.is_empty() {
-            feedback.set(Some(
-                Err("Enter both a vault path and password.".to_owned()),
-            ));
-            return;
         }
-        feedback.set(Some(Ok("Working…".to_owned())));
-        let platform = Arc::clone(&context.platform);
-        let status = context.status;
-        wasm_bindgen_futures::spawn_local(async move {
-            let result = if create {
-                platform
-                    .create_vault(CreateVaultRequest::current(path, password))
-                    .await
-            } else {
-                platform
-                    .unlock_vault(UnlockVaultRequest::current(path, password))
-                    .await
-            };
-            match result {
-                Ok(session) => {
-                    status.set(Some(Ok(session)));
-                    feedback.set(Some(Ok(if create {
-                        "Vault created and unlocked.".to_owned()
+    }
+
+    #[component]
+    fn WorkbenchView(platform: Platform, model: Model) -> impl IntoView {
+        view! {
+            <main id="workbench" class="route workbench-route" tabindex="-1">
+                <button class:drawer-open=move || model.left_open.get() class="drawer-scrim left-scrim" aria-label="Close charts drawer" on:click=move |_| model.left_open.set(false)></button>
+                <aside class:drawer-open=move || model.left_open.get() class="workbench-sidebar left-sidebar" aria-label="Charts and wheels">
+                    <div class="sidebar-title"><h1>"Charts"</h1><button class="drawer-close" aria-label="Close charts drawer" on:click=move |_| model.left_open.set(false)>"×"</button></div>
+                    <ChartsPanel platform model />
+                    <WheelsPanel platform model />
+                </aside>
+
+                <WheelStage platform model />
+
+                <button class:drawer-open=move || model.right_open.get() class="drawer-scrim right-scrim" aria-label="Close controls drawer" on:click=move |_| model.right_open.set(false)></button>
+                <aside class:drawer-open=move || model.right_open.get() class="workbench-sidebar right-sidebar" aria-label="Controls, points, and aspects">
+                    <div class="sidebar-title"><h1>"Controls"</h1><button class="drawer-close" aria-label="Close controls drawer" on:click=move |_| model.right_open.set(false)>"×"</button></div>
+                    <TimeControls platform model />
+                    <FilterPanel model />
+                </aside>
+            </main>
+        }
+    }
+
+    #[component]
+    fn ChartsPanel(platform: Platform, model: Model) -> impl IntoView {
+        view! {
+            <section class="sidebar-module charts-module">
+                <div class="module-heading"><h2>"Saved charts"</h2><a href="#settings">"New"</a></div>
+                {move || {
+                    let workspace = model.workspace.get();
+                    if workspace.charts.is_empty() {
+                        view! { <p class="empty-copy">"Create a chart and location in Settings to begin."</p> }.into_any()
                     } else {
-                        "Vault unlocked.".to_owned()
-                    })));
-                }
-                Err(error) => feedback.set(Some(Err(error.message().to_owned()))),
-            }
-        });
-    };
-    view! {
-        <form class="panel vault-form" on:submit=submit>
-            <p class="eyebrow">{if create { "New vault" } else { "Existing vault" }}</p>
-            <h2>{if create { "Create" } else { "Unlock" }}</h2>
-            <label>
-                <span>"Vault path"</span>
-                <input node_ref=path_ref type="text" autocomplete="off" spellcheck="false" placeholder="/home/you/Documents/studio.oracle" />
-            </label>
-            <label>
-                <span>"Password"</span>
-                <input node_ref=password_ref type="password" autocomplete=if create { "new-password" } else { "current-password" } />
-            </label>
-            <button class="primary-button" type="submit">{if create { "Create vault" } else { "Unlock vault" }}</button>
-            <div class="form-feedback" role="status" aria-live="polite">
-                {move || feedback.get().map(|result| match result {
-                    Ok(message) => view! { <span>{message}</span> }.into_any(),
-                    Err(message) => view! { <span class="error-text">{message}</span> }.into_any(),
-                })}
-            </div>
-        </form>
-    }
-}
-
-#[component]
-fn LocationsPage() -> impl IntoView {
-    let context = expect_context::<StudioContext>();
-    let catalog = RwSignal::new(None::<Result<CatalogStatus, PlatformError>>);
-    let saved = RwSignal::new(None::<Result<Vec<LocationSummary>, PlatformError>>);
-    let results = RwSignal::new(Vec::<CatalogPlaceSummary>::new());
-    let feedback = RwSignal::new(None::<Result<String, String>>);
-    let search_ref = NodeRef::<Input>::new();
-    refresh_catalog_status(Arc::clone(&context.platform), catalog);
-    refresh_saved_locations(Arc::clone(&context.platform), saved);
-
-    let install = {
-        let platform = Arc::clone(&context.platform);
-        move |_| {
-            feedback.set(Some(
-                Ok("Downloading the public GeoNames files…".to_owned()),
-            ));
-            let platform = Arc::clone(&platform);
-            wasm_bindgen_futures::spawn_local(async move {
-                match platform.install_catalog().await {
-                    Ok(status) => {
-                        catalog.set(Some(Ok(status)));
-                        feedback.set(Some(Ok(
-                            "The offline catalog is installed. Searches stay on this computer."
-                                .to_owned(),
-                        )));
-                    }
-                    Err(error) => feedback.set(Some(Err(error.message().to_owned()))),
-                }
-            });
-        }
-    };
-    let search = {
-        let platform = Arc::clone(&context.platform);
-        move |event: SubmitEvent| {
-            event.prevent_default();
-            let Some(input) = search_ref.get() else {
-                return;
-            };
-            let query = input.value();
-            if query.trim().is_empty() {
-                feedback.set(Some(Err("Enter a city or place name.".to_owned())));
-                return;
-            }
-            feedback.set(Some(Ok("Searching the local catalog…".to_owned())));
-            let platform = Arc::clone(&platform);
-            wasm_bindgen_futures::spawn_local(async move {
-                match platform
-                    .search_catalog(SearchCatalogRequest::current(query, 20))
-                    .await
-                {
-                    Ok(matches) => {
-                        let count = matches.len();
-                        results.set(matches);
-                        feedback.set(Some(Ok(format!(
-                            "Found {count} local catalog result{}.",
-                            if count == 1 { "" } else { "s" }
-                        ))));
-                    }
-                    Err(error) => feedback.set(Some(Err(error.message().to_owned()))),
-                }
-            });
-        }
-    };
-
-    view! {
-        <PageHeader eyebrow="Offline location catalog" title="Locations" description="Saved places are encrypted snapshots. The optional GeoNames catalog remains outside the vault and never sends searches over the network." />
-        <div class="location-layout">
-            <section class="panel catalog-panel" aria-labelledby="catalog-title">
-                <p class="eyebrow">"Optional public data"</p>
-                <h2 id="catalog-title">"GeoNames cities500"</h2>
-                {move || match catalog.get() {
-                    None => view! { <p class="muted">"Checking the local catalog…"</p> }.into_any(),
-                    Some(Err(error)) => view! { <p class="error-text">{error.message().to_owned()}</p> }.into_any(),
-                    Some(Ok(status)) if status.installed => view! {
-                        <div class="catalog-status installed">
-                            <span class="status-dot unlocked" aria-hidden="true"></span>
-                            <strong>"Installed for offline search"</strong>
-                            <span>{status.place_count.map(|count| format!("{count} places")).unwrap_or_default()}</span>
-                            <code>{status.content_id.unwrap_or_default()}</code>
-                        </div>
-                    }.into_any(),
-                    Some(Ok(_)) => view! {
-                        <div class="catalog-status">
-                            <span class="status-dot" aria-hidden="true"></span>
-                            <strong>"Not installed"</strong>
-                        </div>
-                    }.into_any(),
-                }}
-                <p class="muted">
-                    "Installation downloads cities500 and administrative-name files only after you press this button. The files stay outside your vault; later searches use only the local copy."
-                </p>
-                <button class="primary-button" type="button" on:click=install>
-                    "Download and install catalog"
-                </button>
-                <p class="attribution">
-                    "Contains GeoNames geographical data, available under "
-                    <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noreferrer">"CC BY 4.0"</a>
-                    ". Source: "
-                    <a href="https://download.geonames.org/export/dump/" target="_blank" rel="noreferrer">"GeoNames distribution"</a>
-                    "."
-                </p>
-            </section>
-
-            <section class="panel catalog-panel" aria-labelledby="search-title">
-                <p class="eyebrow">"Local-only lookup"</p>
-                <h2 id="search-title">"Search places"</h2>
-                <form class="inline-form" on:submit=search>
-                    <label class="grow-field">
-                        <span>"City or place name"</span>
-                        <input node_ref=search_ref type="search" autocomplete="off" placeholder="Columbia" />
-                    </label>
-                    <button class="secondary-button" type="submit">"Search offline"</button>
-                </form>
-                <div class="catalog-results" aria-live="polite">
-                    <For
-                        each=move || results.get()
-                        key=|place| place.geonames_id
-                        children={
-                            let platform = Arc::clone(&context.platform);
-                            move |place| view! {
-                                <CatalogPlaceCard
-                                    place
-                                    platform=Arc::clone(&platform)
-                                    feedback
-                                    saved
-                                />
+                        workspace.charts.into_iter().map(|chart| {
+                            let inner_id = chart.id.clone();
+                            let outer_id = chart.id.clone();
+                            let chart_id = chart.id.clone();
+                            view! {
+                                <article class="chart-card" class:is-inner=move || model.inner_chart_id.get() == chart_id class:is-outer=move || model.outer_chart_id.get() == chart.id>
+                                    <div><strong>{chart.label}</strong><small>{format!("{} · {}", chart.role, chart.local_input)}</small></div>
+                                    <div class="compact-actions">
+                                        <button type="button" on:click=move |_| {
+                                            model.inner_chart_id.set(inner_id.clone());
+                                            queue_selected_preview(platform, model, None);
+                                        }>"Use as Inner"</button>
+                                        <button type="button" on:click=move |_| select_outer_chart(platform, model, &outer_id)>"Use as Outer"</button>
+                                    </div>
+                                </article>
                             }
-                        }
-                    />
+                        }).collect_view().into_any()
+                    }
+                }}
+                {move || selected_chart(&model.workspace.get(), &model.outer_chart_id.get()).map(|chart| view! {
+                    <SelectedChartEditor platform model chart=chart.clone() />
+                }).into_any()}
+                <div class="location-pair">
+                    <label><span>"Inner location"</span><select on:change=move |event| {
+                        model.inner_location_id.set(event_target_value(&event));
+                        queue_selected_preview(platform, model, None);
+                    }>{move || location_options(&model.workspace.get(), &model.inner_location_id.get())}</select></label>
+                    <label><span>"Outer location"</span><select on:change=move |event| {
+                        model.outer_location_id.set(event_target_value(&event));
+                        queue_selected_preview(platform, model, None);
+                    }>{move || location_options(&model.workspace.get(), &model.outer_location_id.get())}</select></label>
                 </div>
             </section>
-        </div>
-
-        <div class="form-feedback location-feedback" role="status" aria-live="polite">
-            {move || feedback.get().map(|result| match result {
-                Ok(message) => view! { <span>{message}</span> }.into_any(),
-                Err(message) => view! { <span class="error-text">{message}</span> }.into_any(),
-            })}
-        </div>
-
-        <div class="location-layout location-layout-secondary">
-            <ManualLocationForm
-                platform=Arc::clone(&context.platform)
-                feedback
-                saved
-            />
-            <section class="panel catalog-panel" aria-labelledby="saved-locations-title">
-                <p class="eyebrow">"Encrypted snapshots"</p>
-                <h2 id="saved-locations-title">"Saved locations"</h2>
-                {move || match saved.get() {
-                    None => view! { <p class="muted">"Loading saved locations…"</p> }.into_any(),
-                    Some(Err(error)) => view! { <p class="error-text">{error.message().to_owned()}</p> }.into_any(),
-                    Some(Ok(locations)) if locations.is_empty() => view! { <p class="muted">"No saved locations in the unlocked vault."</p> }.into_any(),
-                    Some(Ok(locations)) => view! {
-                        <ul class="saved-location-list">
-                            {locations.into_iter().map(|location| view! {
-                                <li>
-                                    <strong>{location.label}</strong>
-                                    <span>{format!("{} · {}", location.country_code, location.time_zone)}</span>
-                                    <small>{format!("{:.4}, {:.4}", location.latitude_degrees, location.longitude_degrees)}</small>
-                                </li>
-                            }).collect_view()}
-                        </ul>
-                    }.into_any(),
-                }}
-            </section>
-        </div>
+        }
     }
-}
 
-fn refresh_catalog_status(
-    platform: Arc<dyn StudioPlatform>,
-    status: RwSignal<Option<Result<CatalogStatus, PlatformError>>>,
-) {
-    wasm_bindgen_futures::spawn_local(async move {
-        status.set(Some(platform.catalog_status().await));
-    });
-}
+    #[component]
+    fn SelectedChartEditor(platform: Platform, model: Model, chart: ChartSummary) -> impl IntoView {
+        let label = NodeRef::<Input>::new();
+        let role = NodeRef::<Select>::new();
+        let date = NodeRef::<Input>::new();
+        let time = NodeRef::<Input>::new();
+        let zone = NodeRef::<Input>::new();
+        let chart_id = chart.id.clone();
+        let submit = move |event: SubmitEvent| {
+            event.prevent_default();
+            let result = (|| {
+                let id = StableId::new("chart.id", chart_id.clone()).map_err(|e| e.to_string())?;
+                let role = chart_role(select_value(role).as_deref());
+                let local_input = LocalDateTimeInput::new(
+                    value(date).ok_or("date is required")?,
+                    normalized_time(value(time).ok_or("time is required")?),
+                    value(zone).ok_or("time zone is required")?,
+                )
+                .map_err(|e| e.to_string())?;
+                model.desired_outer.set(Some(local_input.clone()));
+                model.outer_ambiguous_choice.set(None);
+                Ok::<_, String>(PlatformCommand::UpdateChartBasics {
+                    chart_id: id,
+                    label: value(label).ok_or("chart name is required")?,
+                    role,
+                    local_input,
+                })
+            })();
+            match result {
+                Ok(command) => dispatch(platform, model, command),
+                Err(message) => model.problem.set(Some(message)),
+            }
+        };
+        view! {
+            <form class="compact-editor" on:submit=submit>
+                <h3>"Selected chart editor"</h3>
+                <label><span>"Name"</span><input node_ref=label required value=chart.label /></label>
+                <label><span>"Role"</span><select node_ref=role>
+                    <option value="natal" selected=chart.role == "natal">"Natal"</option>
+                    <option value="transit" selected=chart.role == "transit">"Transit"</option>
+                    <option value="event" selected=chart.role == "event">"Event"</option>
+                </select></label>
+                <div class="field-row"><label><span>"Date"</span><input node_ref=date type="date" required value=chart.local_date /></label><label><span>"Time"</span><input node_ref=time type="time" step="1" required value=chart.local_time /></label></div>
+                <label><span>"IANA time zone"</span><input node_ref=zone required value=chart.time_zone /></label>
+                <button type="submit">"Save definition"</button>
+            </form>
+        }
+    }
 
-fn refresh_saved_locations(
-    platform: Arc<dyn StudioPlatform>,
-    saved: RwSignal<Option<Result<Vec<LocationSummary>, PlatformError>>>,
-) {
-    wasm_bindgen_futures::spawn_local(async move {
-        saved.set(Some(platform.locations().await));
-    });
-}
+    #[component]
+    fn WheelsPanel(platform: Platform, model: Model) -> impl IntoView {
+        view! {
+            <section class="sidebar-module wheels-module">
+                <div class="module-heading"><h2>"Wheels"</h2><a href="#settings">"Edit"</a></div>
+                <div class="wheel-thumbnail" aria-hidden="true"><span></span></div>
+                <div class="template-list">
+                    {move || model.wheel_templates.get().templates.into_iter().map(|template| {
+                        let id = template.id.clone();
+                        let id_for_class = template.id.clone();
+                        view! {
+                            <button type="button" class:selected=move || model.wheel_templates.get().last_selected_template_id == id_for_class on:click=move |_| select_template(platform, model, &id)>
+                                <strong>{template.name}</strong><small>{format!("{:?} · {:?}", template.palette, template.label_density)}</small>
+                            </button>
+                        }
+                    }).collect_view()}
+                </div>
+            </section>
+        }
+    }
 
-#[component]
-fn CatalogPlaceCard(
-    place: CatalogPlaceSummary,
-    platform: Arc<dyn StudioPlatform>,
-    feedback: RwSignal<Option<Result<String, String>>>,
-    saved: RwSignal<Option<Result<Vec<LocationSummary>, PlatformError>>>,
-) -> impl IntoView {
-    let details = if place.administrative_names.is_empty() {
-        place.country_code.clone()
-    } else {
-        format!(
-            "{}, {}",
-            place.administrative_names.join(", "),
-            place.country_code
-        )
-    };
-    let save = {
-        let place = place.clone();
-        move |_| {
-            let request = SaveLocationRequest {
-                protocol_version: PROTOCOL_VERSION,
-                id: format!("geonames_{}", place.geonames_id),
-                label: place.name.clone(),
-                administrative_names: place.administrative_names.clone(),
-                country_code: place.country_code.clone(),
-                latitude_degrees: place.latitude_degrees,
-                longitude_degrees: place.longitude_degrees,
-                elevation_meters: place.elevation_meters,
-                time_zone: place.time_zone.clone(),
-                provenance: LocationProvenanceInput::GeoNames {
-                    geonames_id: place.geonames_id,
-                    catalog_content_id: place.catalog_content_id.clone(),
-                },
+    #[component]
+    fn WheelStage(platform: Platform, model: Model) -> impl IntoView {
+        let save_as_name = NodeRef::<Input>::new();
+        let wheel_click = move |event: leptos::ev::MouseEvent| {
+            if let Some(element) = interaction_element(event.target()) {
+                toggle_interaction(model, &element);
+            }
+        };
+        let wheel_key = move |event: KeyboardEvent| {
+            if event.key() == "Escape" {
+                model.selected_points.set(BTreeSet::new());
+                model.selected_aspects.set(BTreeSet::new());
+            } else if (event.key() == " " || event.key() == "Enter")
+                && let Some(element) = interaction_element(event.target())
+            {
+                event.prevent_default();
+                toggle_interaction(model, &element);
+            }
+        };
+        view! {
+            <section id="wheel-stage" class="wheel-stage" aria-label="Chart workbench">
+                <div class="chart-meta inner-meta">{move || model.presentation.get().map(|p| format!("INNER · {}\n{} {}\n{}", p.inner.label, p.inner.local_input.local_date(), p.inner.local_input.local_time(), p.inner.location_label)).unwrap_or_default()}</div>
+                <div class="chart-meta outer-meta">{move || model.presentation.get().map(|p| format!("OUTER · {}\n{} {}\n{}", p.outer.label, p.outer.local_input.local_date(), p.outer.local_input.local_time(), p.outer.location_label)).unwrap_or_default()}</div>
+                <div class="wheel-frame" class:is-calculating=move || model.calculating.get() on:click=wheel_click on:keydown=wheel_key>
+                    {move || if let Some(presentation) = model.presentation.get() {
+                        let scene = filtered_scene(&presentation.scene, &model.visible_points.get(), &model.visible_aspects.get());
+                        let settings = model.wheel_templates.get();
+                        let template = settings.selected();
+                        let svg = render_biwheel_svg(&scene, &RenderOptions {
+                            orientation: template.orientation,
+                            palette: template.palette,
+                            label_density: template.label_density,
+                            selected_points: model.selected_points.get().into_iter().collect(),
+                            selected_aspects: model.selected_aspects.get().into_iter().collect(),
+                        });
+                        view! { <div class="wheel-svg" inner_html=svg></div> }.into_any()
+                    } else {
+                        let workspace = model.workspace.get();
+                        view! {
+                            <div class="wheel-empty">
+                                <span aria-hidden="true">"☉"</span>
+                                <h2>{if workspace.active.is_none() { "Open a workspace" } else { "Two charts and a location make a wheel" }}</h2>
+                                <p>"Calculated Moshier previews stay transient until you choose Update Chart or Save As."</p>
+                                {if workspace.active.is_none() {
+                                    view! { <button class="primary" on:click=move |_| dispatch(platform, model, PlatformCommand::CreateScratch)>"Open scratch"</button> }.into_any()
+                                } else {
+                                    view! { <a class="button-link" href="#settings">"Add charts and locations"</a> }.into_any()
+                                }}
+                            </div>
+                        }.into_any()
+                    }}
+                    <div class="calculation-indicator" role="status">{move || if model.calculating.get() { "Calculating newest cursor…" } else { "" }}</div>
+                </div>
+                <div class="wheel-actions">
+                    <button class="primary" type="button" disabled=move || model.presentation.get().is_none() || model.calculating.get() on:click=move |_| commit_preview(platform, model, PreviewSaveMode::UpdateChart)>"Update Chart"</button>
+                    <form on:submit=move |event: SubmitEvent| {
+                        event.prevent_default();
+                        if let Some(name) = value(save_as_name) {
+                            commit_preview(platform, model, PreviewSaveMode::SaveAs { name });
+                        } else {
+                            model.problem.set(Some("Save As requires a new name.".into()));
+                        }
+                    }>
+                        <input node_ref=save_as_name aria-label="New chart name" placeholder="New chart name" required />
+                        <button type="submit" disabled=move || model.presentation.get().is_none() || model.calculating.get()>"Save As"</button>
+                    </form>
+                    <span>{move || model.presentation.get().and_then(|p| p.adjustment_notice).unwrap_or_default()}</span>
+                </div>
+            </section>
+        }
+    }
+
+    #[component]
+    fn TimeControls(platform: Platform, model: Model) -> impl IntoView {
+        view! {
+            <section class="sidebar-module controls-module">
+                <p class="module-help">"Inner fixed · outer moves"</p>
+                <div class="time-controller" aria-label="Outer chart time controls">
+                    {TimeInterval::ALL.into_iter().map(|interval| view! { <TimeColumn platform model interval /> }).collect_view()}
+                </div>
+            </section>
+        }
+    }
+
+    #[component]
+    fn TimeColumn(platform: Platform, model: Model, interval: TimeInterval) -> impl IntoView {
+        let forward_action: Rc<dyn Fn()> =
+            Rc::new(move || step_outer(platform, model, interval, StepDirection::Forward));
+        let backward_action: Rc<dyn Fn()> =
+            Rc::new(move || step_outer(platform, model, interval, StepDirection::Backward));
+        let forward_down = forward_action.clone();
+        let forward_key = forward_action.clone();
+        let backward_down = backward_action.clone();
+        let backward_key = backward_action.clone();
+        view! {
+            <div class="time-column">
+                <button class="repeat-button" aria-label=format!("Hold to move forward by {}", interval.label())
+                    on:pointerdown=move |event: PointerEvent| begin_hold(model, event, forward_down.clone())
+                    on:pointerup=move |_| model.stop_hold()
+                    on:pointercancel=move |_| model.stop_hold()
+                    on:lostpointercapture=move |_| model.stop_hold()
+                    on:keydown=move |event: KeyboardEvent| begin_keyboard_hold(model, event, forward_key.clone())
+                    on:keyup=move |_| model.stop_hold()>{">>"}</button>
+                <button aria-label=format!("Move forward by {}", interval.label()) on:click=move |_| step_outer(platform, model, interval, StepDirection::Forward)>{">"}</button>
+                <strong>{interval.label()}</strong>
+                <button aria-label=format!("Move backward by {}", interval.label()) on:click=move |_| step_outer(platform, model, interval, StepDirection::Backward)>{"<"}</button>
+                <button class="repeat-button" aria-label=format!("Hold to move backward by {}", interval.label())
+                    on:pointerdown=move |event: PointerEvent| begin_hold(model, event, backward_down.clone())
+                    on:pointerup=move |_| model.stop_hold()
+                    on:pointercancel=move |_| model.stop_hold()
+                    on:lostpointercapture=move |_| model.stop_hold()
+                    on:keydown=move |event: KeyboardEvent| begin_keyboard_hold(model, event, backward_key.clone())
+                    on:keyup=move |_| model.stop_hold()>{"<<"}</button>
+            </div>
+        }
+    }
+
+    #[component]
+    fn FilterPanel(model: Model) -> impl IntoView {
+        view! {
+            <section class="sidebar-module filters-module">
+                <div class="module-heading"><h2>"Points"</h2><button type="button" on:click=move |_| {
+                    model.visible_points.set(POINT_FILTERS.iter().map(|(id, _)| (*id).into()).collect());
+                }>"All"</button></div>
+                <div class="filter-grid">
+                    {POINT_FILTERS.into_iter().map(|(id, label)| view! {
+                        <label><input type="checkbox" checked=move || model.visible_points.get().contains(id) on:change=move |event| set_filter(model.visible_points, id, event_target_checked(&event)) /><span>{label}</span></label>
+                    }).collect_view()}
+                </div>
+            </section>
+            <section class="sidebar-module filters-module aspects-filter">
+                <div class="module-heading"><h2>"Aspects"</h2><button type="button" on:click=move |_| {
+                    model.visible_aspects.set(ASPECT_FILTERS.iter().map(|(id, _)| (*id).into()).collect());
+                }>"All"</button></div>
+                <div class="filter-grid">
+                    {ASPECT_FILTERS.into_iter().map(|(id, label)| view! {
+                        <label><input type="checkbox" checked=move || model.visible_aspects.get().contains(id) on:change=move |event| set_filter(model.visible_aspects, id, event_target_checked(&event)) /><span>{label}</span></label>
+                    }).collect_view()}
+                </div>
+                <p class="module-help">"Focus highlights connections. Click or Space keeps multiple selections; Escape clears."</p>
+            </section>
+        }
+    }
+
+    #[component]
+    fn SettingsView(platform: Platform, model: Model) -> impl IntoView {
+        view! {
+            <main id="settings" class="route scroll-route" tabindex="-1">
+                <div class="route-heading"><div><p class="eyebrow">"Studio preferences"</p><h1>"Settings"</h1></div><a href="#workbench">"Back to workbench"</a></div>
+                <TemplateSettings platform model />
+                <PeopleSettings platform model />
+                <LocationSettings platform model />
+                <ChartSettings platform model />
+                <AdvancedSettings platform model />
+            </main>
+        }
+    }
+
+    #[component]
+    fn TemplateSettings(platform: Platform, model: Model) -> impl IntoView {
+        let name = NodeRef::<Input>::new();
+        let orientation = NodeRef::<Select>::new();
+        let palette = NodeRef::<Select>::new();
+        let density = NodeRef::<Select>::new();
+        let save = move |new_record: bool| {
+            let result = (|| {
+                let name_value = value(name).ok_or("template name is required")?;
+                let id = if new_record {
+                    let ids = model
+                        .wheel_templates
+                        .get_untracked()
+                        .templates
+                        .iter()
+                        .map(|item| item.id.clone())
+                        .collect();
+                    generate_unique_id("wheel-template", &name_value, &ids)
+                        .map_err(|e| e.to_string())?
+                        .as_str()
+                        .to_owned()
+                } else {
+                    model
+                        .wheel_templates
+                        .get_untracked()
+                        .last_selected_template_id
+                };
+                Ok::<_, String>(WheelTemplate {
+                    id,
+                    name: name_value,
+                    orientation: if select_value(orientation).as_deref() == Some("zodiac-zero-top")
+                    {
+                        WheelOrientation::ZodiacZeroTop
+                    } else {
+                        WheelOrientation::AscendantLeft
+                    },
+                    palette: match select_value(palette).as_deref() {
+                        Some("paper-light") => WheelPalette::PaperLight,
+                        Some("high-contrast") => WheelPalette::HighContrast,
+                        _ => WheelPalette::StudioDark,
+                    },
+                    label_density: if select_value(density).as_deref() == Some("compact") {
+                        LabelDensity::Compact
+                    } else {
+                        LabelDensity::Full
+                    },
+                })
+            })();
+            match result {
+                Ok(template) => dispatch(
+                    platform,
+                    model,
+                    PlatformCommand::SaveWheelTemplate { template },
+                ),
+                Err(message) => model.problem.set(Some(message)),
+            }
+        };
+        view! {
+            <section class="settings-panel">
+                <div><p class="eyebrow">"Global, unencrypted"</p><h2>"Wheel templates"</h2><p>"Templates contain visual choices only—never chart identities, dates, points, or aspects."</p></div>
+                <form class="settings-form" on:submit=move |event: SubmitEvent| { event.prevent_default(); save(false); }>
+                    <label><span>"Name"</span><input node_ref=name required prop:value=move || model.wheel_templates.get().selected().name.clone() /></label>
+                    <label><span>"Orientation"</span><select node_ref=orientation><option value="ascendant-left" prop:selected=move || model.wheel_templates.get().selected().orientation == WheelOrientation::AscendantLeft>"Ascendant Left"</option><option value="zodiac-zero-top" prop:selected=move || model.wheel_templates.get().selected().orientation == WheelOrientation::ZodiacZeroTop>"Zodiac Zero Top"</option></select></label>
+                    <label><span>"Palette"</span><select node_ref=palette><option value="studio-dark" prop:selected=move || model.wheel_templates.get().selected().palette == WheelPalette::StudioDark>"Studio Dark"</option><option value="paper-light" prop:selected=move || model.wheel_templates.get().selected().palette == WheelPalette::PaperLight>"Paper Light"</option><option value="high-contrast" prop:selected=move || model.wheel_templates.get().selected().palette == WheelPalette::HighContrast>"High Contrast"</option></select></label>
+                    <label><span>"Label density"</span><select node_ref=density><option value="full" prop:selected=move || model.wheel_templates.get().selected().label_density == LabelDensity::Full>"Full"</option><option value="compact" prop:selected=move || model.wheel_templates.get().selected().label_density == LabelDensity::Compact>"Compact"</option></select></label>
+                    <div class="button-row"><button class="primary" type="submit">"Save selected"</button><button type="button" on:click=move |_| save(true)>"Save as new"</button><button class="danger" type="button" on:click=move |_| dispatch(platform, model, PlatformCommand::RemoveWheelTemplate { template_id: model.wheel_templates.get_untracked().last_selected_template_id })>"Remove"</button></div>
+                </form>
+            </section>
+        }
+    }
+
+    #[component]
+    fn PeopleSettings(platform: Platform, model: Model) -> impl IntoView {
+        let name = NodeRef::<Input>::new();
+        let notes = NodeRef::<Textarea>::new();
+        let submit = move |event: SubmitEvent| {
+            event.prevent_default();
+            let Some(display_name) = value(name) else {
+                return;
             };
-            let platform = Arc::clone(&platform);
-            wasm_bindgen_futures::spawn_local(async move {
-                match platform.save_location(request).await {
-                    Ok(_) => {
-                        feedback.set(Some(Ok("Saved an encrypted location snapshot.".to_owned())));
-                        refresh_saved_locations(Arc::clone(&platform), saved);
+            let ids = model
+                .workspace
+                .get_untracked()
+                .people
+                .iter()
+                .map(|item| item.id.clone())
+                .collect();
+            match generate_unique_id("person", &display_name, &ids) {
+                Ok(id) => dispatch(
+                    platform,
+                    model,
+                    PlatformCommand::AddPerson {
+                        id,
+                        display_name,
+                        kind: PersonKind::Personal,
+                        notes: text_value(notes).filter(|text| !text.trim().is_empty()),
+                    },
+                ),
+                Err(error) => model.problem.set(Some(error.to_string())),
+            }
+        };
+        view! {
+            <section class="settings-panel"><div><p class="eyebrow">"Encrypted records"</p><h2>"People"</h2><EntityList items=Signal::derive(move || model.workspace.get().people) /></div>
+                <form class="settings-form person-editor" on:submit=submit><label><span>"Display name"</span><input node_ref=name required /></label><label><span>"Notes"</span><textarea node_ref=notes></textarea></label><button class="primary" type="submit">"Add person"</button></form>
+            </section>
+        }
+    }
+
+    #[component]
+    fn LocationSettings(platform: Platform, model: Model) -> impl IntoView {
+        let label = NodeRef::<Input>::new();
+        let country = NodeRef::<Input>::new();
+        let zone = NodeRef::<Input>::new();
+        let latitude = NodeRef::<Input>::new();
+        let longitude = NodeRef::<Input>::new();
+        let query = NodeRef::<Input>::new();
+        let cities = NodeRef::<Input>::new();
+        let admin1 = NodeRef::<Input>::new();
+        let admin2 = NodeRef::<Input>::new();
+        let submit = move |event: SubmitEvent| {
+            event.prevent_default();
+            let result = (|| {
+                let label_value = value(label).ok_or("location name is required")?;
+                let ids = model
+                    .workspace
+                    .get_untracked()
+                    .locations
+                    .iter()
+                    .map(|item| item.id.clone())
+                    .collect();
+                SavedLocation::new(
+                    generate_unique_id("location", &label_value, &ids)
+                        .map_err(|e| e.to_string())?,
+                    label_value,
+                    Vec::new(),
+                    value(country)
+                        .ok_or("country is required")?
+                        .to_ascii_uppercase(),
+                    value(latitude)
+                        .ok_or("latitude is required")?
+                        .parse()
+                        .map_err(|_| "invalid latitude")?,
+                    value(longitude)
+                        .ok_or("longitude is required")?
+                        .parse()
+                        .map_err(|_| "invalid longitude")?,
+                    None,
+                    value(zone).ok_or("time zone is required")?,
+                    LocationProvenance::Manual,
+                )
+                .map_err(|e| e.to_string())
+            })();
+            match result {
+                Ok(location) => {
+                    dispatch(platform, model, PlatformCommand::SaveLocation { location })
+                }
+                Err(message) => model.problem.set(Some(message)),
+            }
+        };
+        let install_local = move |event: SubmitEvent| {
+            event.prevent_default();
+            let files = [cities, admin1, admin2].map(|input| {
+                input
+                    .get()
+                    .and_then(|element| element.files())
+                    .and_then(|files| files.item(0))
+            });
+            let [Some(cities_file), Some(admin1_file), Some(admin2_file)] = files else {
+                model
+                    .problem
+                    .set(Some("Choose all three GeoNames files.".into()));
+                return;
+            };
+            spawn_local(async move {
+                let result = async {
+                    Ok::<_, String>(CatalogInstallInput {
+                        cities500_zip: read_file(cities_file).await?,
+                        admin1_codes: read_file(admin1_file).await?,
+                        admin2_codes: read_file(admin2_file).await?,
+                        retrieved_at: canonical_now(),
+                        retrieval: CatalogRetrieval::LocalFiles,
+                    })
+                }
+                .await;
+                match result {
+                    Ok(input) => {
+                        dispatch(platform, model, PlatformCommand::InstallCatalog { input })
                     }
-                    Err(error) => feedback.set(Some(Err(error.message().to_owned()))),
+                    Err(message) => model.problem.set(Some(message)),
                 }
             });
+        };
+        view! {
+            <section class="settings-panel"><div><p class="eyebrow">"Encrypted snapshots"</p><h2>"Locations / GeoNames"</h2><EntityList items=Signal::derive(move || model.workspace.get().locations) /></div>
+                <div class="settings-stack">
+                    <form class="settings-form location-editor" on:submit=submit><label><span>"Location name"</span><input node_ref=label required /></label><div class="field-row"><label><span>"Country"</span><input node_ref=country maxlength="2" required value="US" /></label><label><span>"IANA time zone"</span><input node_ref=zone required value="America/New_York" /></label></div><div class="field-row"><label><span>"Latitude"</span><input node_ref=latitude required inputmode="decimal" /></label><label><span>"Longitude"</span><input node_ref=longitude required inputmode="decimal" /></label></div><button class="primary">"Save location"</button></form>
+                    <div class="settings-form catalog-controls"><h3>"Local GeoNames catalog"</h3><p>{move || model.capabilities.get().and_then(|status| status.catalog).map(|catalog| format!("{} local places · {}", catalog.place_count, catalog.content_id)).unwrap_or_else(|| "No catalog installed; manual locations remain available.".into())}</p><button on:click=move |_| dispatch(platform, model, PlatformCommand::InstallPinnedCatalog)>"Install pinned catalog"</button><form class="catalog-upload" on:submit=install_local><label><span>"cities500.zip"</span><input node_ref=cities type="file" required accept=".zip" /></label><label><span>"admin1CodesASCII.txt"</span><input node_ref=admin1 type="file" required accept=".txt,text/plain" /></label><label><span>"admin2Codes.txt"</span><input node_ref=admin2 type="file" required accept=".txt,text/plain" /></label><button>"Install local catalog"</button></form><form class="inline-search" on:submit=move |event: SubmitEvent| { event.prevent_default(); if let Some(query) = value(query) { dispatch(platform, model, PlatformCommand::SearchCatalog { query, limit: 20 }); } }><input node_ref=query aria-label="Search GeoNames" required /><button>"Search locally"</button></form><ul class="search-results">{move || model.catalog_results.get().into_iter().map(|result| view! { <li><strong>{result.place().name().to_owned()}</strong><small>{format!("{} · {}", result.place().country_code(), result.place().time_zone())}</small></li> }).collect_view()}</ul></div>
+                </div>
+            </section>
         }
-    };
-    view! {
-        <article class="catalog-result">
-            <div>
-                <h3>{place.name}</h3>
-                <p>{details}</p>
-                <small>{format!("{} · {:.4}, {:.4} · population {}", place.time_zone, place.latitude_degrees, place.longitude_degrees, place.population)}</small>
-            </div>
-            <button class="quiet-button" type="button" on:click=save>"Save snapshot"</button>
-        </article>
     }
-}
 
-#[component]
-fn ManualLocationForm(
-    platform: Arc<dyn StudioPlatform>,
-    feedback: RwSignal<Option<Result<String, String>>>,
-    saved: RwSignal<Option<Result<Vec<LocationSummary>, PlatformError>>>,
-) -> impl IntoView {
-    let id_ref = NodeRef::<Input>::new();
-    let label_ref = NodeRef::<Input>::new();
-    let admin_ref = NodeRef::<Input>::new();
-    let country_ref = NodeRef::<Input>::new();
-    let latitude_ref = NodeRef::<Input>::new();
-    let longitude_ref = NodeRef::<Input>::new();
-    let elevation_ref = NodeRef::<Input>::new();
-    let zone_ref = NodeRef::<Input>::new();
-    let submit = move |event: SubmitEvent| {
-        event.prevent_default();
-        let values = (
-            id_ref.get().map(|input| input.value()),
-            label_ref.get().map(|input| input.value()),
-            country_ref.get().map(|input| input.value()),
-            latitude_ref.get().map(|input| input.value()),
-            longitude_ref.get().map(|input| input.value()),
-            zone_ref.get().map(|input| input.value()),
-        );
-        let (Some(id), Some(label), Some(country), Some(latitude), Some(longitude), Some(zone)) =
-            values
-        else {
-            return;
-        };
-        let latitude = match latitude.parse::<f64>() {
-            Ok(value) => value,
-            Err(_) => {
-                feedback.set(Some(Err("Latitude must be a number.".to_owned())));
-                return;
+    #[component]
+    fn ChartSettings(platform: Platform, model: Model) -> impl IntoView {
+        let label = NodeRef::<Input>::new();
+        let role = NodeRef::<Select>::new();
+        let date = NodeRef::<Input>::new();
+        let time = NodeRef::<Input>::new();
+        let zone = NodeRef::<Input>::new();
+        let zodiac = NodeRef::<Select>::new();
+        let houses = NodeRef::<Select>::new();
+        let submit = move |event: SubmitEvent| {
+            event.prevent_default();
+            let result = (|| {
+                let label_value = value(label).ok_or("chart name is required")?;
+                let ids = model
+                    .workspace
+                    .get_untracked()
+                    .charts
+                    .iter()
+                    .map(|item| item.id.clone())
+                    .collect();
+                let zodiac_value = if select_value(zodiac).as_deref() == Some("sidereal") {
+                    ZodiacId::Sidereal
+                } else {
+                    ZodiacId::Tropical
+                };
+                let default_options = ChartCalculationOptions::default();
+                let options = ChartCalculationOptions::new(
+                    zodiac_value,
+                    (zodiac_value == ZodiacId::Sidereal).then_some(AyanamsaId::Lahiri),
+                    match select_value(houses).as_deref() {
+                        Some("whole-sign") => HouseSystemId::WholeSign,
+                        Some("equal") => HouseSystemId::Equal,
+                        _ => HouseSystemId::Placidus,
+                    },
+                    default_options.ordered_objects().to_vec(),
+                )
+                .map_err(|e| e.to_string())?;
+                ChartDefinition::new(
+                    generate_unique_id("chart", &label_value, &ids).map_err(|e| e.to_string())?,
+                    label_value,
+                    chart_role(select_value(role).as_deref()),
+                    None,
+                    LocalDateTimeInput::new(
+                        value(date).ok_or("date is required")?,
+                        normalized_time(value(time).ok_or("time is required")?),
+                        value(zone).ok_or("time zone is required")?,
+                    )
+                    .map_err(|e| e.to_string())?,
+                    options,
+                    default_chart_points(),
+                    false,
+                )
+                .map_err(|e| e.to_string())
+            })();
+            match result {
+                Ok(chart) => dispatch(platform, model, PlatformCommand::SaveChart { chart }),
+                Err(message) => model.problem.set(Some(message)),
             }
         };
-        let longitude = match longitude.parse::<f64>() {
-            Ok(value) => value,
-            Err(_) => {
-                feedback.set(Some(Err("Longitude must be a number.".to_owned())));
-                return;
+        view! {
+            <section class="settings-panel"><div><p class="eyebrow">"Definitions and defaults"</p><h2>"Charts"</h2><ul class="entity-list">{move || model.workspace.get().charts.into_iter().map(|chart| view! { <li><strong>{chart.label}</strong><small>{chart.local_input}</small></li> }).collect_view()}</ul></div>
+                <form class="settings-form new-chart-editor" on:submit=submit><label><span>"Chart name"</span><input node_ref=label required /></label><div class="field-row"><label><span>"Role"</span><select node_ref=role><option value="natal">"Natal"</option><option value="transit">"Transit"</option><option value="event">"Event"</option></select></label><label><span>"Zodiac"</span><select node_ref=zodiac><option value="tropical">"Tropical"</option><option value="sidereal">"Sidereal · Lahiri"</option></select></label></div><div class="field-row"><label><span>"Date"</span><input node_ref=date type="date" required /></label><label><span>"Time"</span><input node_ref=time type="time" step="1" required /></label></div><label><span>"IANA time zone"</span><input node_ref=zone required value="America/New_York" /></label><label><span>"House system"</span><select node_ref=houses><option value="placidus">"Placidus"</option><option value="whole-sign">"Whole Sign"</option><option value="equal">"Equal"</option></select></label><button class="primary">"Create chart"</button></form>
+            </section>
+        }
+    }
+
+    #[component]
+    fn AdvancedSettings(platform: Platform, model: Model) -> impl IntoView {
+        let label = NodeRef::<Input>::new();
+        let inner = NodeRef::<Select>::new();
+        let outer = NodeRef::<Select>::new();
+        let submit = move |event: SubmitEvent| {
+            event.prevent_default();
+            let result = (|| {
+                let label_value = value(label).ok_or("comparison name is required")?;
+                let ids = model
+                    .workspace
+                    .get_untracked()
+                    .comparisons
+                    .iter()
+                    .map(|item| item.id.clone())
+                    .collect();
+                ComparisonPreset::new(
+                    generate_unique_id("comparison", &label_value, &ids)
+                        .map_err(|e| e.to_string())?,
+                    label_value,
+                    StableId::new(
+                        "comparison.inner",
+                        select_value(inner).ok_or("inner chart is required")?,
+                    )
+                    .map_err(|e| e.to_string())?,
+                    StableId::new(
+                        "comparison.outer",
+                        select_value(outer).ok_or("outer chart is required")?,
+                    )
+                    .map_err(|e| e.to_string())?,
+                    default_chart_points(),
+                    default_chart_points(),
+                    default_aspects(),
+                    ComparisonWheelOrientation::AscendantLeft,
+                )
+                .map_err(|e| e.to_string())
+            })();
+            match result {
+                Ok(preset) => dispatch(platform, model, PlatformCommand::SaveComparison { preset }),
+                Err(message) => model.problem.set(Some(message)),
             }
         };
-        let elevation = elevation_ref
-            .get()
-            .map(|input| input.value())
-            .filter(|value| !value.trim().is_empty())
-            .map(|value| value.parse::<f64>());
-        let elevation = match elevation.transpose() {
-            Ok(value) => value,
-            Err(_) => {
-                feedback.set(Some(Err("Elevation must be blank or a number.".to_owned())));
-                return;
-            }
-        };
-        let administrative_names = admin_ref
-            .get()
-            .map(|input| input.value())
-            .unwrap_or_default()
-            .split(',')
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_owned)
-            .collect();
-        let request = SaveLocationRequest {
-            protocol_version: PROTOCOL_VERSION,
-            id,
-            label,
-            administrative_names,
-            country_code: country.trim().to_uppercase(),
-            latitude_degrees: latitude,
-            longitude_degrees: longitude,
-            elevation_meters: elevation,
-            time_zone: zone,
-            provenance: LocationProvenanceInput::Manual,
-        };
-        let platform = Arc::clone(&platform);
-        wasm_bindgen_futures::spawn_local(async move {
-            match platform.save_location(request).await {
-                Ok(_) => {
-                    feedback.set(Some(Ok("Saved the manual location.".to_owned())));
-                    refresh_saved_locations(Arc::clone(&platform), saved);
+        view! {
+            <details class="settings-panel advanced"><summary><span><span class="eyebrow">"Advanced"</span><strong>"Comparison records"</strong></span></summary><div><p>"Saved comparison presets remain separate from global visual wheel templates."</p><EntityList items=Signal::derive(move || model.workspace.get().comparisons) /></div><form class="settings-form comparison-editor" on:submit=submit><label><span>"Preset name"</span><input node_ref=label required /></label><label><span>"Inner chart"</span><select node_ref=inner required>{move || chart_options(&model.workspace.get(), "")}</select></label><label><span>"Outer chart"</span><select node_ref=outer required>{move || chart_options(&model.workspace.get(), "")}</select></label><button>"Save comparison preset"</button></form></details>
+        }
+    }
+
+    #[component]
+    fn EntityList(items: Signal<Vec<oracle_studio_platform::EntitySummary>>) -> impl IntoView {
+        view! { <ul class="entity-list">{move || items.get().into_iter().map(|item| view! { <li><strong>{item.label}</strong></li> }).collect_view()}</ul> }
+    }
+
+    #[component]
+    fn FilesView(platform: Platform, model: Model) -> impl IntoView {
+        let title = NodeRef::<Input>::new();
+        let password = NodeRef::<Input>::new();
+        let import = NodeRef::<Input>::new();
+        let replace = NodeRef::<Input>::new();
+        view! {
+            <main id="files" class="route scroll-route" tabindex="-1">
+                <div class="route-heading"><div><p class="eyebrow">"Portable, browser-local storage"</p><h1>"Files"</h1></div><a href="#workbench">"Back to workbench"</a></div>
+                <section class="file-warning"><strong>"Exports are your backups."</strong><span>{move || model.capabilities.get().map(|status| status.backup_warning).unwrap_or_else(|| "Browser storage can be evicted.".into())}</span></section>
+                <section class="file-toolbar">
+                    <button class="primary" on:click=move |_| dispatch(platform, model, PlatformCommand::CreateScratch)>"New scratch"</button>
+                    <label class="file-action">"Import .oracle-vault"<input node_ref=import type="file" accept=".oracle-vault,application/octet-stream" on:change=move |_| {
+                        let Some(file) = import.get().and_then(|input| input.files()).and_then(|files| files.item(0)) else { return; };
+                        let replace_confirmed = replace.get().is_some_and(|input| input.checked());
+                        spawn_local(async move { match read_file(file).await { Ok(bytes) => dispatch(platform, model, PlatformCommand::ImportVault { bytes, replace_confirmed }), Err(message) => model.problem.set(Some(message)) } });
+                    } /></label>
+                    <label class="check-label"><input node_ref=replace type="checkbox" /><span>"Replace duplicate vault ID"</span></label>
+                </section>
+                {move || if model.workspace.get().active == Some(ActiveWorkspace::Scratch) {
+                    view! { <form class="save-scratch settings-form" on:submit=move |event: SubmitEvent| { event.prevent_default(); if let (Some(title), Some(password_value)) = (value(title), value(password)) { dispatch(platform, model, PlatformCommand::SaveScratch { title, password: password_value.into_bytes() }); if let Some(input) = password.get() { input.set_value(""); } } }><h2>"Save scratch as an encrypted vault"</h2><label><span>"Public title"</span><input node_ref=title required /></label><label><span>"Password"</span><input node_ref=password type="password" autocomplete="new-password" required /></label><div class="button-row"><button class="primary">"Save encrypted vault"</button><button type="button" class="danger" on:click=move |_| { let confirmed = !model.workspace.get_untracked().scratch_dirty || confirm("Discard unsaved scratch work?"); dispatch(platform, model, PlatformCommand::DiscardScratch { confirmed }); }>"Discard scratch"</button></div></form> }.into_any()
+                } else { ().into_any() }}
+                <section class="vault-grid">
+                    <For each=move || model.vaults.get() key=|vault| format!("{}:{}:{:?}", vault.id, vault.revision, vault.lock_state) children=move |vault| view! { <VaultCard platform model vault /> } />
+                    {move || if model.vaults.get().is_empty() { view! { <div class="empty-card"><span>"◇"</span><p>"No encrypted vaults in this browser."</p></div> }.into_any() } else { ().into_any() }}
+                </section>
+            </main>
+        }
+    }
+
+    #[component]
+    fn VaultCard(platform: Platform, model: Model, vault: VaultSummary) -> impl IntoView {
+        let password = NodeRef::<Input>::new();
+        let unlock_id = vault.id.clone();
+        let activate_id = vault.id.clone();
+        let lock_id = vault.id.clone();
+        let export_id = vault.id.clone();
+        let remove_id = vault.id.clone();
+        let state = vault.lock_state.clone();
+        view! {
+            <article class="vault-card"><div class="vault-card-top"><span class="vault-icon">"◈"</span><span class=format!("badge {:?}", state)>{format!("{:?}", state)}</span></div><h2>{vault.title}</h2><small>{format!("Updated {}", vault.modified_at)}</small>
+                {if state == VaultLockState::Locked {
+                    view! { <form class="unlock-form" on:submit=move |event: SubmitEvent| { event.prevent_default(); if let Some(password_value) = value(password) { dispatch(platform, model, PlatformCommand::UnlockVault { vault_id: unlock_id.clone(), password: password_value.into_bytes() }); if let Some(input) = password.get() { input.set_value(""); } } }><label><span>"Password"</span><input node_ref=password type="password" autocomplete="current-password" required /></label><button class="primary">"Unlock"</button></form> }.into_any()
+                } else {
+                    view! { <div class="button-row"><button class="primary" on:click=move |_| dispatch(platform, model, PlatformCommand::ActivateVault { vault_id: activate_id.clone() })>"Use"</button><button on:click=move |_| dispatch(platform, model, PlatformCommand::LockVault { vault_id: lock_id.clone() })>"Lock"</button></div> }.into_any()
+                }}
+                <div class="button-row secondary-actions"><button on:click=move |_| dispatch(platform, model, PlatformCommand::ExportVault { vault_id: export_id.clone() })>"Export"</button><button class="danger" on:click=move |_| dispatch(platform, model, PlatformCommand::RemoveVault { vault_id: remove_id.clone(), confirmed: confirm("Remove this browser copy? Exported backups are unaffected.") })>"Remove"</button></div>
+            </article>
+        }
+    }
+
+    fn dispatch(platform: Platform, model: Model, command: PlatformCommand) {
+        model.busy.set(true);
+        model.problem.set(None);
+        let future = platform.with_value(|platform| platform.execute(command));
+        spawn_local(async move {
+            match future.await {
+                Ok(response) => {
+                    let preview_after = apply_response(model, response);
+                    if preview_after && ensure_workbench_defaults(model) {
+                        queue_selected_preview(platform, model, None);
+                    }
                 }
-                Err(error) => feedback.set(Some(Err(error.message().to_owned()))),
+                Err(error) => model.problem.set(Some(error.message)),
+            }
+            model.busy.set(false);
+        });
+    }
+
+    fn apply_response(model: Model, response: PlatformResponse) -> bool {
+        match response {
+            PlatformResponse::Ready {
+                vaults,
+                workspace,
+                capabilities,
+                wheel_templates,
+            } => {
+                model.vaults.set(vaults);
+                model.workspace.set(workspace);
+                model.capabilities.set(Some(capabilities));
+                model.wheel_templates.set(wheel_templates);
+                model.notice.set(Some("Browser-local studio ready.".into()));
+                true
+            }
+            PlatformResponse::Vaults(vaults) => {
+                model.vaults.set(vaults);
+                false
+            }
+            PlatformResponse::Workspace(workspace) => {
+                model.workspace.set(workspace);
+                true
+            }
+            PlatformResponse::Updated { vaults, workspace } => {
+                model.vaults.set(vaults);
+                model.workspace.set(workspace);
+                model.notice.set(Some("Local workspace updated.".into()));
+                true
+            }
+            PlatformResponse::WheelTemplates(settings) => {
+                model.wheel_templates.set(settings);
+                false
+            }
+            PlatformResponse::WorkbenchPreview(presentation) => {
+                model.presentation.set(Some(presentation));
+                false
+            }
+            PlatformResponse::Export { filename, bytes } => {
+                match download(&filename, &bytes) {
+                    Ok(()) => model.notice.set(Some(format!("Downloaded {filename}."))),
+                    Err(message) => model.problem.set(Some(message)),
+                };
+                false
+            }
+            PlatformResponse::LocalTime(resolution) => {
+                model.notice.set(Some(format_local_time(&resolution)));
+                false
+            }
+            PlatformResponse::CatalogInstalled(metadata) => {
+                model.capabilities.update(|status| {
+                    if let Some(status) = status {
+                        status.catalog = Some(metadata.clone());
+                    }
+                });
+                model.notice.set(Some(format!(
+                    "Installed {} GeoNames places.",
+                    metadata.place_count
+                )));
+                false
+            }
+            PlatformResponse::CatalogResults(results) => {
+                model
+                    .notice
+                    .set(Some(format!("Found {} local matches.", results.len())));
+                model.catalog_results.set(results);
+                false
+            }
+        }
+    }
+
+    fn ensure_workbench_defaults(model: Model) -> bool {
+        let workspace = model.workspace.get_untracked();
+        if workspace.active.is_none()
+            || workspace.charts.is_empty()
+            || workspace.locations.is_empty()
+        {
+            model.presentation.set(None);
+            return false;
+        }
+        if !workspace
+            .charts
+            .iter()
+            .any(|chart| chart.id == model.inner_chart_id.get_untracked())
+        {
+            model.inner_chart_id.set(workspace.charts[0].id.clone());
+        }
+        if !workspace
+            .charts
+            .iter()
+            .any(|chart| chart.id == model.outer_chart_id.get_untracked())
+        {
+            model.outer_chart_id.set(
+                workspace
+                    .charts
+                    .get(1)
+                    .unwrap_or(&workspace.charts[0])
+                    .id
+                    .clone(),
+            );
+            let chart = selected_chart(&workspace, &model.outer_chart_id.get_untracked()).unwrap();
+            model.desired_outer.set(chart_input(chart).ok());
+        }
+        if !workspace
+            .locations
+            .iter()
+            .any(|item| item.id == model.inner_location_id.get_untracked())
+        {
+            model
+                .inner_location_id
+                .set(workspace.locations[0].id.clone());
+        }
+        if !workspace
+            .locations
+            .iter()
+            .any(|item| item.id == model.outer_location_id.get_untracked())
+        {
+            model
+                .outer_location_id
+                .set(workspace.locations[0].id.clone());
+        }
+        if model.desired_outer.get_untracked().is_none()
+            && let Some(chart) = selected_chart(&workspace, &model.outer_chart_id.get_untracked())
+        {
+            model.desired_outer.set(chart_input(chart).ok());
+        }
+        true
+    }
+
+    fn select_outer_chart(platform: Platform, model: Model, id: &str) {
+        model.outer_chart_id.set(id.into());
+        model.outer_ambiguous_choice.set(None);
+        if let Some(chart) = selected_chart(&model.workspace.get_untracked(), id) {
+            model.desired_outer.set(chart_input(chart).ok());
+        }
+        queue_selected_preview(platform, model, None);
+    }
+
+    fn queue_selected_preview(platform: Platform, model: Model, adjustment_notice: Option<String>) {
+        let result = (|| {
+            let desired = model
+                .desired_outer
+                .get_untracked()
+                .ok_or("outer chart time is unavailable")?;
+            Ok::<_, String>(PreviewPayload {
+                inner_chart_definition_id: StableId::new(
+                    "workbench.inner",
+                    model.inner_chart_id.get_untracked(),
+                )
+                .map_err(|e| e.to_string())?,
+                outer_chart_definition_id: StableId::new(
+                    "workbench.outer",
+                    model.outer_chart_id.get_untracked(),
+                )
+                .map_err(|e| e.to_string())?,
+                inner_saved_location_id: StableId::new(
+                    "workbench.inner_location",
+                    model.inner_location_id.get_untracked(),
+                )
+                .map_err(|e| e.to_string())?,
+                outer_saved_location_id: StableId::new(
+                    "workbench.outer_location",
+                    model.outer_location_id.get_untracked(),
+                )
+                .map_err(|e| e.to_string())?,
+                outer_local_input: desired,
+                outer_ambiguous_time_choice: model.outer_ambiguous_choice.get_untracked(),
+                adjustment_notice,
+            })
+        })();
+        let payload = match result {
+            Ok(value) => value,
+            Err(message) => {
+                model.problem.set(Some(message));
+                return;
+            }
+        };
+        let decision = model
+            .coordinator
+            .with_value(|state| state.borrow_mut().enqueue(payload));
+        match decision {
+            PreviewEnqueue::Dispatch {
+                generation,
+                payload,
+            } => send_preview(platform, model, generation, payload),
+            PreviewEnqueue::Coalesced { generation } => {
+                model.latest_generation.set(generation);
+                model.calculating.set(true);
+            }
+        }
+    }
+
+    fn send_preview(platform: Platform, model: Model, generation: u64, payload: PreviewPayload) {
+        model.latest_generation.set(generation);
+        model.calculating.set(true);
+        model.problem.set(None);
+        let request = WorkbenchPreviewRequest {
+            generation: PreviewGeneration::new(generation),
+            inner_chart_definition_id: payload.inner_chart_definition_id,
+            outer_chart_definition_id: payload.outer_chart_definition_id,
+            inner_saved_location_id: payload.inner_saved_location_id,
+            outer_saved_location_id: payload.outer_saved_location_id,
+            outer_local_input: payload.outer_local_input,
+            outer_ambiguous_time_choice: payload.outer_ambiguous_time_choice,
+            adjustment_notice: payload.adjustment_notice,
+        };
+        let future = platform
+            .with_value(|platform| platform.execute(PlatformCommand::WorkbenchPreview { request }));
+        spawn_local(async move {
+            let result = future.await;
+            let completion = model
+                .coordinator
+                .with_value(|state| state.borrow_mut().complete(generation));
+            match result {
+                Ok(PlatformResponse::WorkbenchPreview(presentation))
+                    if completion.accept_response
+                        && presentation.generation.get() == generation =>
+                {
+                    model
+                        .desired_outer
+                        .set(Some(presentation.outer.local_input.clone()));
+                    model.notice.set(presentation.adjustment_notice.clone());
+                    model.presentation.set(Some(presentation));
+                    model.fallback_presentation.set(None);
+                }
+                Ok(PlatformResponse::WorkbenchPreview(presentation)) => {
+                    model.fallback_presentation.set(Some(presentation));
+                }
+                Ok(response) => {
+                    apply_response(model, response);
+                }
+                Err(error) => {
+                    model.stop_hold();
+                    model
+                        .coordinator
+                        .with_value(|state| state.borrow_mut().cancel());
+                    if let Some(fallback) = model.fallback_presentation.get_untracked() {
+                        model
+                            .desired_outer
+                            .set(Some(fallback.outer.local_input.clone()));
+                        model.presentation.set(Some(fallback));
+                        model.fallback_presentation.set(None);
+                    } else if let Some(last) = model.presentation.get_untracked() {
+                        model.desired_outer.set(Some(last.outer.local_input));
+                    }
+                    model.problem.set(Some(error.message));
+                    model.calculating.set(false);
+                    return;
+                }
+            }
+            if let Some((next_generation, next_payload)) = completion.next {
+                send_preview(platform, model, next_generation, next_payload);
+            } else {
+                model.calculating.set(false);
             }
         });
-    };
-    view! {
-        <form class="panel catalog-panel manual-location-form" on:submit=submit>
-            <p class="eyebrow">"Always available"</p>
-            <h2>"Manual location"</h2>
-            <p class="muted">"Enter explicit coordinates and an IANA time zone when no catalog is installed or the place is absent."</p>
-            <div class="form-grid">
-                <label><span>"Record ID"</span><input node_ref=id_ref required type="text" placeholder="home_city" /></label>
-                <label><span>"Label"</span><input node_ref=label_ref required type="text" placeholder="Home city" /></label>
-                <label class="wide-field"><span>"Administrative names (comma-separated)"</span><input node_ref=admin_ref type="text" placeholder="County, State" /></label>
-                <label><span>"Country code"</span><input node_ref=country_ref required maxlength="2" type="text" placeholder="US" /></label>
-                <label><span>"IANA time zone"</span><input node_ref=zone_ref required type="text" placeholder="America/New_York" /></label>
-                <label><span>"Latitude"</span><input node_ref=latitude_ref required inputmode="decimal" type="text" placeholder="38.9072" /></label>
-                <label><span>"Longitude"</span><input node_ref=longitude_ref required inputmode="decimal" type="text" placeholder="-77.0369" /></label>
-                <label><span>"Elevation meters (optional)"</span><input node_ref=elevation_ref inputmode="decimal" type="text" /></label>
-            </div>
-            <button class="secondary-button" type="submit">"Save manual location"</button>
-        </form>
+    }
+
+    fn step_outer(
+        platform: Platform,
+        model: Model,
+        interval: TimeInterval,
+        direction: StepDirection,
+    ) {
+        let Some(input) = model.desired_outer.get_untracked() else {
+            return;
+        };
+        let previous_offset = model
+            .presentation
+            .get_untracked()
+            .map(|value| value.outer.utc_offset_seconds);
+        match step_local_time(&input, previous_offset, interval, direction) {
+            Ok(step) => {
+                model.desired_outer.set(Some(step.local_input));
+                model.outer_ambiguous_choice.set(step.ambiguous_time_choice);
+                queue_selected_preview(platform, model, step.adjustment_notice);
+            }
+            Err(error) => {
+                model.stop_hold();
+                model.problem.set(Some(error.to_string()));
+            }
+        }
+    }
+
+    fn commit_preview(platform: Platform, model: Model, save_mode: PreviewSaveMode) {
+        if let Some(presentation) = model.presentation.get_untracked() {
+            dispatch(
+                platform,
+                model,
+                PlatformCommand::CommitWorkbenchPreview {
+                    generation: presentation.generation,
+                    save_mode,
+                },
+            );
+        }
+    }
+
+    fn select_template(platform: Platform, model: Model, id: &str) {
+        model
+            .wheel_templates
+            .update(|settings| settings.last_selected_template_id = id.into());
+        dispatch(
+            platform,
+            model,
+            PlatformCommand::SelectWheelTemplate {
+                template_id: id.into(),
+            },
+        );
+    }
+
+    fn begin_hold(model: Model, event: PointerEvent, action: Rc<dyn Fn()>) {
+        event.prevent_default();
+        if let Some(target) = event
+            .current_target()
+            .and_then(|target| target.dyn_into::<Element>().ok())
+        {
+            let _ = target.set_pointer_capture(event.pointer_id());
+        }
+        model.holds.with_value(|holds| holds.start(action));
+    }
+
+    fn begin_keyboard_hold(model: Model, event: KeyboardEvent, action: Rc<dyn Fn()>) {
+        if !event.repeat() && (event.key() == " " || event.key() == "Enter") {
+            event.prevent_default();
+            model.holds.with_value(|holds| holds.start(action));
+        }
+    }
+
+    fn toggle_interaction(model: Model, element: &Element) {
+        match element.get_attribute("data-interaction").as_deref() {
+            Some("point") => {
+                if let Some(id) = element.get_attribute("data-point-id") {
+                    toggle_set(model.selected_points, &id);
+                }
+            }
+            Some("aspect") => {
+                if let Some(id) = element.get_attribute("data-aspect-id") {
+                    toggle_set(model.selected_aspects, &id);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn interaction_element(target: Option<web_sys::EventTarget>) -> Option<Element> {
+        target?
+            .dyn_into::<Element>()
+            .ok()?
+            .closest("[data-interaction]")
+            .ok()
+            .flatten()
+    }
+
+    fn toggle_set(signal: RwSignal<BTreeSet<String>>, id: &str) {
+        signal.update(|set| {
+            if !set.remove(id) {
+                set.insert(id.into());
+            }
+        });
+    }
+
+    fn set_filter(signal: RwSignal<BTreeSet<String>>, id: &str, checked: bool) {
+        signal.update(|set| {
+            if checked {
+                set.insert(id.into());
+            } else {
+                set.remove(id);
+            }
+        });
+    }
+
+    fn selected_chart<'a>(workspace: &'a WorkspaceSummary, id: &str) -> Option<&'a ChartSummary> {
+        workspace.charts.iter().find(|chart| chart.id == id)
+    }
+
+    fn chart_input(
+        chart: &ChartSummary,
+    ) -> Result<LocalDateTimeInput, oracle_studio_core::ModelError> {
+        LocalDateTimeInput::new(&chart.local_date, &chart.local_time, &chart.time_zone)
+    }
+
+    fn chart_role(value: Option<&str>) -> ChartRole {
+        match value {
+            Some("natal") => ChartRole::Natal,
+            Some("event") => ChartRole::Event,
+            _ => ChartRole::Transit,
+        }
+    }
+
+    fn normalized_time(value: String) -> String {
+        if value.matches(':').count() == 1 {
+            format!("{value}:00")
+        } else {
+            value
+        }
+    }
+
+    fn location_options(workspace: &WorkspaceSummary, selected: &str) -> impl IntoView + use<> {
+        workspace.locations.iter().map(|item| view! { <option value=item.id.clone() selected=item.id == selected>{item.label.clone()}</option> }).collect_view()
+    }
+
+    fn chart_options(workspace: &WorkspaceSummary, selected: &str) -> impl IntoView + use<> {
+        workspace.charts.iter().map(|item| view! { <option value=item.id.clone() selected=item.id == selected>{item.label.clone()}</option> }).collect_view()
+    }
+
+    fn install_lifecycle_guards(model: Model) {
+        let before_unload =
+            Closure::<dyn FnMut(BeforeUnloadEvent)>::new(move |event: BeforeUnloadEvent| {
+                if model.workspace.get_untracked().scratch_dirty {
+                    event.prevent_default();
+                    event.set_return_value("Unsaved scratch work will be lost.");
+                }
+            });
+        let blur_model = model;
+        let blur = Closure::<dyn FnMut()>::new(move || blur_model.stop_hold());
+        let visibility_model = model;
+        let visibility = Closure::<dyn FnMut()>::new(move || {
+            if web_sys::window()
+                .and_then(|window| window.document())
+                .is_some_and(|document| document.hidden())
+            {
+                visibility_model.stop_hold();
+            }
+        });
+        if let Some(window) = web_sys::window() {
+            let _ = window.add_event_listener_with_callback(
+                "beforeunload",
+                before_unload.as_ref().unchecked_ref(),
+            );
+            let _ = window.add_event_listener_with_callback("blur", blur.as_ref().unchecked_ref());
+            if let Some(document) = window.document() {
+                let _ = document.add_event_listener_with_callback(
+                    "visibilitychange",
+                    visibility.as_ref().unchecked_ref(),
+                );
+            }
+            before_unload.forget();
+            blur.forget();
+            visibility.forget();
+        }
+    }
+
+    async fn read_file(file: File) -> Result<Vec<u8>, String> {
+        let buffer = JsFuture::from(file.array_buffer())
+            .await
+            .map_err(|_| format!("Could not read {}.", file.name()))?;
+        Ok(Uint8Array::new(&buffer).to_vec())
+    }
+
+    fn download(filename: &str, bytes: &[u8]) -> Result<(), String> {
+        let parts = Array::new();
+        parts.push(&Uint8Array::from(bytes));
+        let blob = Blob::new_with_u8_array_sequence(&parts)
+            .map_err(|_| "Could not create export download.".to_string())?;
+        let url = Url::create_object_url_with_blob(&blob)
+            .map_err(|_| "Could not create export URL.".to_string())?;
+        let document = web_sys::window()
+            .and_then(|window| window.document())
+            .ok_or("Document unavailable.")?;
+        let anchor: HtmlAnchorElement = document
+            .create_element("a")
+            .map_err(|_| "Could not create download link.")?
+            .unchecked_into();
+        anchor.set_href(&url);
+        anchor.set_download(filename);
+        anchor.click();
+        Url::revoke_object_url(&url).map_err(|_| "Could not release export URL.".to_string())
+    }
+
+    fn confirm(message: &str) -> bool {
+        web_sys::window()
+            .and_then(|window| window.confirm_with_message(message).ok())
+            .unwrap_or(false)
+    }
+
+    fn canonical_now() -> String {
+        let iso = js_sys::Date::new_0()
+            .to_iso_string()
+            .as_string()
+            .unwrap_or_else(|| "1970-01-01T00:00:00.000Z".into());
+        iso.split_once('.')
+            .map_or(iso.clone(), |(seconds, _)| format!("{seconds}Z"))
+    }
+
+    fn active_label(workspace: &WorkspaceSummary) -> String {
+        match workspace.active.as_ref() {
+            Some(ActiveWorkspace::Scratch) => if workspace.scratch_dirty {
+                "Scratch · unsaved"
+            } else {
+                "Scratch · clean"
+            }
+            .into(),
+            Some(ActiveWorkspace::Vault(_)) => "Encrypted vault · active".into(),
+            None => "No active workspace".into(),
+        }
+    }
+
+    fn empty_workspace() -> WorkspaceSummary {
+        WorkspaceSummary {
+            active: None,
+            scratch_dirty: false,
+            people: Vec::new(),
+            locations: Vec::new(),
+            charts: Vec::new(),
+            comparisons: Vec::new(),
+        }
+    }
+
+    fn value(node: NodeRef<Input>) -> Option<String> {
+        node.get()
+            .map(|input| input.value())
+            .filter(|value| !value.is_empty())
+    }
+    fn text_value(node: NodeRef<Textarea>) -> Option<String> {
+        node.get().map(|input| input.value())
+    }
+    fn select_value(node: NodeRef<Select>) -> Option<String> {
+        node.get().map(|input| input.value())
+    }
+
+    fn format_local_time(resolution: &LocalTimeResolution) -> String {
+        match resolution {
+            LocalTimeResolution::Unique(value) => format!(
+                "Unique local time: {} · {}",
+                value.utc_instant(),
+                value.utc_offset_display()
+            ),
+            LocalTimeResolution::Ambiguous { earlier, later } => format!(
+                "Ambiguous local time: {} or {}",
+                earlier.utc_instant(),
+                later.utc_instant()
+            ),
+            LocalTimeResolution::Nonexistent => {
+                "That local clock time does not exist because of a daylight-saving transition."
+                    .into()
+            }
+        }
     }
 }
 
-#[component]
-pub(crate) fn PageHeader(
-    #[prop(into)] eyebrow: String,
-    #[prop(into)] title: String,
-    #[prop(into)] description: String,
-) -> impl IntoView {
-    view! {
-        <header class="page-header">
-            <p class="eyebrow">{eyebrow}</p>
-            <h1>{title}</h1>
-            <p>{description}</p>
-        </header>
-    }
-}
+#[cfg(target_arch = "wasm32")]
+pub use browser::App;
 
-#[component]
-fn NotFound() -> impl IntoView {
-    view! {
-        <section class="panel empty-state">
-            <p class="eyebrow">"404"</p><h1>"That studio route does not exist."</h1>
-            <A attr:class="secondary-button" href="/">"Return home"</A>
-        </section>
-    }
+#[cfg(not(target_arch = "wasm32"))]
+#[leptos::component]
+pub fn App() -> impl leptos::IntoView {
+    leptos::view! { <main><h1>"Oracle Studio"</h1><p>"Build this application for wasm32-unknown-unknown."</p></main> }
 }

@@ -1,22 +1,20 @@
-//! Validated application-owned composition records for Oracle Studio.
+//! Validated chart-only document records for browser-local Oracle Studio vaults.
 
 use std::collections::BTreeSet;
 
-use astraeus_artifacts::CalculationArtifact;
-use astraeus_comparison::ComparisonArtifact;
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
-use sibylla_artifacts::{Artifact as SibyllaArtifact, ArtifactKind as SibyllaKind};
 use thiserror::Error;
 
 mod studio;
+mod workbench;
 
 pub use studio::*;
+pub use workbench::*;
 
-pub const VAULT_DOCUMENT_SCHEMA_VERSION: u32 = 3;
-pub const ASTRAEUS_REVISION: &str = "e5d295222018178c46fb882a302a57c810bf8bd1";
-pub const SIBYLLA_REVISION: &str = "a154c32b83b110d2568a9ab10828b4f8b3dba7c7";
-pub const ENGINE_ARTIFACT_SCHEMA_VERSION: u32 = 1;
+pub const VAULT_DOCUMENT_SCHEMA_VERSION: u32 = 4;
+pub const ASTRAEUS_REVISION: &str = "8637ceb64fa11a06c8680b46cb4b57c71d94d37f";
+const MAX_TEXT_BYTES: usize = 32 * 1024;
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(transparent)]
@@ -59,7 +57,8 @@ pub enum PersonKind {
     ProfessionalClient,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PersonProfile {
     id: StableId,
     display_name: String,
@@ -74,15 +73,19 @@ impl PersonProfile {
         kind: PersonKind,
         notes: Option<String>,
     ) -> Result<Self, ModelError> {
-        let display_name = display_name.into();
-        validate_text("person.display_name", &display_name)?;
-        validate_optional_text("person.notes", notes.as_deref())?;
-        Ok(Self {
+        let person = Self {
             id,
-            display_name,
+            display_name: display_name.into(),
             kind,
             notes,
-        })
+        };
+        person.validate()?;
+        Ok(person)
+    }
+
+    fn validate(&self) -> Result<(), ModelError> {
+        validate_text("person.display_name", &self.display_name)?;
+        validate_optional_text("person.notes", self.notes.as_deref())
     }
 
     pub fn id(&self) -> &StableId {
@@ -99,308 +102,14 @@ impl PersonProfile {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct Session {
-    id: StableId,
-    person_id: Option<StableId>,
-    title: String,
-    context: Option<String>,
-    created_at: String,
-    modified_at: String,
-}
-
-impl Session {
-    pub fn new(
-        id: StableId,
-        person_id: Option<StableId>,
-        title: impl Into<String>,
-        context: Option<String>,
-        created_at: impl Into<String>,
-        modified_at: impl Into<String>,
-    ) -> Result<Self, ModelError> {
-        let title = title.into();
-        let created_at = normalize_timestamp("session.created_at", created_at.into())?;
-        let modified_at = normalize_timestamp("session.modified_at", modified_at.into())?;
-        validate_text("session.title", &title)?;
-        validate_optional_text("session.context", context.as_deref())?;
-        if modified_at < created_at {
-            return Err(ModelError::InvalidTimeline);
-        }
-        Ok(Self {
-            id,
-            person_id,
-            title,
-            context,
-            created_at,
-            modified_at,
-        })
-    }
-
-    pub fn id(&self) -> &StableId {
-        &self.id
-    }
-    pub fn person_id(&self) -> Option<&StableId> {
-        self.person_id.as_ref()
-    }
-    pub fn title(&self) -> &str {
-        &self.title
-    }
-    pub fn context(&self) -> Option<&str> {
-        self.context.as_deref()
-    }
-    pub fn created_at(&self) -> &str {
-        &self.created_at
-    }
-    pub fn modified_at(&self) -> &str {
-        &self.modified_at
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ArtifactKind {
-    AstraeusCalculation,
-    AstraeusComparison,
-    SibyllaDeck,
-    SibyllaReading,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct ArtifactRecord {
-    id: StableId,
-    person_id: Option<StableId>,
-    session_id: Option<StableId>,
-    kind: ArtifactKind,
-    artifact_schema_version: u32,
-    producer_revision: String,
-    content_id: String,
-    canonical_json: String,
-    deck_pack_id: Option<StableId>,
-    deck_pack_content_id: Option<String>,
-}
-
-impl ArtifactRecord {
-    pub fn from_astraeus_calculation(
-        id: StableId,
-        person_id: Option<StableId>,
-        session_id: Option<StableId>,
-        json: &str,
-    ) -> Result<Self, ModelError> {
-        let artifact = CalculationArtifact::from_json(json)
-            .map_err(|error| ModelError::InvalidArtifact(error.to_string()))?;
-        Ok(Self {
-            id,
-            person_id,
-            session_id,
-            kind: ArtifactKind::AstraeusCalculation,
-            artifact_schema_version: ENGINE_ARTIFACT_SCHEMA_VERSION,
-            producer_revision: ASTRAEUS_REVISION.into(),
-            content_id: artifact
-                .content_id()
-                .map_err(|error| ModelError::InvalidArtifact(error.to_string()))?,
-            canonical_json: artifact
-                .to_json()
-                .map_err(|error| ModelError::InvalidArtifact(error.to_string()))?,
-            deck_pack_id: None,
-            deck_pack_content_id: None,
-        })
-    }
-
-    pub fn from_sibylla(
-        id: StableId,
-        person_id: Option<StableId>,
-        session_id: Option<StableId>,
-        json: &str,
-    ) -> Result<Self, ModelError> {
-        let artifact = SibyllaArtifact::from_json(json)
-            .map_err(|error| ModelError::InvalidArtifact(error.to_string()))?;
-        let kind = match artifact.kind() {
-            SibyllaKind::Deck => ArtifactKind::SibyllaDeck,
-            SibyllaKind::Reading => ArtifactKind::SibyllaReading,
-        };
-        Ok(Self {
-            id,
-            person_id,
-            session_id,
-            kind,
-            artifact_schema_version: ENGINE_ARTIFACT_SCHEMA_VERSION,
-            producer_revision: SIBYLLA_REVISION.into(),
-            content_id: artifact
-                .content_id()
-                .map_err(|error| ModelError::InvalidArtifact(error.to_string()))?
-                .to_string(),
-            canonical_json: artifact
-                .to_json()
-                .map_err(|error| ModelError::InvalidArtifact(error.to_string()))?,
-            deck_pack_id: None,
-            deck_pack_content_id: None,
-        })
-    }
-
-    pub fn from_astraeus_comparison(
-        id: StableId,
-        person_id: Option<StableId>,
-        session_id: Option<StableId>,
-        json: &str,
-    ) -> Result<Self, ModelError> {
-        let artifact = ComparisonArtifact::from_json(json)
-            .map_err(|error| ModelError::InvalidArtifact(error.to_string()))?;
-        Ok(Self {
-            id,
-            person_id,
-            session_id,
-            kind: ArtifactKind::AstraeusComparison,
-            artifact_schema_version: ENGINE_ARTIFACT_SCHEMA_VERSION,
-            producer_revision: ASTRAEUS_REVISION.into(),
-            content_id: artifact
-                .content_id()
-                .map_err(|error| ModelError::InvalidArtifact(error.to_string()))?,
-            canonical_json: artifact
-                .to_json()
-                .map_err(|error| ModelError::InvalidArtifact(error.to_string()))?,
-            deck_pack_id: None,
-            deck_pack_content_id: None,
-        })
-    }
-
-    pub fn id(&self) -> &StableId {
-        &self.id
-    }
-    pub fn person_id(&self) -> Option<&StableId> {
-        self.person_id.as_ref()
-    }
-    pub fn session_id(&self) -> Option<&StableId> {
-        self.session_id.as_ref()
-    }
-    pub const fn kind(&self) -> ArtifactKind {
-        self.kind
-    }
-    pub const fn artifact_schema_version(&self) -> u32 {
-        self.artifact_schema_version
-    }
-    pub fn producer_revision(&self) -> &str {
-        &self.producer_revision
-    }
-    pub fn content_id(&self) -> &str {
-        &self.content_id
-    }
-    pub fn canonical_json(&self) -> &str {
-        &self.canonical_json
-    }
-
-    pub fn deck_pack_id(&self) -> Option<&StableId> {
-        self.deck_pack_id.as_ref()
-    }
-
-    pub fn deck_pack_content_id(&self) -> Option<&str> {
-        self.deck_pack_content_id.as_deref()
-    }
-
-    pub fn bind_deck_pack(
-        &mut self,
-        pack_id: StableId,
-        deck_content_id: impl Into<String>,
-    ) -> Result<(), ModelError> {
-        let deck_content_id = deck_content_id.into();
-        if self.kind != ArtifactKind::SibyllaDeck || self.content_id != deck_content_id {
-            return Err(ModelError::InvalidDeckPackBinding);
-        }
-        self.deck_pack_id = Some(pack_id);
-        self.deck_pack_content_id = Some(deck_content_id);
-        Ok(())
-    }
-
-    pub fn snapshot_deck_pack(
-        &mut self,
-        pack_id: StableId,
-        deck_content_id: impl Into<String>,
-    ) -> Result<(), ModelError> {
-        let deck_content_id = deck_content_id.into();
-        if self.kind != ArtifactKind::SibyllaReading {
-            return Err(ModelError::InvalidDeckPackBinding);
-        }
-        validate_content_id(&deck_content_id)?;
-        self.deck_pack_id = Some(pack_id);
-        self.deck_pack_content_id = Some(deck_content_id);
-        Ok(())
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum JournalEntryKind {
-    Annotation,
-    Outcome,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct JournalEntry {
-    id: StableId,
-    person_id: Option<StableId>,
-    session_id: Option<StableId>,
-    artifact_id: Option<StableId>,
-    kind: JournalEntryKind,
-    content: String,
-    created_at: String,
-}
-
-impl JournalEntry {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        id: StableId,
-        person_id: Option<StableId>,
-        session_id: Option<StableId>,
-        artifact_id: Option<StableId>,
-        kind: JournalEntryKind,
-        content: impl Into<String>,
-        created_at: impl Into<String>,
-    ) -> Result<Self, ModelError> {
-        let content = content.into();
-        validate_text("journal_entry.content", &content)?;
-        Ok(Self {
-            id,
-            person_id,
-            session_id,
-            artifact_id,
-            kind,
-            content,
-            created_at: normalize_timestamp("journal_entry.created_at", created_at.into())?,
-        })
-    }
-
-    pub fn id(&self) -> &StableId {
-        &self.id
-    }
-    pub fn person_id(&self) -> Option<&StableId> {
-        self.person_id.as_ref()
-    }
-    pub fn session_id(&self) -> Option<&StableId> {
-        self.session_id.as_ref()
-    }
-    pub fn artifact_id(&self) -> Option<&StableId> {
-        self.artifact_id.as_ref()
-    }
-    pub const fn kind(&self) -> JournalEntryKind {
-        self.kind
-    }
-    pub fn content(&self) -> &str {
-        &self.content
-    }
-    pub fn created_at(&self) -> &str {
-        &self.created_at
-    }
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct VaultDocument {
     people: Vec<PersonProfile>,
-    sessions: Vec<Session>,
-    artifacts: Vec<ArtifactRecord>,
-    journal_entries: Vec<JournalEntry>,
     saved_locations: Vec<SavedLocation>,
     chart_definitions: Vec<ChartDefinition>,
     chart_calculations: Vec<ChartCalculation>,
     comparison_presets: Vec<ComparisonPreset>,
+    comparison_calculations: Vec<ComparisonCalculation>,
     workspace_state: WorkspaceState,
 }
 
@@ -408,13 +117,11 @@ pub struct VaultDocument {
 struct VaultDocumentRef<'a> {
     schema_version: u32,
     people: &'a [PersonProfile],
-    sessions: &'a [Session],
-    artifacts: &'a [ArtifactRecord],
-    journal_entries: &'a [JournalEntry],
     saved_locations: &'a [SavedLocation],
     chart_definitions: &'a [ChartDefinition],
     chart_calculations: &'a [ChartCalculation],
     comparison_presets: &'a [ComparisonPreset],
+    comparison_calculations: &'a [ComparisonCalculation],
     workspace_state: &'a WorkspaceState,
 }
 
@@ -422,14 +129,12 @@ struct VaultDocumentRef<'a> {
 #[serde(deny_unknown_fields)]
 struct VaultDocumentWire {
     schema_version: u32,
-    people: Vec<PersonWire>,
-    sessions: Vec<SessionWire>,
-    artifacts: Vec<ArtifactWire>,
-    journal_entries: Vec<JournalEntryWire>,
+    people: Vec<PersonProfile>,
     saved_locations: Vec<SavedLocation>,
     chart_definitions: Vec<ChartDefinition>,
     chart_calculations: Vec<ChartCalculation>,
     comparison_presets: Vec<ComparisonPreset>,
+    comparison_calculations: Vec<ComparisonCalculation>,
     workspace_state: WorkspaceState,
 }
 
@@ -438,227 +143,61 @@ struct VaultSchemaProbe {
     schema_version: u32,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PersonWire {
-    id: String,
-    display_name: String,
-    kind: PersonKind,
-    notes: Option<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SessionWire {
-    id: String,
-    person_id: Option<String>,
-    title: String,
-    context: Option<String>,
-    created_at: String,
-    modified_at: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ArtifactWire {
-    id: String,
-    person_id: Option<String>,
-    session_id: Option<String>,
-    kind: ArtifactKind,
-    artifact_schema_version: Option<u32>,
-    producer_revision: String,
-    content_id: String,
-    canonical_json: String,
-    #[serde(default)]
-    deck_pack_id: Option<String>,
-    #[serde(default)]
-    deck_pack_content_id: Option<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct JournalEntryWire {
-    id: String,
-    person_id: Option<String>,
-    session_id: Option<String>,
-    artifact_id: Option<String>,
-    kind: JournalEntryKind,
-    content: String,
-    created_at: String,
-}
-
 impl VaultDocument {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         people: Vec<PersonProfile>,
-        sessions: Vec<Session>,
-        artifacts: Vec<ArtifactRecord>,
-        journal_entries: Vec<JournalEntry>,
-    ) -> Result<Self, ModelError> {
-        Self::with_studio_records(
-            people,
-            sessions,
-            artifacts,
-            journal_entries,
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            WorkspaceState::default(),
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn with_studio_records(
-        people: Vec<PersonProfile>,
-        sessions: Vec<Session>,
-        artifacts: Vec<ArtifactRecord>,
-        journal_entries: Vec<JournalEntry>,
         saved_locations: Vec<SavedLocation>,
         chart_definitions: Vec<ChartDefinition>,
         chart_calculations: Vec<ChartCalculation>,
         comparison_presets: Vec<ComparisonPreset>,
+        comparison_calculations: Vec<ComparisonCalculation>,
         workspace_state: WorkspaceState,
     ) -> Result<Self, ModelError> {
-        validate_unique(people.iter().map(PersonProfile::id), "person")?;
-        validate_unique(sessions.iter().map(Session::id), "session")?;
-        validate_unique(artifacts.iter().map(ArtifactRecord::id), "artifact")?;
-        validate_unique(
-            journal_entries.iter().map(JournalEntry::id),
-            "journal entry",
-        )?;
-        let person_ids: BTreeSet<_> = people.iter().map(PersonProfile::id).collect();
-        let session_ids: BTreeSet<_> = sessions.iter().map(Session::id).collect();
-        let artifact_ids: BTreeSet<_> = artifacts.iter().map(ArtifactRecord::id).collect();
-        for session in &sessions {
-            if session
-                .person_id()
-                .is_some_and(|id| !person_ids.contains(id))
-            {
-                return Err(ModelError::DanglingReference("session.person_id"));
-            }
-        }
-        for artifact in &artifacts {
-            if artifact
-                .person_id()
-                .is_some_and(|id| !person_ids.contains(id))
-            {
-                return Err(ModelError::DanglingReference("artifact.person_id"));
-            }
-            if artifact
-                .session_id()
-                .is_some_and(|id| !session_ids.contains(id))
-            {
-                return Err(ModelError::DanglingReference("artifact.session_id"));
-            }
-            if let (Some(artifact_person), Some(session_id)) =
-                (artifact.person_id(), artifact.session_id())
-            {
-                let session = sessions
-                    .iter()
-                    .find(|session| session.id() == session_id)
-                    .expect("session reference was validated above");
-                if session.person_id().is_some_and(|id| id != artifact_person) {
-                    return Err(ModelError::ArtifactPersonSessionMismatch);
-                }
-            }
-        }
-        for entry in &journal_entries {
-            if entry.person_id().is_some_and(|id| !person_ids.contains(id)) {
-                return Err(ModelError::DanglingReference("journal_entry.person_id"));
-            }
-            if entry
-                .session_id()
-                .is_some_and(|id| !session_ids.contains(id))
-            {
-                return Err(ModelError::DanglingReference("journal_entry.session_id"));
-            }
-            if entry
-                .artifact_id()
-                .is_some_and(|id| !artifact_ids.contains(id))
-            {
-                return Err(ModelError::DanglingReference("journal_entry.artifact_id"));
-            }
-            if let Some(session_id) = entry.session_id() {
-                let session = sessions
-                    .iter()
-                    .find(|session| session.id() == session_id)
-                    .expect("session reference was validated above");
-                if entry
-                    .person_id()
-                    .zip(session.person_id())
-                    .is_some_and(|(entry, session)| entry != session)
-                {
-                    return Err(ModelError::JournalSourceMismatch);
-                }
-                if entry.created_at() < session.created_at() {
-                    return Err(ModelError::JournalTimestampBeforeSession);
-                }
-            }
-            if let Some(artifact_id) = entry.artifact_id() {
-                let artifact = artifacts
-                    .iter()
-                    .find(|artifact| artifact.id() == artifact_id)
-                    .expect("artifact reference was validated above");
-                if entry
-                    .person_id()
-                    .zip(artifact.person_id())
-                    .is_some_and(|(entry, artifact)| entry != artifact)
-                    || entry
-                        .session_id()
-                        .zip(artifact.session_id())
-                        .is_some_and(|(entry, artifact)| entry != artifact)
-                {
-                    return Err(ModelError::JournalSourceMismatch);
-                }
-            }
-        }
-        validate_studio_records(
-            &person_ids,
-            &artifacts,
-            &saved_locations,
-            &chart_definitions,
-            &chart_calculations,
-            &comparison_presets,
-            &workspace_state,
-        )?;
-        Ok(Self {
+        let document = Self {
             people,
-            sessions,
-            artifacts,
-            journal_entries,
             saved_locations,
             chart_definitions,
             chart_calculations,
             comparison_presets,
+            comparison_calculations,
             workspace_state,
-        })
+        };
+        document.validate()?;
+        Ok(document)
     }
 
     pub fn empty() -> Self {
         Self {
             people: Vec::new(),
-            sessions: Vec::new(),
-            artifacts: Vec::new(),
-            journal_entries: Vec::new(),
             saved_locations: Vec::new(),
             chart_definitions: Vec::new(),
             chart_calculations: Vec::new(),
             comparison_presets: Vec::new(),
+            comparison_calculations: Vec::new(),
             workspace_state: WorkspaceState::default(),
         }
     }
 
+    pub fn validate(&self) -> Result<(), ModelError> {
+        validate_unique(self.people.iter().map(PersonProfile::id), "person")?;
+        for person in &self.people {
+            person.validate()?;
+        }
+        let people = self.people.iter().map(PersonProfile::id).collect();
+        validate_studio_records(
+            &people,
+            &self.saved_locations,
+            &self.chart_definitions,
+            &self.chart_calculations,
+            &self.comparison_presets,
+            &self.comparison_calculations,
+            &self.workspace_state,
+        )
+    }
+
     pub fn people(&self) -> &[PersonProfile] {
         &self.people
-    }
-    pub fn sessions(&self) -> &[Session] {
-        &self.sessions
-    }
-    pub fn artifacts(&self) -> &[ArtifactRecord] {
-        &self.artifacts
-    }
-    pub fn journal_entries(&self) -> &[JournalEntry] {
-        &self.journal_entries
     }
     pub fn saved_locations(&self) -> &[SavedLocation] {
         &self.saved_locations
@@ -672,21 +211,101 @@ impl VaultDocument {
     pub fn comparison_presets(&self) -> &[ComparisonPreset] {
         &self.comparison_presets
     }
+    pub fn comparison_calculations(&self) -> &[ComparisonCalculation] {
+        &self.comparison_calculations
+    }
     pub const fn workspace_state(&self) -> &WorkspaceState {
         &self.workspace_state
     }
 
+    pub fn with_person(mut self, person: PersonProfile) -> Result<Self, ModelError> {
+        replace_by_id(&mut self.people, person, PersonProfile::id);
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_location(mut self, location: SavedLocation) -> Result<Self, ModelError> {
+        replace_by_id(&mut self.saved_locations, location, SavedLocation::id);
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_chart(mut self, chart: ChartDefinition) -> Result<Self, ModelError> {
+        replace_by_id(&mut self.chart_definitions, chart, ChartDefinition::id);
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_chart_calculation(
+        mut self,
+        calculation: ChartCalculation,
+    ) -> Result<Self, ModelError> {
+        if self
+            .chart_calculations
+            .iter()
+            .any(|existing| existing.id() == calculation.id())
+        {
+            return Err(ModelError::ImmutableRecord("chart calculation"));
+        }
+        let chart = self
+            .chart_definitions
+            .iter_mut()
+            .find(|chart| chart.id() == calculation.chart_definition_id())
+            .ok_or(ModelError::DanglingReference(
+                "chart_calculation.chart_definition_id",
+            ))?;
+        chart.set_current_calculation(calculation.id().clone());
+        self.chart_calculations.push(calculation);
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_comparison(mut self, preset: ComparisonPreset) -> Result<Self, ModelError> {
+        replace_by_id(&mut self.comparison_presets, preset, ComparisonPreset::id);
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_comparison_calculation(
+        mut self,
+        calculation: ComparisonCalculation,
+    ) -> Result<Self, ModelError> {
+        if self
+            .comparison_calculations
+            .iter()
+            .any(|existing| existing.id() == calculation.id())
+        {
+            return Err(ModelError::ImmutableRecord("comparison calculation"));
+        }
+        let preset = self
+            .comparison_presets
+            .iter_mut()
+            .find(|preset| preset.id() == calculation.comparison_preset_id())
+            .ok_or(ModelError::DanglingReference(
+                "comparison_calculation.comparison_preset_id",
+            ))?;
+        preset.set_current_calculation(calculation.id().clone());
+        self.comparison_calculations.push(calculation);
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_workspace(mut self, workspace: WorkspaceState) -> Result<Self, ModelError> {
+        self.workspace_state = workspace;
+        self.validate()?;
+        Ok(self)
+    }
+
     pub fn to_json(&self) -> Result<String, ModelError> {
+        self.validate()?;
         Ok(serde_json::to_string(&VaultDocumentRef {
             schema_version: VAULT_DOCUMENT_SCHEMA_VERSION,
             people: &self.people,
-            sessions: &self.sessions,
-            artifacts: &self.artifacts,
-            journal_entries: &self.journal_entries,
             saved_locations: &self.saved_locations,
             chart_definitions: &self.chart_definitions,
             chart_calculations: &self.chart_calculations,
             comparison_presets: &self.comparison_presets,
+            comparison_calculations: &self.comparison_calculations,
             workspace_state: &self.workspace_state,
         })?)
     }
@@ -700,147 +319,35 @@ impl VaultDocument {
         if wire.schema_version != VAULT_DOCUMENT_SCHEMA_VERSION {
             return Err(ModelError::UnsupportedSchema(wire.schema_version));
         }
-        let journal_entries = wire
-            .journal_entries
-            .into_iter()
-            .map(JournalEntryWire::into_model)
-            .collect::<Result<_, _>>()?;
-        let people = wire
-            .people
-            .into_iter()
-            .map(PersonWire::into_model)
-            .collect::<Result<_, _>>()?;
-        let sessions = wire
-            .sessions
-            .into_iter()
-            .map(SessionWire::into_model)
-            .collect::<Result<_, _>>()?;
-        let artifacts = wire
-            .artifacts
-            .into_iter()
-            .map(ArtifactWire::into_model)
-            .collect::<Result<_, _>>()?;
-        Self::with_studio_records(
-            people,
-            sessions,
-            artifacts,
-            journal_entries,
+        Self::new(
+            wire.people,
             wire.saved_locations,
             wire.chart_definitions,
             wire.chart_calculations,
             wire.comparison_presets,
+            wire.comparison_calculations,
             wire.workspace_state,
         )
     }
 }
 
-impl PersonWire {
-    fn into_model(self) -> Result<PersonProfile, ModelError> {
-        PersonProfile::new(
-            StableId::new("person.id", self.id)?,
-            self.display_name,
-            self.kind,
-            self.notes,
-        )
+fn replace_by_id<T>(items: &mut Vec<T>, item: T, id: impl Fn(&T) -> &StableId) {
+    if let Some(index) = items.iter().position(|existing| id(existing) == id(&item)) {
+        items[index] = item;
+    } else {
+        items.push(item);
     }
 }
 
-impl SessionWire {
-    fn into_model(self) -> Result<Session, ModelError> {
-        Session::new(
-            StableId::new("session.id", self.id)?,
-            self.person_id
-                .map(|id| StableId::new("session.person_id", id))
-                .transpose()?,
-            self.title,
-            self.context,
-            self.created_at,
-            self.modified_at,
-        )
-    }
-}
-
-impl ArtifactWire {
-    fn into_model(self) -> Result<ArtifactRecord, ModelError> {
-        let id = StableId::new("artifact.id", self.id)?;
-        let person_id = self
-            .person_id
-            .map(|id| StableId::new("artifact.person_id", id))
-            .transpose()?;
-        let session_id = self
-            .session_id
-            .map(|id| StableId::new("artifact.session_id", id))
-            .transpose()?;
-        let rebuilt = match self.kind {
-            ArtifactKind::AstraeusCalculation => ArtifactRecord::from_astraeus_calculation(
-                id,
-                person_id,
-                session_id,
-                &self.canonical_json,
-            )?,
-            ArtifactKind::AstraeusComparison => ArtifactRecord::from_astraeus_comparison(
-                id,
-                person_id,
-                session_id,
-                &self.canonical_json,
-            )?,
-            ArtifactKind::SibyllaDeck | ArtifactKind::SibyllaReading => {
-                ArtifactRecord::from_sibylla(id, person_id, session_id, &self.canonical_json)?
-            }
-        };
-        let mut rebuilt = rebuilt;
-        match (
-            self.deck_pack_id.as_ref(),
-            self.deck_pack_content_id.as_ref(),
-        ) {
-            (Some(pack_id), Some(content_id)) => {
-                let pack_id = StableId::new("artifact.deck_pack_id", pack_id.clone())?;
-                if self.kind == ArtifactKind::SibyllaDeck {
-                    rebuilt.bind_deck_pack(pack_id, content_id.clone())?;
-                } else {
-                    rebuilt.snapshot_deck_pack(pack_id, content_id.clone())?;
-                }
-            }
-            (None, None) => {}
-            _ => return Err(ModelError::InvalidDeckPackBinding),
-        }
-        if rebuilt.kind != self.kind
-            || self
-                .artifact_schema_version
-                .unwrap_or(ENGINE_ARTIFACT_SCHEMA_VERSION)
-                != rebuilt.artifact_schema_version
-            || rebuilt.producer_revision != self.producer_revision
-            || rebuilt.content_id != self.content_id
-            || rebuilt.deck_pack_id
-                != self
-                    .deck_pack_id
-                    .map(|id| StableId::new("artifact.deck_pack_id", id.clone()))
-                    .transpose()?
-            || rebuilt.deck_pack_content_id != self.deck_pack_content_id
-        {
-            return Err(ModelError::ArtifactMetadataMismatch);
-        }
-        Ok(rebuilt)
-    }
-}
-
-impl JournalEntryWire {
-    fn into_model(self) -> Result<JournalEntry, ModelError> {
-        JournalEntry::new(
-            StableId::new("journal_entry.id", self.id)?,
-            self.person_id
-                .map(|id| StableId::new("journal_entry.person_id", id))
-                .transpose()?,
-            self.session_id
-                .map(|id| StableId::new("journal_entry.session_id", id))
-                .transpose()?,
-            self.artifact_id
-                .map(|id| StableId::new("journal_entry.artifact_id", id))
-                .transpose()?,
-            self.kind,
-            self.content,
-            self.created_at,
-        )
+fn validate_unique<'a>(
+    ids: impl Iterator<Item = &'a StableId>,
+    kind: &'static str,
+) -> Result<(), ModelError> {
+    let mut seen = BTreeSet::new();
+    if ids.into_iter().any(|id| !seen.insert(id)) {
+        Err(ModelError::DuplicateId(kind))
+    } else {
+        Ok(())
     }
 }
 
@@ -850,30 +357,16 @@ pub enum ModelError {
     InvalidId { field: &'static str },
     #[error("{0} must not be blank")]
     EmptyText(&'static str),
+    #[error("{0} exceeds its text size bound")]
+    TextTooLong(&'static str),
     #[error("invalid RFC 3339 timestamp in {0}")]
     InvalidTimestamp(&'static str),
-    #[error("modified timestamp precedes created timestamp")]
-    InvalidTimeline,
     #[error("duplicate {0} ID")]
     DuplicateId(&'static str),
     #[error("dangling reference in {0}")]
     DanglingReference(&'static str),
-    #[error("invalid engine artifact: {0}")]
-    InvalidArtifact(String),
-    #[error("artifact metadata does not match its canonical payload")]
-    ArtifactMetadataMismatch,
-    #[error("deck pack binding does not match a Sibylla deck artifact")]
-    InvalidDeckPackBinding,
-    #[error("artifact person does not match its session person")]
-    ArtifactPersonSessionMismatch,
-    #[error("journal entry sources refer to inconsistent people or sessions")]
-    JournalSourceMismatch,
-    #[error("journal entry timestamp precedes its source session")]
-    JournalTimestampBeforeSession,
     #[error("unsupported vault document schema version {0}")]
     UnsupportedSchema(u32),
-    #[error("invalid field set for vault document schema version {0}")]
-    InvalidSchemaShape(u32),
     #[error("invalid value in {0}")]
     InvalidValue(&'static str),
     #[error("a person may have only one default natal chart")]
@@ -882,25 +375,25 @@ pub enum ModelError {
     InvalidDefaultNatal,
     #[error("chart current calculation does not belong to that chart")]
     CalculationChartMismatch,
-    #[error("chart calculation does not reference an Astraeus calculation artifact")]
-    CalculationArtifactMismatch,
     #[error("comparison preset sources are inconsistent")]
     InvalidComparisonSources,
-    #[error("comparison preset does not reference an Astraeus comparison artifact")]
-    ComparisonArtifactMismatch,
     #[error("ambiguous local time requires an explicit earlier or later choice")]
     AmbiguousLocalTime,
     #[error("local time does not exist in the selected time zone")]
     NonexistentLocalTime,
     #[error("an ambiguity choice was supplied for a unique local time")]
     UnexpectedAmbiguousTimeChoice,
+    #[error("{0} records are immutable")]
+    ImmutableRecord(&'static str),
     #[error("invalid vault document JSON: {0}")]
     Json(#[from] serde_json::Error),
 }
 
-fn validate_text(field: &'static str, value: &str) -> Result<(), ModelError> {
+pub(crate) fn validate_text(field: &'static str, value: &str) -> Result<(), ModelError> {
     if value.trim().is_empty() {
         Err(ModelError::EmptyText(field))
+    } else if value.len() > MAX_TEXT_BYTES {
+        Err(ModelError::TextTooLong(field))
     } else {
         Ok(())
     }
@@ -910,35 +403,138 @@ fn validate_optional_text(field: &'static str, value: Option<&str>) -> Result<()
     value.map_or(Ok(()), |value| validate_text(field, value))
 }
 
-fn validate_content_id(value: &str) -> Result<(), ModelError> {
+pub(crate) fn validate_content_id(value: &str) -> Result<(), ModelError> {
     let Some(hash) = value.strip_prefix("sha256:") else {
-        return Err(ModelError::InvalidDeckPackBinding);
+        return Err(ModelError::InvalidValue("content_id"));
     };
     if hash.len() != 64 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err(ModelError::InvalidDeckPackBinding);
+        return Err(ModelError::InvalidValue("content_id"));
     }
     Ok(())
 }
 
-fn normalize_timestamp(field: &'static str, value: String) -> Result<String, ModelError> {
-    DateTime::parse_from_rfc3339(&value)
-        .map_err(|_| ModelError::InvalidTimestamp(field))
-        .map(|value| {
-            value
-                .with_timezone(&Utc)
-                .to_rfc3339_opts(SecondsFormat::Secs, true)
-        })
+pub(crate) fn normalize_timestamp(
+    field: &'static str,
+    value: String,
+) -> Result<String, ModelError> {
+    let timestamp = DateTime::parse_from_rfc3339(&value)
+        .map_err(|_| ModelError::InvalidTimestamp(field))?
+        .with_timezone(&Utc)
+        .to_rfc3339_opts(SecondsFormat::Secs, true);
+    if timestamp == value {
+        Ok(timestamp)
+    } else {
+        Err(ModelError::InvalidTimestamp(field))
+    }
 }
 
-fn validate_unique<'a>(
-    values: impl Iterator<Item = &'a StableId>,
-    kind: &'static str,
-) -> Result<(), ModelError> {
-    let mut ids = BTreeSet::new();
-    for id in values {
-        if !ids.insert(id) {
-            return Err(ModelError::DuplicateId(kind));
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_schema_v4_round_trip_is_canonical_and_chart_only() {
+        let document = VaultDocument::empty();
+        let json = document.to_json().unwrap();
+        assert_eq!(VaultDocument::from_json(&json).unwrap(), document);
+        assert!(json.starts_with("{\"schema_version\":4,\"people\":"));
+        for removed in [
+            "sessions",
+            "artifacts",
+            "journal_entries",
+            "deck_pack",
+            "tarot",
+        ] {
+            assert!(!json.contains(removed));
         }
     }
-    Ok(())
+
+    #[test]
+    fn every_older_schema_is_rejected_without_migration() {
+        for version in 0..VAULT_DOCUMENT_SCHEMA_VERSION {
+            let json = format!("{{\"schema_version\":{version}}}");
+            assert!(matches!(
+                VaultDocument::from_json(&json),
+                Err(ModelError::UnsupportedSchema(rejected)) if rejected == version
+            ));
+        }
+    }
+
+    #[test]
+    fn hostile_but_valid_text_round_trips_and_is_bounded() {
+        let person = PersonProfile::new(
+            StableId::new("person.id", "hostile").unwrap(),
+            "<script>\"&\\u{2028}",
+            PersonKind::Personal,
+            Some("line one\nline two\t\u{0}".into()),
+        )
+        .unwrap();
+        let document = VaultDocument::empty().with_person(person).unwrap();
+        assert_eq!(
+            VaultDocument::from_json(&document.to_json().unwrap()).unwrap(),
+            document
+        );
+        assert!(matches!(
+            PersonProfile::new(
+                StableId::new("person.id", "too_long").unwrap(),
+                "x".repeat(MAX_TEXT_BYTES + 1),
+                PersonKind::Personal,
+                None,
+            ),
+            Err(ModelError::TextTooLong("person.display_name"))
+        ));
+    }
+
+    #[test]
+    fn default_natal_uniqueness_and_current_result_references_are_enforced() {
+        let person_id = StableId::new("person.id", "fictional").unwrap();
+        let person = PersonProfile::new(
+            person_id.clone(),
+            "Fictional Person",
+            PersonKind::Personal,
+            None,
+        )
+        .unwrap();
+        let natal = |id: &str| {
+            ChartDefinition::new(
+                StableId::new("chart.id", id).unwrap(),
+                format!("Natal {id}"),
+                ChartRole::Natal,
+                Some(person_id.clone()),
+                LocalDateTimeInput::new("2000-01-15", "12:00", "America/New_York").unwrap(),
+                ChartCalculationOptions::default(),
+                default_chart_points(),
+                true,
+            )
+            .unwrap()
+        };
+        let document = VaultDocument::empty()
+            .with_person(person)
+            .unwrap()
+            .with_chart(natal("first"))
+            .unwrap();
+        assert!(matches!(
+            document.clone().with_chart(natal("second")),
+            Err(ModelError::DuplicateDefaultNatal)
+        ));
+
+        let mut dangling = ChartDefinition::new(
+            StableId::new("chart.id", "transit").unwrap(),
+            "Transit",
+            ChartRole::Transit,
+            None,
+            LocalDateTimeInput::new("2026-08-19", "12:00", "America/New_York").unwrap(),
+            ChartCalculationOptions::default(),
+            default_chart_points(),
+            false,
+        )
+        .unwrap();
+        dangling.set_current_calculation(StableId::new("calculation.id", "missing").unwrap());
+        assert!(matches!(
+            document.with_chart(dangling),
+            Err(ModelError::DanglingReference(
+                "chart_definition.current_calculation_id"
+            ))
+        ));
+    }
 }

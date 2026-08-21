@@ -9,10 +9,11 @@ mod transit_svg;
 
 pub use transit::{
     ChartAspect, ChartPoint, ChartRing, ChartScene, TransitFrame, TransitTimeline,
-    TransitTimelineError,
+    TransitTimelineError, filtered_scene,
 };
 pub use transit_svg::{
-    RenderOptions, WheelOrientation, render_biwheel_svg, resolve_circular_collisions,
+    LabelDensity, RenderOptions, WheelOrientation, WheelPalette, render_biwheel_svg,
+    resolve_circular_collisions,
 };
 
 use astraeus_artifacts::CalculationArtifact;

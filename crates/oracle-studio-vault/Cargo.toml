@@ -1,7 +1,7 @@
 [package]
 name = "oracle-studio-vault"
 version = "0.1.0"
-description = "Authenticated local vault envelope for Oracle Studio"
+description = "Portable wrapped-key envelope v2 for Oracle Studio"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -11,6 +11,9 @@ rust-version.workspace = true
 argon2.workspace = true
 chacha20poly1305.workspace = true
 getrandom.workspace = true
+getrandom02.workspace = true
 oracle-studio-core = { version = "0.1.0", path = "../oracle-studio-core" }
+sha2.workspace = true
 thiserror.workspace = true
+uuid.workspace = true
 zeroize.workspace = true

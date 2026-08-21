@@ -1,0 +1,31 @@
+[package]
+name = "oracle-studio-browser"
+version = "0.1.0"
+description = "Browser state engine and IndexedDB persistence for Oracle Studio"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+astraeus-moshier = { version = "0.1.0", git = "https://github.com/gracee3/astraeus", rev = "8637ceb64fa11a06c8680b46cb4b57c71d94d37f" }
+futures.workspace = true
+js-sys.workspace = true
+oracle-studio-app = { version = "0.1.0", path = "../oracle-studio-app" }
+oracle-studio-core = { version = "0.1.0", path = "../oracle-studio-core" }
+oracle-studio-location-catalog = { version = "0.1.0", path = "../oracle-studio-location-catalog" }
+oracle-studio-platform = { version = "0.1.0", path = "../oracle-studio-platform" }
+oracle-studio-vault = { version = "0.1.0", path = "../oracle-studio-vault" }
+rexie.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+web-sys = { workspace = true, features = [
+    "DedicatedWorkerGlobalScope",
+    "Navigator",
+    "StorageManager",
+    "WorkerGlobalScope",
+    "WorkerNavigator",
+] }
