@@ -67,6 +67,14 @@ See [architecture](docs/STUDIO_ARCHITECTURE.md),
 [schema v4](docs/COMPOSITION_MODEL.md), [envelope v2](docs/VAULT.md), and the
 [GeoNames contract](docs/LOCATION_CATALOG.md).
 
+## Development and validation
+
+GitHub Actions is intentionally disabled during rapid feature development. Pull
+requests and merges do not wait on hosted CI. This policy does not replace or
+weaken native validation: contributors and agents must run the relevant locked
+Rust, WASM, browser, integration, and end-to-end checks locally and report the
+exact commands and results in the pull request.
+
 ## License
 
 AGPL-3.0-or-later.

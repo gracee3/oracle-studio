@@ -25,6 +25,12 @@ Docker, Chrome, catalog downloads, and networked acceptance are exceptional;
 run them only when explicitly authorized. Never run models, GPU work, or use
 personal charts/vaults for validation.
 
+GitHub Actions is intentionally disabled during rapid feature development.
+Do not add, enable, dispatch, or wait for repository workflows. This does not
+relax local validation: run the relevant native Rust, WASM, browser, integration,
+and end-to-end checks for the change and report the exact commands and results
+in the pull request.
+
 ## Privacy and delivery
 
 - Never commit credentials, vaults, browser profiles, screenshots, personal
@@ -38,5 +44,6 @@ personal charts/vaults for validation.
 - Production has no deterministic ephemeris fallback and no dynamic Swiss ABI.
 - Use a focused branch. Encryption, schema, dependency, storage, and container
   changes stay reviewable and must not auto-merge.
-- Publish the exact commit and draft PR, then record validation, risks, and next
-  action in the external portfolio handoff before claiming completion.
+- Record the exact commit, PR, local validation, outcome, risks, and next action
+  in the linked GitHub issue or pull request. No external weekly or portfolio
+  handoff is required.
