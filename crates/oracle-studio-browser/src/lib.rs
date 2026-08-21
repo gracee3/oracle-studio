@@ -14,9 +14,9 @@ use oracle_studio_core::{
 use oracle_studio_location_catalog::{CatalogInstallInput, CatalogMetadata, LocationCatalog};
 use oracle_studio_platform::{
     ActiveWorkspace, CapabilityStatus, ChartSummary, EntitySummary, EphemerisStatus,
-    PlatformCommand, PlatformError, PlatformErrorCode, PlatformResponse, PreviewSaveMode,
-    VaultLockState, VaultSummary, WheelTemplateSettings, WorkbenchChartSummary,
-    WorkbenchPresentation, WorkspaceSummary,
+    PlatformCommand, PlatformError, PlatformErrorCode, PlatformResponse, PreviewCommitOutcome,
+    PreviewGeneration, PreviewSaveMode, VaultLockState, VaultSummary, WheelTemplateSettings,
+    WorkbenchChartSummary, WorkbenchPresentation, WorkbenchPreviewSource, WorkspaceSummary,
 };
 use oracle_studio_vault::{UnlockedVault, create, inspect, open, revision};
 use serde::{Deserialize, Serialize};
@@ -87,6 +87,14 @@ struct MountedVault {
     last_access_millis: f64,
 }
 
+#[derive(Clone)]
+struct PendingWorkbenchPreview {
+    generation: PreviewGeneration,
+    preview: PreparedWorkbenchPreview,
+    source_vault_id: Option<String>,
+    source_vault_revision: Option<String>,
+}
+
 pub struct BrowserStudioEngine {
     store: Rc<dyn BrowserStore>,
     loaded: bool,
@@ -99,10 +107,7 @@ pub struct BrowserStudioEngine {
     persistence_requested: bool,
     persistence_granted: Option<bool>,
     wheel_templates: WheelTemplateSettings,
-    pending_preview: Option<(
-        oracle_studio_platform::PreviewGeneration,
-        PreparedWorkbenchPreview,
-    )>,
+    pending_preview: Option<PendingWorkbenchPreview>,
 }
 
 impl BrowserStudioEngine {
@@ -148,6 +153,7 @@ impl BrowserStudioEngine {
                     self.scratch = Some(VaultDocument::empty());
                 }
                 self.active = Some(ActiveWorkspace::Scratch);
+                self.pending_preview = None;
                 Ok(self.updated())
             }
             PlatformCommand::DiscardScratch { confirmed } => {
@@ -162,6 +168,7 @@ impl BrowserStudioEngine {
                 if self.active == Some(ActiveWorkspace::Scratch) {
                     self.active = None;
                 }
+                self.pending_preview = None;
                 Ok(self.updated())
             }
             PlatformCommand::SaveScratch { title, password } => {
@@ -186,6 +193,7 @@ impl BrowserStudioEngine {
                 self.scratch = None;
                 self.scratch_dirty = false;
                 self.active = Some(ActiveWorkspace::Vault(id));
+                self.pending_preview = None;
                 self.request_persistence().await;
                 Ok(self.updated())
             }
@@ -219,6 +227,7 @@ impl BrowserStudioEngine {
                         .map_err(store_error)?;
                 }
                 self.records.insert(id, record);
+                self.pending_preview = None;
                 Ok(self.updated())
             }
             PlatformCommand::ExportVault { vault_id } => {
@@ -245,6 +254,7 @@ impl BrowserStudioEngine {
                     },
                 );
                 self.active = Some(ActiveWorkspace::Vault(vault_id));
+                self.pending_preview = None;
                 Ok(self.updated())
             }
             PlatformCommand::LockVault { vault_id } | PlatformCommand::UnloadVault { vault_id } => {
@@ -257,6 +267,7 @@ impl BrowserStudioEngine {
                 if self.active == Some(ActiveWorkspace::Vault(vault_id)) {
                     self.active = None;
                 }
+                self.pending_preview = None;
                 Ok(self.updated())
             }
             PlatformCommand::ActivateVault { vault_id } => {
@@ -267,6 +278,7 @@ impl BrowserStudioEngine {
                     )
                 })?;
                 mounted.last_access_millis = now_millis;
+                self.retain_pending_for_vault(&vault_id);
                 self.active = Some(ActiveWorkspace::Vault(vault_id));
                 Ok(self.updated())
             }
@@ -292,6 +304,7 @@ impl BrowserStudioEngine {
                 if self.active == Some(ActiveWorkspace::Vault(vault_id)) {
                     self.active = None;
                 }
+                self.pending_preview = None;
                 Ok(self.updated())
             }
             PlatformCommand::AddPerson {
@@ -420,6 +433,8 @@ impl BrowserStudioEngine {
                 Ok(self.updated())
             }
             PlatformCommand::WorkbenchPreview { request } => {
+                let (source_vault_id, source_vault_title, source_vault_revision) =
+                    self.preview_source()?;
                 let prepared = calculate_workbench_preview(
                     self.active_document()?,
                     WorkbenchCalculationRequest {
@@ -437,25 +452,58 @@ impl BrowserStudioEngine {
                     request.generation,
                     &prepared,
                     request.adjustment_notice,
+                    source_vault_id.clone(),
+                    source_vault_title.clone(),
+                    source_vault_revision.clone(),
                 );
-                self.pending_preview = Some((request.generation, prepared));
+                self.pending_preview = Some(PendingWorkbenchPreview {
+                    generation: request.generation,
+                    preview: prepared,
+                    source_vault_id,
+                    source_vault_revision,
+                });
                 Ok(PlatformResponse::WorkbenchPreview(presentation))
             }
             PlatformCommand::CommitWorkbenchPreview {
                 generation,
                 save_mode,
             } => {
-                let (pending_generation, preview) =
-                    self.pending_preview.as_ref().ok_or_else(|| {
+                let pending = self.pending_preview.clone().ok_or_else(|| {
                         error(
-                            PlatformErrorCode::NotFound,
-                            "no workbench preview is available",
+                            PlatformErrorCode::StalePreview,
+                            "the unsaved preview is no longer available; return to Workbench and calculate it again",
                         )
                     })?;
-                if *pending_generation != generation {
+                if pending.generation != generation {
                     return Err(error(
-                        PlatformErrorCode::Conflict,
+                        PlatformErrorCode::StalePreview,
                         "the workbench preview is stale; wait for the newest calculation",
+                    ));
+                }
+                let Some(source_vault_id) = pending.source_vault_id.as_ref() else {
+                    return Err(error(
+                        PlatformErrorCode::InvalidInput,
+                        "save the scratch workspace as an encrypted vault before committing its preview",
+                    ));
+                };
+                let Some(source_revision) = pending.source_vault_revision.as_ref() else {
+                    return Err(error(
+                        PlatformErrorCode::Internal,
+                        "the pending vault preview has no source revision",
+                    ));
+                };
+                let active_matches = self.active
+                    == Some(ActiveWorkspace::Vault(source_vault_id.clone()))
+                    && self.mounted.contains_key(source_vault_id)
+                    && self
+                        .records
+                        .get(source_vault_id)
+                        .is_some_and(|record| record.revision == *source_revision);
+                if !active_matches {
+                    self.pending_preview = None;
+                    return Err(error(
+                        PlatformErrorCode::StalePreview,
+                        "the active vault or its revision changed; the unsaved preview was invalidated",
                     ));
                 }
                 let document = self.active_document()?;
@@ -466,19 +514,46 @@ impl BrowserStudioEngine {
                     .collect();
                 let calculation_id = generate_unique_id(
                     "chart-calculation",
-                    &format!("{} calculation", preview.outer.definition.label()),
+                    &format!("{} calculation", pending.preview.outer.definition.label()),
                     &calculation_ids,
                 )
                 .map_err(model_error)?;
-                let updated = match save_mode {
-                    PreviewSaveMode::UpdateChart => {
-                        commit_workbench_update(document, preview, calculation_id, now.clone())
+                let (updated, outcome) = match save_mode {
+                    PreviewSaveMode::UpdateChart { confirmed } => {
+                        if !confirmed {
+                            return Err(error(
+                                PlatformErrorCode::ConfirmationRequired,
+                                "updating the existing chart requires explicit confirmation",
+                            ));
+                        }
+                        let chart_id = pending.preview.outer.definition.id().as_str().to_owned();
+                        let label = pending.preview.outer.definition.label().to_owned();
+                        (
+                            commit_workbench_update(
+                                document,
+                                &pending.preview,
+                                calculation_id,
+                                now.clone(),
+                            ),
+                            PreviewCommitOutcome::Updated { chart_id, label },
+                        )
                     }
                     PreviewSaveMode::SaveAs { name } => {
-                        if name.trim().is_empty() {
+                        let name = name.trim();
+                        if name.is_empty() {
                             return Err(error(
                                 PlatformErrorCode::InvalidInput,
                                 "Save As requires a new chart name",
+                            ));
+                        }
+                        if document
+                            .chart_definitions()
+                            .iter()
+                            .any(|chart| chart.label().trim().to_lowercase() == name.to_lowercase())
+                        {
+                            return Err(error(
+                                PlatformErrorCode::Conflict,
+                                "a chart with that name already exists; Save As never overwrites",
                             ));
                         }
                         let chart_ids = document
@@ -487,21 +562,41 @@ impl BrowserStudioEngine {
                             .map(|chart| chart.id().as_str().to_owned())
                             .collect();
                         let chart_id =
-                            generate_unique_id("chart", &name, &chart_ids).map_err(model_error)?;
-                        commit_workbench_save_as(
-                            document,
-                            preview,
-                            chart_id,
-                            name,
-                            calculation_id,
-                            now.clone(),
+                            generate_unique_id("chart", name, &chart_ids).map_err(model_error)?;
+                        let outcome = PreviewCommitOutcome::SavedAs {
+                            chart_id: chart_id.as_str().to_owned(),
+                            label: name.to_owned(),
+                        };
+                        (
+                            commit_workbench_save_as(
+                                document,
+                                &pending.preview,
+                                chart_id,
+                                name.to_owned(),
+                                calculation_id,
+                                now.clone(),
+                            ),
+                            outcome,
                         )
                     }
+                };
+                let updated = updated.map_err(app_error)?;
+                if let Err(commit_error) = self.commit_document(updated, now_millis, now).await {
+                    if commit_error.code == PlatformErrorCode::Conflict {
+                        self.pending_preview = None;
+                        return Err(error(
+                            PlatformErrorCode::StalePreview,
+                            "the vault revision changed during persistence; the unsaved preview was invalidated",
+                        ));
+                    }
+                    return Err(commit_error);
                 }
-                .map_err(app_error)?;
-                self.commit_document(updated, now_millis, now).await?;
                 self.pending_preview = None;
-                Ok(self.updated())
+                Ok(PlatformResponse::WorkbenchPreviewCommitted {
+                    vaults: self.vault_summaries(),
+                    workspace: self.workspace_summary(),
+                    outcome,
+                })
             }
             PlatformCommand::SaveWheelTemplate { template } => {
                 template.validate()?;
@@ -660,6 +755,40 @@ impl BrowserStudioEngine {
         }
     }
 
+    fn preview_source(&self) -> Result<(Option<String>, String, Option<String>), PlatformError> {
+        match self.active.as_ref() {
+            Some(ActiveWorkspace::Scratch) => Ok((None, "Scratch workspace".into(), None)),
+            Some(ActiveWorkspace::Vault(id)) => {
+                if !self.mounted.contains_key(id) {
+                    return Err(error(PlatformErrorCode::Locked, "active vault is locked"));
+                }
+                let record = self.records.get(id).ok_or_else(|| {
+                    error(PlatformErrorCode::Storage, "active vault record is missing")
+                })?;
+                Ok((
+                    Some(id.clone()),
+                    record.title.clone(),
+                    Some(record.revision.clone()),
+                ))
+            }
+            None => Err(error(
+                PlatformErrorCode::NotFound,
+                "no workspace is active; create scratch work or unlock a vault",
+            )),
+        }
+    }
+
+    fn retain_pending_for_vault(&mut self, vault_id: &str) {
+        let current_revision = self.records.get(vault_id).map(|record| &record.revision);
+        let keep = self.pending_preview.as_ref().is_some_and(|pending| {
+            pending.source_vault_id.as_deref() == Some(vault_id)
+                && pending.source_vault_revision.as_ref() == current_revision
+        });
+        if !keep {
+            self.pending_preview = None;
+        }
+    }
+
     async fn commit_document(
         &mut self,
         document: VaultDocument,
@@ -709,6 +838,7 @@ impl BrowserStudioEngine {
             }
             None => return Err(error(PlatformErrorCode::NotFound, "no workspace is active")),
         }
+        self.pending_preview = None;
         Ok(())
     }
 
@@ -721,6 +851,14 @@ impl BrowserStudioEngine {
             .collect::<Vec<_>>();
         for id in expired {
             self.mounted.remove(&id);
+            if self
+                .pending_preview
+                .as_ref()
+                .and_then(|pending| pending.source_vault_id.as_ref())
+                == Some(&id)
+            {
+                self.pending_preview = None;
+            }
             if self.active == Some(ActiveWorkspace::Vault(id)) {
                 self.active = None;
             }
@@ -853,9 +991,12 @@ impl BrowserStudioEngine {
 }
 
 fn workbench_presentation(
-    generation: oracle_studio_platform::PreviewGeneration,
+    generation: PreviewGeneration,
     preview: &PreparedWorkbenchPreview,
     adjustment_notice: Option<String>,
+    source_vault_id: Option<String>,
+    source_vault_title: String,
+    source_vault_revision: Option<String>,
 ) -> WorkbenchPresentation {
     let summary = |preview: &oracle_studio_app::PreparedChartPreview| WorkbenchChartSummary {
         id: preview.definition.id().as_str().into(),
@@ -872,6 +1013,11 @@ fn workbench_presentation(
     };
     WorkbenchPresentation {
         generation,
+        source: Box::new(WorkbenchPreviewSource {
+            vault_id: source_vault_id,
+            vault_title: source_vault_title,
+            vault_revision: source_vault_revision,
+        }),
         inner: summary(&preview.inner),
         outer: summary(&preview.outer),
         scene: preview.scene.clone(),
@@ -1048,6 +1194,11 @@ pub mod testing {
 mod tests {
     use super::{testing::MemoryStore, *};
     use futures::executor::block_on;
+    use oracle_studio_core::{
+        ChartCalculationOptions, ChartDefinition, ChartRole, LocalDateTimeInput,
+        LocationProvenance, SavedLocation, StableId, default_chart_points,
+    };
+    use oracle_studio_platform::{PreviewCommitOutcome, WorkbenchPreviewRequest};
 
     fn run(
         engine: &mut BrowserStudioEngine,
@@ -1055,6 +1206,346 @@ mod tests {
         millis: f64,
     ) -> Result<PlatformResponse, PlatformError> {
         block_on(engine.execute(command, millis, "2026-08-19T12:00:00Z".into()))
+    }
+
+    fn test_id(value: &str) -> StableId {
+        StableId::new("browser-test.id", value).unwrap()
+    }
+
+    fn populated_vault() -> (
+        Rc<MemoryStore>,
+        BrowserStudioEngine,
+        String,
+        WorkbenchPreviewRequest,
+    ) {
+        let location = SavedLocation::new(
+            test_id("fictional_harbor"),
+            "Fictional Harbor",
+            Vec::new(),
+            "US",
+            40.0,
+            -75.0,
+            None,
+            "America/New_York",
+            LocationProvenance::Manual,
+        )
+        .unwrap();
+        let chart = |id: &str, label: &str, role, date: &str| {
+            ChartDefinition::new(
+                test_id(id),
+                label,
+                role,
+                None,
+                LocalDateTimeInput::new(date, "12:00:00", "America/New_York").unwrap(),
+                ChartCalculationOptions::default(),
+                default_chart_points(),
+                false,
+            )
+            .unwrap()
+        };
+        let document = VaultDocument::empty()
+            .with_location(location)
+            .unwrap()
+            .with_chart(chart(
+                "fictional_natal",
+                "Fictional Natal",
+                ChartRole::Natal,
+                "2000-01-15",
+            ))
+            .unwrap()
+            .with_chart(chart(
+                "fictional_transit",
+                "Fictional Transit",
+                ChartRole::Transit,
+                "2026-08-17",
+            ))
+            .unwrap();
+        let (_, envelope) = create("Chart Actions", b"fictional password", document).unwrap();
+        let record = VaultRecord::from_envelope(
+            envelope,
+            "2026-08-19T12:00:00Z".into(),
+            "2026-08-19T12:00:00Z".into(),
+        )
+        .unwrap();
+        let vault_id = record.id.clone();
+        let store = Rc::new(MemoryStore::default());
+        store.force_record(record);
+        let mut engine = BrowserStudioEngine::new(store.clone());
+        run(&mut engine, PlatformCommand::Initialize, 0.0).unwrap();
+        run(
+            &mut engine,
+            PlatformCommand::UnlockVault {
+                vault_id: vault_id.clone(),
+                password: b"fictional password".to_vec(),
+            },
+            1.0,
+        )
+        .unwrap();
+        let request = WorkbenchPreviewRequest {
+            generation: PreviewGeneration::new(7),
+            inner_chart_definition_id: test_id("fictional_natal"),
+            outer_chart_definition_id: test_id("fictional_transit"),
+            inner_saved_location_id: test_id("fictional_harbor"),
+            outer_saved_location_id: test_id("fictional_harbor"),
+            outer_local_input: LocalDateTimeInput::new(
+                "2026-08-18",
+                "12:00:00",
+                "America/New_York",
+            )
+            .unwrap(),
+            outer_ambiguous_time_choice: None,
+            adjustment_notice: None,
+        };
+        (store, engine, vault_id, request)
+    }
+
+    fn calculate_pending(engine: &mut BrowserStudioEngine, request: &WorkbenchPreviewRequest) {
+        let response = run(
+            engine,
+            PlatformCommand::WorkbenchPreview {
+                request: request.clone(),
+            },
+            2.0,
+        )
+        .unwrap();
+        let PlatformResponse::WorkbenchPreview(presentation) = response else {
+            panic!("workbench preview response")
+        };
+        assert_eq!(
+            presentation.source.vault_id,
+            engine.active.as_ref().and_then(|active| {
+                match active {
+                    ActiveWorkspace::Vault(id) => Some(id.clone()),
+                    ActiveWorkspace::Scratch => None,
+                }
+            })
+        );
+        assert_eq!(
+            presentation.source.vault_revision.as_deref(),
+            presentation
+                .source
+                .vault_id
+                .as_ref()
+                .and_then(|id| engine.records.get(id))
+                .map(|record| record.revision.as_str())
+        );
+    }
+
+    #[test]
+    fn files_update_requires_confirmation_and_preserves_chart_identity() {
+        let (_store, mut engine, _vault_id, request) = populated_vault();
+        calculate_pending(&mut engine, &request);
+
+        let rejected = run(
+            &mut engine,
+            PlatformCommand::CommitWorkbenchPreview {
+                generation: request.generation,
+                save_mode: PreviewSaveMode::UpdateChart { confirmed: false },
+            },
+            3.0,
+        );
+        assert!(matches!(
+            rejected,
+            Err(PlatformError {
+                code: PlatformErrorCode::ConfirmationRequired,
+                ..
+            })
+        ));
+        assert!(engine.pending_preview.is_some());
+
+        let response = run(
+            &mut engine,
+            PlatformCommand::CommitWorkbenchPreview {
+                generation: request.generation,
+                save_mode: PreviewSaveMode::UpdateChart { confirmed: true },
+            },
+            4.0,
+        )
+        .unwrap();
+        let PlatformResponse::WorkbenchPreviewCommitted {
+            workspace, outcome, ..
+        } = response
+        else {
+            panic!("preview commit response")
+        };
+        assert_eq!(
+            outcome,
+            PreviewCommitOutcome::Updated {
+                chart_id: "fictional_transit".into(),
+                label: "Fictional Transit".into(),
+            }
+        );
+        assert_eq!(workspace.charts.len(), 2);
+        let updated = workspace
+            .charts
+            .iter()
+            .find(|chart| chart.id == "fictional_transit")
+            .unwrap();
+        assert_eq!(updated.local_date, "2026-08-18");
+        assert!(updated.current_calculation_id.is_some());
+        assert!(engine.pending_preview.is_none());
+    }
+
+    #[test]
+    fn files_save_as_rejects_case_insensitive_collision_and_never_overwrites() {
+        let (_store, mut engine, _vault_id, request) = populated_vault();
+        calculate_pending(&mut engine, &request);
+
+        let collision = run(
+            &mut engine,
+            PlatformCommand::CommitWorkbenchPreview {
+                generation: request.generation,
+                save_mode: PreviewSaveMode::SaveAs {
+                    name: "  fictional transit  ".into(),
+                },
+            },
+            3.0,
+        );
+        assert!(matches!(
+            collision,
+            Err(PlatformError {
+                code: PlatformErrorCode::Conflict,
+                ..
+            })
+        ));
+        assert!(engine.pending_preview.is_some());
+        assert_eq!(
+            engine.active_document().unwrap().chart_definitions().len(),
+            2
+        );
+
+        let response = run(
+            &mut engine,
+            PlatformCommand::CommitWorkbenchPreview {
+                generation: request.generation,
+                save_mode: PreviewSaveMode::SaveAs {
+                    name: "  Saved Transit  ".into(),
+                },
+            },
+            4.0,
+        )
+        .unwrap();
+        let PlatformResponse::WorkbenchPreviewCommitted {
+            workspace, outcome, ..
+        } = response
+        else {
+            panic!("preview commit response")
+        };
+        assert_eq!(
+            outcome,
+            PreviewCommitOutcome::SavedAs {
+                chart_id: "saved-transit".into(),
+                label: "Saved Transit".into(),
+            }
+        );
+        assert_eq!(workspace.charts.len(), 3);
+        assert_eq!(
+            workspace
+                .charts
+                .iter()
+                .filter(|chart| chart.label == "Fictional Transit")
+                .count(),
+            1
+        );
+        let saved = workspace
+            .charts
+            .iter()
+            .find(|chart| chart.label == "Saved Transit")
+            .unwrap();
+        assert_eq!(saved.local_date, "2026-08-18");
+        assert!(saved.current_calculation_id.is_some());
+    }
+
+    #[test]
+    fn locking_switching_and_reload_invalidate_pending_preview() {
+        let (store, mut engine, vault_id, request) = populated_vault();
+        calculate_pending(&mut engine, &request);
+        run(
+            &mut engine,
+            PlatformCommand::LockVault {
+                vault_id: vault_id.clone(),
+            },
+            3.0,
+        )
+        .unwrap();
+        assert!(engine.pending_preview.is_none());
+        assert!(matches!(
+            run(
+                &mut engine,
+                PlatformCommand::CommitWorkbenchPreview {
+                    generation: request.generation,
+                    save_mode: PreviewSaveMode::UpdateChart { confirmed: true },
+                },
+                4.0,
+            ),
+            Err(PlatformError {
+                code: PlatformErrorCode::StalePreview,
+                ..
+            })
+        ));
+
+        let mut reloaded = BrowserStudioEngine::new(store);
+        run(&mut reloaded, PlatformCommand::Initialize, 5.0).unwrap();
+        run(
+            &mut reloaded,
+            PlatformCommand::UnlockVault {
+                vault_id,
+                password: b"fictional password".to_vec(),
+            },
+            6.0,
+        )
+        .unwrap();
+        assert!(matches!(
+            run(
+                &mut reloaded,
+                PlatformCommand::CommitWorkbenchPreview {
+                    generation: request.generation,
+                    save_mode: PreviewSaveMode::SaveAs {
+                        name: "Must Not Save".into(),
+                    },
+                },
+                7.0,
+            ),
+            Err(PlatformError {
+                code: PlatformErrorCode::StalePreview,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn transactional_revision_conflict_invalidates_preview_without_mutating_memory() {
+        let (store, mut engine, vault_id, request) = populated_vault();
+        calculate_pending(&mut engine, &request);
+        let mut concurrent = engine.records[&vault_id].clone();
+        concurrent.revision = "sha256:concurrent-writer".into();
+        store.force_record(concurrent);
+
+        let result = run(
+            &mut engine,
+            PlatformCommand::CommitWorkbenchPreview {
+                generation: request.generation,
+                save_mode: PreviewSaveMode::UpdateChart { confirmed: true },
+            },
+            3.0,
+        );
+        assert!(matches!(
+            result,
+            Err(PlatformError {
+                code: PlatformErrorCode::StalePreview,
+                ..
+            })
+        ));
+        assert!(engine.pending_preview.is_none());
+        let original = engine
+            .active_document()
+            .unwrap()
+            .chart_definitions()
+            .iter()
+            .find(|chart| chart.id().as_str() == "fictional_transit")
+            .unwrap();
+        assert_eq!(original.local_input().local_date(), "2026-08-17");
+        assert!(original.current_calculation_id().is_none());
     }
 
     #[test]

@@ -32,8 +32,8 @@ and the full-history import is recorded in [the migration record](docs/astraeus/
   sidebars and route content scroll independently while the chart wheel remains
   the dominant surface.
 - Preview the fixed inner chart against a moving outer chart with exact civil-
-  time and elapsed-time controls, then explicitly update or clone the outer
-  definition.
+  time and elapsed-time controls, then use Files to confirm an identity-
+  preserving update or save the preview under a unique new chart name.
 - Save versioned, global wheel templates containing visual options only.
 
 The production worker compiles Astraeus's pure-Rust Moshier adapter using
